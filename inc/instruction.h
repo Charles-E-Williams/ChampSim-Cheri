@@ -128,10 +128,21 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
+
+
+#ifdef CHERI
+  std::vector<capability_metadata> destination_register_caps = {};
+  std::vector<capability_metadata> source_register_caps = {};
+  std::vector<capability_metadata> destination_memory_caps = {};
+  std::vector<capability_metadata> source_memory_caps = {};
+#endif
+
 private:
   template <typename T>
   ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
   {
+
+#ifndef CHERI
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
 
@@ -140,6 +151,56 @@ private:
 
     auto smem_end = std::remove(std::begin(instr.source_memory), std::end(instr.source_memory), uint64_t{0});
     std::transform(std::begin(instr.source_memory), smem_end, std::back_inserter(this->source_memory), [](auto x) { return champsim::address{x}; });
+
+#else
+
+    destination_registers.reserve(NUM_INSTR_DESTINATIONS);
+    destination_register_caps.reserve(NUM_INSTR_DESTINATIONS);
+    
+    for (unsigned int i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+      if (instr.destination_registers[i].reg_id != 0) {
+        destination_registers.push_back(instr.destination_registers[i].reg_id);
+        destination_register_caps.push_back(instr.destination_registers[i].cap);
+      }
+    }
+    
+    // Process source registers - extract reg_ids and capabilities
+    source_registers.reserve(NUM_INSTR_SOURCES);
+    source_register_caps.reserve(NUM_INSTR_SOURCES);
+    
+    for (unsigned int i = 0; i < NUM_INSTR_SOURCES; i++) {
+      if (instr.source_registers[i].reg_id != 0) {
+        source_registers.push_back(instr.source_registers[i].reg_id);
+        source_register_caps.push_back(instr.source_registers[i].cap);
+      }
+    }
+    
+    // Process destination memory addresses and capabilities
+    destination_memory.reserve(NUM_INSTR_DESTINATIONS);
+    destination_memory_caps.reserve(NUM_INSTR_DESTINATIONS);
+    
+    for (unsigned int i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+      auto& cap = instr.destination_memory[i];
+      if (cap.base + cap.offset != 0) { // Only non-zero addresses
+        destination_memory.push_back(champsim::address{cap.base + cap.offset});
+        destination_memory_caps.push_back(cap);
+      }
+    }
+    
+    // Process source memory addresses and capabilities
+    source_memory.reserve(NUM_INSTR_SOURCES);
+    source_memory_caps.reserve(NUM_INSTR_SOURCES);
+    
+    for (unsigned int i = 0; i < NUM_INSTR_SOURCES; i++) {
+      auto& cap = instr.source_memory[i];
+      if (cap.base + cap.offset != 0) { // Only non-zero addresses
+        source_memory.push_back(champsim::address{cap.base + cap.offset});
+        source_memory_caps.push_back(cap);
+      }
+    }
+#endif
+
+
 
     bool writes_sp = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_STACK_POINTER);
     bool writes_ip = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_INSTRUCTION_POINTER);

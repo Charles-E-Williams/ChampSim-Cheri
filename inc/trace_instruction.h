@@ -18,7 +18,6 @@
 #define TRACE_INSTRUCTION_H
 
 #include <limits>
-
 // special registers that help us identify branches
 namespace champsim
 {
@@ -32,6 +31,21 @@ constexpr std::size_t NUM_INSTR_DESTINATIONS_SPARC = 4;
 constexpr std::size_t NUM_INSTR_DESTINATIONS = 2;
 constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
+
+
+#ifdef CHERI
+
+struct capability_metadata
+{
+  unsigned long long base, length, offset;
+  unsigned short perms;
+  unsigned char tag, sealed;
+
+  unsigned long long get_addr() {return (base + offset); }
+};
+
+
+#endif
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
 struct input_instr {
   // instruction pointer or PC (Program Counter)
@@ -41,11 +55,26 @@ struct input_instr {
   unsigned char is_branch;
   unsigned char branch_taken;
 
+#ifdef CHERI
+
+  // Register operands with capability metadata
+  struct 
+  {
+    unsigned char reg_id;
+    struct capability_metadata cap;
+  } destination_registers[NUM_INSTR_DESTINATIONS], source_registers[NUM_INSTR_SOURCES];
+
+
+  // Memory operands with capability metadata (address = cap.base + cap.offset)
+  capability_metadata destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
+#else
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
 
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
+
+#endif
 };
 
 struct cloudsuite_instr {
@@ -55,14 +84,28 @@ struct cloudsuite_instr {
   // branch info
   unsigned char is_branch;
   unsigned char branch_taken;
+  unsigned char asid[2];
 
+#ifdef CHERI
+
+  // Register operands with capability metadata
+  struct 
+  {
+    unsigned char reg_id;
+    struct capability_metadata cap;
+  } destination_registers[NUM_INSTR_DESTINATIONS_SPARC], source_registers[NUM_INSTR_SOURCES];
+
+
+  // Memory operands with capability metadata (address = cap.base + cap.offset)
+  capability_metadata destination_memory[NUM_INSTR_DESTINATIONS_SPARC], source_memory[NUM_INSTR_SOURCES];
+#else
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
 
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory
 
-  unsigned char asid[2];
+#endif
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 

@@ -104,6 +104,11 @@ absolute.options:
 
 attach_options = $(call reverse, $(addprefix @,$(filter %.options, $^)))
 
+
+# CHERI BUILD FLAG
+ifdef CHERI
+	CXXFLAGS += -DCHERI
+endif
 # All .o files should be made like .cc files
 define obj_recipe
 	$(CXX) $(attach_options) $(CPPFLAGS) $(CXXFLAGS) -c -o $@ $(filter %.cc, $^)
@@ -273,6 +278,7 @@ endif
 $(test_main_name): override CPPFLAGS += -DCHAMPSIM_TEST_BUILD
 $(test_main_name): override CXXFLAGS += -g3 -Og
 $(test_main_name): override LDLIBS += -lCatch2Main -lCatch2
+
 
 # Associate objects with executables
 $(test_main_name): $(call get_base_objs,TEST) $(test_base_objs) $(base_module_objs) $(nonbase_module_objs) | $$(dir $$@)
