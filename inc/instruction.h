@@ -136,7 +136,7 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   std::vector<capability_metadata> destination_memory_caps = {};
   std::vector<capability_metadata> source_memory_caps = {};
 #endif
-
+ 
 private:
   template <typename T>
   ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)

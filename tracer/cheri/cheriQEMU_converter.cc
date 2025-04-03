@@ -1,8 +1,29 @@
-#include <unordered_set>
+#include <fstream>
+#include <iostream>
 #include <regex>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <cstdint>
+#include <cstring>
 #include "../../inc/trace_instruction.h"
+#include "../../../cheri-compressed-cap/cheri_compressed_cap.h"
 
+using cap_data = capability_metadata;
 
+void print_cap(cap_data cap)
+{
+    std::cout << 
+        "Tag = " << static_cast<int>(cap.tag) << "\n"
+        "Sealed = " << static_cast<int>(cap.sealed) << "\n"
+        "Base = " << std::hex << "0x" << cap.base << "\n"
+        "Length = " << std::hex << "0x" << cap.length << "\n"
+        "Top = " << std::hex << "0x" << cap.get_top() << "\n"
+        "Cursor = " << std::hex << "0x" << cap.get_cursor() << "\n"
+        "Offset = " << std::hex << "0x" << cap.offset << "\n"
+        "Permission = " << std::hex << "0x" << cap.perms << "\n";
+}
 // Control flow instructions
 const std::unordered_set<std::string> CONTROL_FLOW_INST = {
     "j", "jal", "beq", "bne", "blt", "bge", "bltu", "bgeu", "jalr",
@@ -28,10 +49,56 @@ const std::regex cap_tag_pattern(
 
 
 
-int main()
+cap_data* decode_capability(uint64_t pesbt, uint64_t cursor, bool valid, cap_data* cap )
+{
+    assert(cap);
 
+    //decoding capabilities in memory for the risc-v standard format
+    cc128r_cap_t result;
+    cc128r_decompress_mem(pesbt, cursor, valid, &result);
+    cap->tag = valid;
+    cap->sealed = result.is_sealed(); 
+    cap->base = result.cr_base;
+    cap->length = result.length();
+    cap->offset = result.offset();
+    cap->perms = result.all_permissions();
+    
+    
+    assert(cc128r_is_representable_cap_exact(&result));
+    return cap;
+}
+
+int main(int argc, char* argv[])
 {
 
+    if (argc != 3) {
+        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace>\n";
+        exit(EXIT_FAILURE);
+    }
 
-    
+    std::ifstream trace_file(argv[1]);
+    if (!trace_file.is_open()) {
+        std::cerr << "Trace file does not exist\n";
+        exit (EXIT_FAILURE);
+    }
+
+    std::string oFilename = argv[2];
+    oFilename += + ".champsim.bin";
+
+    cap_data* cap = new(cap_data);
+    decode_capability(0x123456789, 0x987654321, false, cap);
+    print_cap(*cap);
+
+    cap = nullptr;
+    delete cap;
+
+
+
+
+    return 1;
+
+
+
+
+
 }

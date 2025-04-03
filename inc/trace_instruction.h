@@ -32,7 +32,7 @@ constexpr std::size_t NUM_INSTR_DESTINATIONS = 2;
 constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
 
-
+ 
 #ifdef CHERI
 
 struct capability_metadata
@@ -41,7 +41,8 @@ struct capability_metadata
   unsigned short perms;
   unsigned char tag, sealed;
 
-  unsigned long long get_addr() {return (base + offset); }
+  unsigned long long get_cursor() {return (base + offset); }
+  unsigned long long get_top() { return {base + length}; }
 };
 
 
