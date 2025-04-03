@@ -39,6 +39,18 @@ struct deadlock : public std::exception {
   explicit deadlock(uint32_t cpu) : which(cpu) {}
 };
 
+
+#ifdef CHERI
+struct capability_metadata
+{
+  unsigned long long base, length, offset;
+  unsigned short perms;
+  unsigned char tag, sealed;
+
+  unsigned long long get_addr() {return (base + offset); }
+};
+#endif
+
 #ifdef DEBUG_PRINT
 constexpr bool debug_print = true;
 #else
@@ -73,6 +85,7 @@ using block_number = address_slice<block_number_extent>;
 using block_offset = address_slice<block_offset_extent>;
 using page_number = address_slice<page_number_extent>;
 using page_offset = address_slice<page_offset_extent>;
+
 
 /**
  * Get the lowest possible address for which the space between it and zero is the given size.

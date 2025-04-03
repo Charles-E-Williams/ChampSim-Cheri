@@ -43,9 +43,8 @@ struct capability_metadata
 
   unsigned long long get_addr() {return (base + offset); }
 };
-
-
 #endif
+
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
 struct input_instr {
   // instruction pointer or PC (Program Counter)
