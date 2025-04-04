@@ -39,15 +39,16 @@ struct deadlock : public std::exception {
   explicit deadlock(uint32_t cpu) : which(cpu) {}
 };
 
-
 #ifdef CHERI
+
 struct capability_metadata
 {
   unsigned long long base, length, offset;
   unsigned short perms;
   unsigned char tag, sealed;
 
-  unsigned long long get_addr() {return (base + offset); }
+  unsigned long long get_cursor() {return (base + offset); }
+  unsigned long long get_top() { return {base + length}; }
 };
 #endif
 
