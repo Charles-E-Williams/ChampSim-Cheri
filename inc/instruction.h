@@ -131,6 +131,7 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
 
 #ifdef CHERI
+  bool is_cap_instr;
   std::vector<capability_metadata> destination_register_caps = {};
   std::vector<capability_metadata> source_register_caps = {};
   std::vector<capability_metadata> destination_memory_caps = {};
@@ -198,6 +199,8 @@ private:
         source_memory_caps.push_back(cap);
       }
     }
+
+
 #endif
 
 

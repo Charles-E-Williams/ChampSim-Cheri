@@ -85,13 +85,15 @@ int main(int argc, char* argv[])
     std::string oFilename = argv[2];
     oFilename += + ".champsim.bin";
 
-    cap_data* cap = new(cap_data);
-    decode_capability(0x123456789, 0x987654321, false, cap);
-    print_cap(*cap);
 
-    cap = nullptr;
-    delete cap;
 
+    std::string line;
+
+
+    while (std::getline(trace_file, line))
+    {
+        std::cout << line << std::endl;
+    }
 
 
 

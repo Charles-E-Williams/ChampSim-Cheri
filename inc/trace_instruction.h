@@ -57,6 +57,8 @@ struct input_instr {
 
 #ifdef CHERI
 
+  unsigned char is_cap_instr;
+
   // Register operands with capability metadata
   struct 
   {
@@ -66,7 +68,10 @@ struct input_instr {
 
 
   // Memory operands with capability metadata (address = cap.base + cap.offset)
-  capability_metadata destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
+  struct {
+    struct capability_metadata cap;
+    unsigned long long addr;
+  } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
 #else
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
