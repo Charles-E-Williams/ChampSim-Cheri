@@ -43,6 +43,7 @@ struct capability_metadata
 
   unsigned long long get_cursor() {return (base + offset); }
   unsigned long long get_top() { return {base + length}; }
+  //unsigned long long get_offset() { return {cursor - base};}
 };
 
 
@@ -67,7 +68,12 @@ struct input_instr {
 
 
   // Memory operands with capability metadata (address = cap.base + cap.offset)
-  capability_metadata destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
+  struct {
+    unsigned long long address;
+    struct capability_metadata cap;
+  } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
+
+  unsigned char is_cap_instr;
 #else
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers

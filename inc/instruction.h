@@ -119,16 +119,6 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   unsigned completed_mem_ops = 0;
   int num_reg_dependent = 0;
 
-  std::vector<PHYSICAL_REGISTER_ID> destination_registers = {}; // output registers
-  std::vector<PHYSICAL_REGISTER_ID> source_registers = {};      // input registers
-
-  std::vector<champsim::address> destination_memory = {};
-  std::vector<champsim::address> source_memory = {};
-
-  // these are indices of instructions in the ROB that depend on me
-  std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
-
-
 
 #ifdef CHERI
   std::vector<capability_metadata> destination_register_caps = {};
@@ -136,6 +126,17 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   std::vector<capability_metadata> destination_memory_caps = {};
   std::vector<capability_metadata> source_memory_caps = {};
 #endif
+  std::vector<PHYSICAL_REGISTER_ID> destination_registers = {}; // output registers
+  std::vector<PHYSICAL_REGISTER_ID> source_registers = {};      // input registers
+
+  std::vector<champsim::address> destination_memory = {};
+  std::vector<champsim::address> source_memory = {};
+  // these are indices of instructions in the ROB that depend on me
+  std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
+
+
+
+
  
 private:
   template <typename T>
@@ -179,25 +180,25 @@ private:
     destination_memory.reserve(NUM_INSTR_DESTINATIONS);
     destination_memory_caps.reserve(NUM_INSTR_DESTINATIONS);
     
-    for (unsigned int i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
-      auto& cap = instr.destination_memory[i];
-      if (cap.base + cap.offset != 0) { // Only non-zero addresses
-        destination_memory.push_back(champsim::address{cap.base + cap.offset});
-        destination_memory_caps.push_back(cap);
-      }
-    }
+    // for (unsigned int i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+    //   auto& cap = instr.destination_memory[i];
+    //   if (cap.base + cap.offset != 0) { // Only non-zero addresses
+    //     destination_memory.push_back(champsim::address{cap.base + cap.offset});
+    //     destination_memory_caps.push_back(cap);
+    //   }
+    // }
     
-    // Process source memory addresses and capabilities
-    source_memory.reserve(NUM_INSTR_SOURCES);
-    source_memory_caps.reserve(NUM_INSTR_SOURCES);
+    // // Process source memory addresses and capabilities
+    // source_memory.reserve(NUM_INSTR_SOURCES);
+    // source_memory_caps.reserve(NUM_INSTR_SOURCES);
     
-    for (unsigned int i = 0; i < NUM_INSTR_SOURCES; i++) {
-      auto& cap = instr.source_memory[i];
-      if (cap.base + cap.offset != 0) { // Only non-zero addresses
-        source_memory.push_back(champsim::address{cap.base + cap.offset});
-        source_memory_caps.push_back(cap);
-      }
-    }
+    // for (unsigned int i = 0; i < NUM_INSTR_SOURCES; i++) {
+    //   auto& cap = instr.source_memory[i];
+    //   if (cap.base + cap.offset != 0) { // Only non-zero addresses
+    //     source_memory.push_back(champsim::address{cap.base + cap.offset});
+    //     source_memory_caps.push_back(cap);
+    //   }
+    // }
 #endif
 
 
