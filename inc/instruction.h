@@ -120,6 +120,23 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   int num_reg_dependent = 0;
 
 
+
+// #ifdef CHERI
+// struct Register {
+//   PHYSICAL_REGISTER_ID reg_id;
+//   capability_metadata cap;
+// };
+
+// struct Memory {
+//   champsim::address addr;
+//   capability_metadata cap;
+// };
+
+// bool is_cap_instr;
+
+
+// #endif
+
 #ifdef CHERI
   bool is_cap_instr;
   std::vector<capability_metadata> destination_register_caps = {};

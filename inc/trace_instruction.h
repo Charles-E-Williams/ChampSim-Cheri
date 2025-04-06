@@ -16,14 +16,22 @@
 
 #ifndef TRACE_INSTRUCTION_H
 #define TRACE_INSTRUCTION_H
-
 #include <limits>
+
+
+#ifdef CHERI
+#include "/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/cheri_compressed_cap.h"
+#endif
 // special registers that help us identify branches
 namespace champsim
 {
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
+
+#ifdef CHERI
+constexpr char SCR1_REG = 70;
+#endif
 } // namespace champsim
 
 // instruction format
@@ -32,18 +40,17 @@ constexpr std::size_t NUM_INSTR_DESTINATIONS = 2;
 constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
 
- 
 #ifdef CHERI
+
+constexpr std::size_t CAP_INSTR_MASK = 0x1;
+constexpr std::size_t CAP_SRC_MASK = 0x2;
+constexpr std::size_t CAP_DEST_MASK = 0x4;
+constexpr std::size_t CAP_MEM_MASK = 0x8;
 
 struct capability_metadata
 {
-  unsigned long long base, length, offset;
-  unsigned short perms;
-  unsigned char tag, sealed;
-
-  unsigned long long get_cursor() {return (base + offset); }
-  unsigned long long get_top() { return {base + length}; }
-  //unsigned long long get_offset() { return {cursor - base};}
+  unsigned long long pesbt, cursor;
+  unsigned char tag;
 };
 #endif
 
@@ -56,29 +63,17 @@ struct input_instr {
   unsigned char is_branch;
   unsigned char branch_taken;
 
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
 #ifdef CHERI
-
-  unsigned char is_cap_instr;
-
-  // Register operands with capability metadata
-  struct 
-  {
-    unsigned char reg_id;
-    struct capability_metadata cap;
-  } destination_registers[NUM_INSTR_DESTINATIONS], source_registers[NUM_INSTR_SOURCES];
-
-
+  unsigned char is_cap;
   // Memory operands with capability metadata (address = cap.base + cap.offset)
   struct {
     unsigned long long address;
     struct capability_metadata cap;
   } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
-
-  unsigned char is_cap_instr;
+  
 #else
-  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
-
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
@@ -94,21 +89,20 @@ struct cloudsuite_instr {
   unsigned char branch_taken;
   unsigned char asid[2];
 
+
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
+
 #ifdef CHERI
 
-  // Register operands with capability metadata
-  struct 
-  {
-    unsigned char reg_id;
-    struct capability_metadata cap;
-  } destination_registers[NUM_INSTR_DESTINATIONS_SPARC], source_registers[NUM_INSTR_SOURCES];
 
 
   // Memory operands with capability metadata (address = cap.base + cap.offset)
-  capability_metadata destination_memory[NUM_INSTR_DESTINATIONS_SPARC], source_memory[NUM_INSTR_SOURCES];
+  struct {
+    capability_metadata cap;
+    unsigned long long address;
+  } destination_memory[NUM_INSTR_DESTINATIONS_SPARC], source_memory[NUM_INSTR_SOURCES];
 #else
-  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
 
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory

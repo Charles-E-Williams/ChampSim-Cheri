@@ -1,5 +1,6 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBUG  -DCHERI
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBUG 
+#-g -fsanitize=address,undefined
 LDFLAGS = -llzma -lre2 -pthread -L/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/build -lcheri_compressed_cap14 -flto=auto
 
 TARGET = cheriQEMU_converter

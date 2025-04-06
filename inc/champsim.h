@@ -40,7 +40,6 @@ struct deadlock : public std::exception {
 };
 
 #ifdef CHERI
-
 struct capability_metadata
 {
   unsigned long long base, length, offset;

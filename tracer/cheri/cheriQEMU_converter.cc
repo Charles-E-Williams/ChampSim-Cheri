@@ -7,51 +7,51 @@
 #include <vector>
 #include <cstdint>
 #include <cstring>
-#include "../../inc/trace_instruction.h"
-#include "../../../cheri-compressed-cap/cheri_compressed_cap.h"
+#include <cassert>
+#include <algorithm>
 
+
+#define CHERI
+#include "../../inc/trace_instruction.h"
 using cap_data = capability_metadata;
 using trace_instr_format = input_instr;
-
 
 struct ProgramTrace
 {
 
-    std::unordered_map<int, cap_data> cap_regs;
     std::unordered_map<uint64_t, cap_data> mem_caps;
+    
+    //current instruction context
     trace_instr_format curr_instr;
-    std::string partial_line;
-    bool is_cap;
-    int src_mem_idx = 0; int dest_mem_idx = 0;
+    bool pending_instr = false;
+    uint64_t next_pc = 0;
+    bool verbose;
+
+
+    void instr_trace_init()
+    {
+
+        mem_caps.clear();
+        pending_instr = false;
+        next_pc = 0;
+        std::fill_n(curr_instr.destination_registers, NUM_INSTR_DESTINATIONS, 0);
+        std::fill_n(curr_instr.source_registers, NUM_INSTR_SOURCES, 0);
+        std::memset(curr_instr.destination_memory, 0, sizeof(curr_instr.destination_memory));
+        std::memset(curr_instr.source_memory, 0, sizeof(curr_instr.source_memory));
+        std::memset(&curr_instr, 0, sizeof(trace_instr_format));
+    }
 };
 
-void reset_instr(ProgramTrace& trace)
-{
-    memset(&trace.curr_instr, 0, sizeof(trace_instr_format));
-    trace.is_cap = false;
-    trace.partial_line = "";
-    trace.src_mem_idx = trace.dest_mem_idx = 0;
-}
 
 
 
-void print_cap(cap_data cap)
-{
-    std::cout << 
-        "Tag = " << static_cast<int>(cap.tag) << "\n"
-        "Sealed = " << static_cast<int>(cap.sealed) << "\n"
-        "Base = " << std::hex << "0x" << cap.base << "\n"
-        "Length = " << std::hex << "0x" << cap.length << "\n"
-        "Top = " << std::hex << "0x" << cap.get_top() << "\n"
-        "Cursor = " << std::hex << "0x" << cap.get_cursor() << "\n"
-        "Offset = " << std::hex << "0x" << cap.offset << "\n"
-        "Permission = " << std::hex << "0x" << cap.perms << "\n";
-}
 // Control flow instructions
 const std::unordered_set<std::string> CONTROL_FLOW_INST = {
     "j", "jal", "beq", "bne", "blt", "bge", "bltu", "bgeu", "jalr",
-    "beqz", "bnez", "cjal", "cjalr", "jalr.cap"
+    "beqz", "bnez", "cjal", "cjalr", "jalr.cap", "jr", "ret"
 };
+
+
 
 // Regex patterns 
 const std::regex instr_pattern(R"(\[\d+:\d+\]\s+(0x[0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+([\w\.]+)\s*(.*))");
@@ -62,12 +62,18 @@ const std::regex cap_reg_write_pattern(
     R"(Write (c\d+)\/\w+\|v:(\d+) s:(\d+) p:([0-9a-fA-F]+) f:(\d+) b:([0-9a-fA-F]+) l:([0-9a-fA-F]+).*\|o:([0-9a-fA-F]+) t:([0-9a-fA-F]+))"
 );
 const std::regex reg_write_pattern(R"(Write (x\d+)/\w+ = ([0-9a-fA-F]+))");
-const std::regex cap_tag_pattern(
-    R"(Cap Tag (Read|Write) \[([0-9a-fA-Fx]+)\/[0-9a-fA-Fx]+\] (\d+) -> (\d+))"
-);
+
+
+// const std::regex cap_tag_write_pattern(
+//     R"(Cap Tag (Read|Write) \[([0-9a-fA-Fx]+)\/[0-9a-fA-Fx]+\] (\d+) -> (\d+))"
+// );
+// const std::regex cap_tag_read_pattern(
+//     R"(Cap\s+Tag\s+Read\s+\[([0-9a-fA-Fx]+)\/([0-9a-fA-Fx]+)\]\s+->\s+(\d+))"
+// );
 
 const std::unordered_map<std::string, int> reg_name_to_id = {
     // Integer registers
+    {"zero",0 },
     {"ra", 1}, {"sp", 2}, {"gp", 3}, {"tp", 4},
     {"t0", 5}, {"t1", 6}, {"t2", 7},
     {"s0", 8}, {"fp", 8}, {"s1", 9},
@@ -119,81 +125,187 @@ const std::unordered_map<std::string, int> reg_name_to_id = {
     {"f16", 16}, {"f17", 17}, {"f18", 18}, {"f19", 19},
     {"f20", 20}, {"f21", 21}, {"f22", 22}, {"f23", 23},
     {"f24", 24}, {"f25", 25}, {"f26", 26}, {"f27", 27},
-    {"f28", 28}, {"f29", 29}, {"f30", 30}, {"f31", 31}
+    {"f28", 28}, {"f29", 29}, {"f30", 30}, {"f31", 31},
 
+
+    {"ft0", 0}, {"ft1", 1}, {"ft2", 2}, {"ft3", 3}, {"ft4", 4}, {"ft5", 5}, {"ft6", 6}, {"ft7", 7},
+    {"fs0", 8}, {"fs1", 9},
+    {"fa0", 10}, {"fa1", 11}, {"fa2", 12}, {"fa3", 13}, {"fa4", 14}, {"fa5", 15},
+    {"fa6", 16}, {"fa7", 17},
+    {"fs2", 18}, {"fs3", 19}, {"fs4", 20}, {"fs5", 21}, {"fs6", 22}, {"fs7", 23},
+    {"fs8", 24}, {"fs9", 25}, {"fs10", 26}, {"fs11", 27},
+    {"ft8", 28}, {"ft9", 29}, {"ft10", 30}, {"ft11", 31},
+
+    {"scr1", champsim::SCR1_REG}
 };
 
 
-cap_data* decode_capability(uint64_t pesbt, uint64_t cursor, bool valid, cap_data* cap )
+void process_reg_write(ProgramTrace& trace, const std::smatch& match)
 {
-    assert(cap);
+    const std::string reg_name = match[1].str();
+    const uint8_t reg_id  = reg_name_to_id.at(reg_name);
 
-    //decoding capabilities in memory for the risc-v standard format
-    cc128r_cap_t result;
-    cc128r_decompress_mem(pesbt, cursor, valid, &result);
-    cap->tag = valid;
-    cap->sealed = result.is_sealed(); 
-    cap->base = result.cr_base;
-    cap->length = result.length();
-    cap->offset = result.offset();
-    cap->perms = result.all_permissions();
-    
-    
-    assert(cc128r_is_representable_cap_exact(&result));
-    return cap;
+    for (auto& dest : trace.curr_instr.destination_registers) {
+        if (dest ==0) {
+            dest = (uint8_t)reg_id;
+            break;
+        }
+    }
 }
 
 
-
-void parse_trace(ProgramTrace& trace, std::string& line)
+void process_cap_reg_write(ProgramTrace& trace, const std::smatch& match)
 {
+    const std::string reg_name = match[1].str();
+    const uint8_t reg_id  = reg_name_to_id.at(reg_name);
+
+    for (auto& dest : trace.curr_instr.destination_registers) {
+        if (dest ==0) {
+            dest = (uint8_t)reg_id;
+            break;
+        }
+    }
+
+}
+
+void parse_trace(ProgramTrace& trace, const std::string& operands)
+{
+    std::regex registerPattern(
+        // Match instruction label/name if present (optional)
+        "(?:\\w+\\s+)?"
+        // Match destination register
+        "([a-z][0-9a-z]+)\\s*,\\s*"
+        // Match different source patterns:
+        "(?:"
+            // Format 1: src1, src2, src3 (for FP instructions with 3 sources)
+            "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)|"
+            // Format 2: src1, src2 or src1, immediate
+            "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)|"
+            // Format 3: immediate(src)
+            "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)"
+        ")"
+    );
+
+
     std::smatch match;
+    // std::cout << operands << std::endl;
+    if (std::regex_search(operands, match, registerPattern))
+    {
+        if(match[2].matched && match[3].matched && match[4].matched) {
+
+            std::string src1, src2, src3;
+            src1 = match[2].str(); src2 = match[3].str(); src3 = match[4].str();
+
+
+            std::cout << "src1 = " << src1 << std::endl;
+            std::cout << "src2 = " << src2 << std::endl;
+            std::cout << "src3 = " << src3 << std::endl;
+
+            trace.curr_instr.source_registers[0] = reg_name_to_id.at(src1);             
+            trace.curr_instr.source_registers[1] = reg_name_to_id.at(src2);
+            trace.curr_instr.source_registers[2] = reg_name_to_id.at(src3);
+
+        }
+
+        else if (match[5].matched) {
+            std::string src1 = match[5].str();
+            std::cout << "src1 = " << src1 << std::endl;
+            trace.curr_instr.source_registers[0] = reg_name_to_id.at(src1);
+
+            std::string src2 = match[6].str();
+            if (!src2.empty() && (std::isalpha(static_cast<unsigned char>(src2[0])))) {
+                std::cout << "src2 = " << src2 << std::endl;
+                trace.curr_instr.source_registers[1] = reg_name_to_id.at(src2);
+  
+            }
+        }
+
+        else if (match[8].matched) {
+            std::cout << "src1 = " << match[8].str() << std::endl;
+            trace.curr_instr.source_registers[0] = reg_name_to_id.at(match[8].str());
+        }
+            
+        
+    }
+
+    
+
+
+
+
+
+ 
+
 
 }
 
 int main(int argc, char* argv[])
 {
 
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace>\n";
+    if (argc < 3) {
+        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace> [-v] \n";
         exit(EXIT_FAILURE);
     }
 
-    std::ifstream trace_file(argv[1]);
+    std::string fileName = argv[1];
+    std::ifstream trace_file(fileName);
+    std::string oFilename = std::string(argv[2]) + ".champsim.bin";
+
     if (!trace_file.is_open()) {
-        std::cerr << "Trace file does not exist\n";
+        std::cerr << "Error: Trace file at path" << std::string(argv[1]) << " could not be opened.\n";
         exit (EXIT_FAILURE);
     }
+    std::ofstream trace_outFile(oFilename, std::ios::binary);
+    if(!trace_outFile.is_open())
+    {
+        std::cerr << "Error: Could not open output file " << oFilename << std::endl;
+        exit(EXIT_FAILURE);
+    }
 
-    std::string oFilename = argv[2];
-    oFilename += + ".champsim.bin";
 
-
+    
 
     ProgramTrace trace;
+    trace.verbose = (argc > 3 && std::string(argv[3]) == "-v");
     std::string line;
-    unsigned long long line_number = 0;
 
-    try
+    trace.instr_trace_init();
+    while (std::getline(trace_file, line))
     {
-        while (std::getline(trace_file, line))
-        {
-            line_number++;
+        std::smatch match;
+        
+        if(line.find("Write c") != std::string::npos) {
+            std::string next_line;
+            auto old_post = trace_file.tellg();
+            if(getline(trace_file,next_line) && next_line.find("|o:") != std::string::npos) 
+                line += " " + next_line;
 
-            if (!trace.partial_line.empty())
-            {
-                line = trace.partial_line + " " + line;
-                trace.partial_line.clear();
+            else {
+                std::cerr << "ERROR: Capability Register Write metadata not found in the next line\n";
+                exit(EXIT_FAILURE);
             }
+        }
+
+
+
+        if (std::regex_match(line, match, instr_pattern)) {
+            if (trace.pending_instr) {
+                trace.next_pc = std::stoull(match[1], nullptr, 0x10);
+            }
+
+
+            trace.curr_instr.ip = std::stoull(match[1], nullptr, 0x10);
+            trace.curr_instr.is_branch = CONTROL_FLOW_INST.count(match[3]);
+            parse_trace(trace, match[4].str());
+            trace.pending_instr = true;
+
 
 
         }
 
 
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error at line " << line_number << ": " << e.what() << std::endl;
-        return EXIT_FAILURE;
+        // if(!parse_trace(trace, line)) continue;
+            
     }
     
 

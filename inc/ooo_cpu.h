@@ -73,7 +73,7 @@ struct LSQ_ENTRY : champsim::program_ordered<LSQ_ENTRY> {
 
 
   #ifdef CHERI
-    champsim::capability_metadata cap_metadata{};
+  champsim::capability_metadata cap_metadata {};
   #endif
 
   uint64_t producer_id = std::numeric_limits<uint64_t>::max();
