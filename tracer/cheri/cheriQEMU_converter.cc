@@ -40,6 +40,57 @@ struct ProgramTrace
         std::memset(curr_instr.source_memory, 0, sizeof(curr_instr.source_memory));
         std::memset(&curr_instr, 0, sizeof(trace_instr_format));
     }
+
+
+    void debug_print_instruction() const {
+        std::cout << "\n=== Instruction Debug ==="
+         << "\nPC: 0x" << std::hex << curr_instr.ip
+         << "\nIs Branch: " << std::dec << (int)curr_instr.is_branch
+         << "\nBranch Taken: " << (int)curr_instr.branch_taken
+         << "\nIs Capability: " << (int)curr_instr.is_cap
+         << "\n\nDestination Registers: ";
+        
+        // Print destination registers
+        for (std::size_t i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+            if (curr_instr.destination_registers[i]) {
+                std::cout << "Reg " << (int)curr_instr.destination_registers[i] << " ";
+            }
+        }
+        
+        std::cout << "\nSource Registers: ";
+        // Print source registers
+        for (std::size_t i = 0; i < NUM_INSTR_SOURCES; i++) {
+            if (curr_instr.source_registers[i]) {
+                std::cout << "Reg " << (int)curr_instr.source_registers[i] << " ";
+            }
+        }
+        
+        std::cout << "\n\nMemory Operands:";
+        // Print destination memory
+        std::cout << "\nDestination Memory:";
+        for (const auto& mem : curr_instr.destination_memory) {
+            if (mem.address) {
+                std::cout << "\n Addr: 0x" << std::hex << mem.address
+                << " | PESBT: 0x" << mem.cap.pesbt
+                << " | Cursor: 0x" << mem.cap.cursor
+                << " | Tag: " << (int)mem.cap.tag;
+            }
+        }
+        
+        // Print source memory
+        std::cout << "\nSource Memory:";
+        for (const auto& mem : curr_instr.source_memory) {
+            if (mem.address) {
+                std::cout << "\n Addr: 0x" << std::hex << mem.address
+                << " | PESBT: 0x" << mem.cap.pesbt
+                << " | Cursor: 0x" << mem.cap.cursor
+                << " | Tag: " << (int)mem.cap.tag;
+            }
+        }
+        
+        std::cout << "\n=========================\n" << std::dec << std::endl;
+    }
+
 };
 
 
@@ -140,14 +191,73 @@ const std::unordered_map<std::string, int> reg_name_to_id = {
 };
 
 
+void write_instr(ProgramTrace& trace, std::ofstream& out) {
+
+    if (trace.curr_instr.is_branch)
+        trace.curr_instr.branch_taken = (trace.curr_instr.ip + 4) != trace.next_pc;
+
+    trace.curr_instr.is_cap = 0;
+    for (const auto& dest : trace.curr_instr.destination_memory) {
+        if (dest.address != 0) {
+            trace.curr_instr.is_cap = 1;
+            break;
+        }   
+    }
+
+    if (!trace.curr_instr.is_cap) {
+        for (const auto& src : trace.curr_instr.source_memory) {
+            if (src.address != 0) {
+                trace.curr_instr.is_cap = 1;
+                break;
+            }
+        }
+    }
+
+    if (trace.verbose)
+        trace.debug_print_instruction();
+
+    out.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
+    trace.instr_trace_init();
+}
+
+void process_mem_access(ProgramTrace& trace, const std::smatch& match, bool is_store)
+{
+    const uint64_t addr = std::stoull(match[2].str(), nullptr, 0x10);
+    const bool tag = std::stoi(match[3]) != 0;
+    const uint64_t pesbt = std::stoull(match[4].str(), nullptr, 0x10);
+    const uint64_t cursor = std::stoull(match[5].str(), nullptr, 0x10);
+
+    // std::cout << "PESBT = 0x" << std::hex << pesbt << " Cursor = 0x" << std::hex << cursor << std::endl;
+    // std::cout << "ADDR = 0x" << std::hex << addr << std::endl;
+    // std::cout << "TAG IS " << (int)tag << std::endl;
+
+    cap_data cap = {pesbt, cursor, static_cast<unsigned char>(tag)};
+    trace.mem_caps[addr] = cap;
+
+
+    const auto& ops = is_store ? trace.curr_instr.destination_memory : trace.curr_instr.source_memory;
+    const std::size_t size = is_store ? NUM_INSTR_DESTINATIONS : NUM_INSTR_SOURCES;
+
+    for (std::size_t i = 0; i < size; i++) {
+        auto& op = ops[i];
+        if (op.address == 0) {
+            op.address = (unsigned long long)addr;
+            op.cap = cap;
+            break;
+        }
+
+    }
+    
+}
+
 void process_reg_write(ProgramTrace& trace, const std::smatch& match)
 {
+
     const std::string reg_name = match[1].str();
     const uint8_t reg_id  = reg_name_to_id.at(reg_name);
-
     for (auto& dest : trace.curr_instr.destination_registers) {
         if (dest ==0) {
-            dest = (uint8_t)reg_id;
+            dest = (unsigned char)reg_id;
             break;
         }
     }
@@ -156,12 +266,13 @@ void process_reg_write(ProgramTrace& trace, const std::smatch& match)
 
 void process_cap_reg_write(ProgramTrace& trace, const std::smatch& match)
 {
+
     const std::string reg_name = match[1].str();
     const uint8_t reg_id  = reg_name_to_id.at(reg_name);
 
     for (auto& dest : trace.curr_instr.destination_registers) {
-        if (dest ==0) {
-            dest = (uint8_t)reg_id;
+        if (dest == 0 ) {
+            dest = (unsigned char)reg_id;
             break;
         }
     }
@@ -182,13 +293,14 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
             // Format 2: src1, src2 or src1, immediate
             "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)|"
             // Format 3: immediate(src)
-            "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)"
+            "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)|"
+            // Format 4: single src register (move instr)
+            "([a-z][0-9a-z]+)"
         ")"
     );
 
 
     std::smatch match;
-    // std::cout << operands << std::endl;
     if (std::regex_search(operands, match, registerPattern))
     {
         if(match[2].matched && match[3].matched && match[4].matched) {
@@ -197,9 +309,9 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
             src1 = match[2].str(); src2 = match[3].str(); src3 = match[4].str();
 
 
-            std::cout << "src1 = " << src1 << std::endl;
-            std::cout << "src2 = " << src2 << std::endl;
-            std::cout << "src3 = " << src3 << std::endl;
+            // std::cout << "src1 = " << src1 << std::endl;
+            // std::cout << "src2 = " << src2 << std::endl;
+            // std::cout << "src3 = " << src3 << std::endl;
 
             trace.curr_instr.source_registers[0] = reg_name_to_id.at(src1);             
             trace.curr_instr.source_registers[1] = reg_name_to_id.at(src2);
@@ -209,32 +321,34 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
 
         else if (match[5].matched) {
             std::string src1 = match[5].str();
-            std::cout << "src1 = " << src1 << std::endl;
+            // std::cout << "src1 = " << src1 << std::endl;
             trace.curr_instr.source_registers[0] = reg_name_to_id.at(src1);
 
             std::string src2 = match[6].str();
             if (!src2.empty() && (std::isalpha(static_cast<unsigned char>(src2[0])))) {
-                std::cout << "src2 = " << src2 << std::endl;
+                // std::cout << "src2 = " << src2 << std::endl;
                 trace.curr_instr.source_registers[1] = reg_name_to_id.at(src2);
   
             }
         }
 
         else if (match[8].matched) {
-            std::cout << "src1 = " << match[8].str() << std::endl;
+            // std::cout << "src1 = " << match[8].str() << std::endl;
             trace.curr_instr.source_registers[0] = reg_name_to_id.at(match[8].str());
-        }
-            
-        
+        }  
+
+        else if (match[9].matched) {
+            //  std::cout << "src1 = " << match[9].str() << std::endl;
+            trace.curr_instr.source_registers[0] = reg_name_to_id.at(match[9].str());
+        }  
     }
 
-    
+    // else {
 
+    //     std::cerr << operands << std::endl;
 
+    // }
 
-
-
- 
 
 
 }
@@ -286,11 +400,14 @@ int main(int argc, char* argv[])
             }
         }
 
-
-
         if (std::regex_match(line, match, instr_pattern)) {
+
+            if (match[3].str() == "fence")  //maintain a list of "dont care instructions"
+                continue;
+
             if (trace.pending_instr) {
                 trace.next_pc = std::stoull(match[1], nullptr, 0x10);
+                write_instr(trace,trace_outFile);
             }
 
 
@@ -299,16 +416,30 @@ int main(int argc, char* argv[])
             parse_trace(trace, match[4].str());
             trace.pending_instr = true;
 
+        }
 
+        else if (std::regex_search(line,match, cap_reg_write_pattern)) {
+            // std::cout << "match\n";
+            process_cap_reg_write(trace,match);
+            trace.instr_trace_init();
 
         }
 
+        else if (std::regex_search(line,match, reg_write_pattern)) {
+            process_reg_write(trace,match);
+            trace.instr_trace_init();
+        }
+
+
+        else if (std::regex_search(line,match, cap_mem_pattern)){
+            process_mem_access(trace, match, match[1].str() == "WRITE");
+        }
 
         // if(!parse_trace(trace, line)) continue;
-            
     }
     
 
+    if (trace.pending_instr) write_instr(trace,trace_outFile);
 
     return EXIT_SUCCESS;
 
