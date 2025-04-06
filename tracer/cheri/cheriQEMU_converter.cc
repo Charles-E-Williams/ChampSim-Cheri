@@ -107,7 +107,8 @@ struct ProgramTrace
 // Control flow instructions
 const std::unordered_set<std::string> CONTROL_FLOW_INST = {
     "j", "jal", "beq", "bne", "blt", "bge", "bltu", "bgeu", "jalr",
-    "beqz", "bnez", "cjal", "cjalr", "jalr.cap", "jr", "ret"
+    "beqz", "bnez", "cjal", "cjalr", "jalr.cap", "jr", "ret", "bgtu",
+    "ble", "bleu", "bgez", "blez", "bgtz", "bltz", "bgt"
 };
 
 
@@ -247,10 +248,9 @@ void process_mem_access(ProgramTrace& trace, const std::smatch& match, bool is_s
     const std::size_t size = is_store ? NUM_INSTR_DESTINATIONS : NUM_INSTR_SOURCES;
 
     for (std::size_t i = 0; i < size; i++) {
-        auto& op = ops[i];
-        if (op.address == 0) {
-            op.address = (unsigned long long)addr;
-            op.cap = cap;
+        if (ops[i].address == 0) {
+            ops[i].address = (unsigned long long)addr;
+            ops[i].cap = cap;
             break;
         }
 
@@ -262,35 +262,58 @@ void process_reg_write(ProgramTrace& trace, const std::smatch& match)
 {
 
     const std::string reg_name = match[1].str();
-    const uint8_t reg_id  = reg_name_to_id.at(reg_name);
-    for (auto& dest : trace.curr_instr.destination_registers) {
-        if (dest ==0) {
-            dest = (unsigned char)reg_id;
-            return;
+
+    try {
+        const uint8_t reg_id  = reg_name_to_id.at(reg_name);
+
+        if (trace.verbose) 
+            std::cout << "[DEBUG] Processing destination register: " << reg_name << " (ID " << static_cast<int>(reg_id) << ")\n";
+        
+
+        for (auto& dest : trace.curr_instr.destination_registers) {
+            if (dest ==0) {
+                dest = (unsigned char)reg_id;
+                return;
+            }
         }
+
+        if (trace.verbose) {
+            std::cerr << "Warning: All destination register slots full when trying to add " << static_cast<int>(reg_id) << std::endl;
+            std::cerr << "Current destination register: ";
+
+            for (const auto& r : trace.curr_instr.destination_registers) {
+                std::cerr << static_cast<int>(r) << " ";
+            }
+            std::cerr << std::endl;
+        }
+
+    } catch (const  std::out_of_range&) {
+        std::cerr << "Unknown register " << reg_name << std::endl;
     }
 
-    if (trace.verbose)
-        std::cerr << "Warning: All destination register slots full when trying to add" << static_cast<int>(reg_id) << std::endl;
+    
 }
 
 
-void process_cap_reg_write(ProgramTrace& trace, const std::smatch& match)
-{
+// void process_cap_reg_write(ProgramTrace& trace, const std::smatch& match)
+// {
 
-    const std::string reg_name = match[1].str();
-    const uint8_t reg_id  = reg_name_to_id.at(reg_name);
+//     const std::string reg_name = match[1].str();
+//     const uint8_t reg_id  = reg_name_to_id.at(reg_name);
 
-    for (auto& dest : trace.curr_instr.destination_registers) {
-        if (dest == 0 ) {
-            dest = (unsigned char)reg_id;
-            return;
-        }
-    }
-    if (trace.verbose)
-        std::cerr << "Warning: All destination register slots full when trying to add" << static_cast<int>(reg_id) << std::endl;
+//     for (auto& dest : trace.curr_instr.destination_registers) {
+//         if (dest == 0 ) {
+//             dest = (unsigned char)reg_id;
+//             return;
+//         }
+//     }
+//     if (trace.verbose)
+//         std::cerr << "Warning: All destination register slots full when trying to add" << static_cast<int>(reg_id) << std::endl;
+// }
 
-}
+
+
+
 
 void parse_trace(ProgramTrace& trace, const std::string& operands)
 {
@@ -412,9 +435,7 @@ int main(int argc, char* argv[])
         }
 
         if (std::regex_match(line, match, instr_pattern)) {
-            if (trace.verbose)
-                trace.mnemonic = match[3].str();
-
+ 
             if (match[3].str() == "fence")  //maintain a list of "dont care instructions"
                 continue;
 
@@ -426,23 +447,29 @@ int main(int argc, char* argv[])
                 trace.instr_trace_init();
             }
 
+            if (trace.pending_instr) {
+                write_instr(trace, trace_outFile);
+                trace.instr_trace_init();
+            }
+
 
             trace.curr_instr.ip = std::stoull(match[1].str(), nullptr, 0x10);
             trace.curr_instr.is_branch = CONTROL_FLOW_INST.count(match[3].str());
-
+            if (trace.verbose)
+                trace.mnemonic = match[3].str();
+            parse_trace(trace, match[4].str());
             if (trace.curr_instr.is_branch) {
                 trace.pending_branch = true;
                 trace.branch_pc = trace.curr_instr.ip;
             }
 
-            parse_trace(trace, match[4].str());
             trace.pending_instr = true;    
         }
 
-        else if (trace.pending_instr && !trace.pending_branch) {
+        else if (trace.pending_instr) {
 
             if (std::regex_search(line,match, cap_reg_write_pattern)) {
-                process_cap_reg_write(trace,match);
+                process_reg_write(trace,match);
 
             }
 
@@ -459,6 +486,10 @@ int main(int argc, char* argv[])
     
 
     if (trace.pending_instr) write_instr(trace,trace_outFile);
+
+
+    trace_file.close();
+    trace_outFile.close();
 
     return EXIT_SUCCESS;
 
