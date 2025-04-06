@@ -101,10 +101,6 @@ public:
     access_type type;
     bool prefetch_from_this;
 
-    #ifdef CHERI
-    champsim::capability_metadata cap_metadata {};
-    #endif
-
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
     champsim::chrono::clock::time_point time_enqueued;

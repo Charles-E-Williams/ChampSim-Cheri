@@ -202,8 +202,6 @@ const std::unordered_map<std::string, int> reg_name_to_id = {
 
 void write_instr(ProgramTrace& trace, std::ofstream& out) {
 
-    if (trace.curr_instr.is_branch)
-        trace.curr_instr.branch_taken = (trace.curr_instr.ip + 4) != trace.next_pc;
 
     trace.curr_instr.is_cap = 0;
     for (const auto& dest : trace.curr_instr.destination_memory) {
@@ -222,11 +220,16 @@ void write_instr(ProgramTrace& trace, std::ofstream& out) {
         }
     }
 
+    if (trace.curr_instr.is_branch) {
+        trace.curr_instr.branch_taken = (trace.curr_instr.ip + 4) != trace.next_pc;
+        trace.pending_branch = false;
+    }
+
     if (trace.verbose)
         trace.debug_print_instruction();
 
     out.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
-   // trace.instr_trace_init();
+    trace.instr_trace_init();
 }
 
 void process_mem_access(ProgramTrace& trace, const std::smatch& match, bool is_store)
@@ -418,9 +421,19 @@ int main(int argc, char* argv[])
     std::string line;
 
     trace.instr_trace_init();
-    while (std::getline(trace_file, line))
-    {
+    while (std::getline(trace_file, line)) {
         std::smatch match;
+
+
+        if (trace.pending_branch) {
+            if (std::regex_match(line, match, instr_pattern)) {
+                trace.next_pc = std::stoull(match[1].str(), nullptr, 0x10);
+                write_instr(trace,trace_outFile);
+                trace.pending_branch = false;
+            }
+
+            else continue;
+        }
         
         if(line.find("Write c") != std::string::npos) {
             std::string next_line;
@@ -440,33 +453,27 @@ int main(int argc, char* argv[])
                 continue;
 
 
-            if (trace.pending_branch) {
-                trace.next_pc = std::stoull(match[1].str(), nullptr, 0x10);
-                trace.curr_instr.branch_taken = (trace.branch_pc + 4) != trace.next_pc;
-                write_instr(trace,trace_outFile);
-                trace.instr_trace_init();
-            }
-
-            if (trace.pending_instr) {
+            if (trace.pending_instr) 
                 write_instr(trace, trace_outFile);
-                trace.instr_trace_init();
-            }
+            
 
 
             trace.curr_instr.ip = std::stoull(match[1].str(), nullptr, 0x10);
             trace.curr_instr.is_branch = CONTROL_FLOW_INST.count(match[3].str());
             if (trace.verbose)
                 trace.mnemonic = match[3].str();
-            parse_trace(trace, match[4].str());
+
             if (trace.curr_instr.is_branch) {
                 trace.pending_branch = true;
                 trace.branch_pc = trace.curr_instr.ip;
             }
 
             trace.pending_instr = true;    
+            parse_trace(trace, match[4].str());
+
         }
 
-        else if (trace.pending_instr) {
+        else if (trace.pending_instr && !trace.pending_branch) {
 
             if (std::regex_search(line,match, cap_reg_write_pattern)) {
                 process_reg_write(trace,match);

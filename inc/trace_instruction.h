@@ -18,20 +18,25 @@
 #define TRACE_INSTRUCTION_H
 #include <limits>
 
-
-#ifdef CHERI
-#include "/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/cheri_compressed_cap.h"
-#endif
+#define CHERI
+// #ifdef CHERI
+// #include "/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/cheri_compressed_cap.h"
+// #endif
 // special registers that help us identify branches
 namespace champsim
 {
+#ifdef CHERI
+constexpr char REG_STACK_POINTER = 2;
+constexpr char REG_FLAGS = 33;
+constexpr char REG_INSTRUCTION_POINTER = 1;
+constexpr char SCR1_REG = 70;
+
+#else
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
-
-#ifdef CHERI
-constexpr char SCR1_REG = 70;
 #endif
+
 } // namespace champsim
 
 // instruction format
@@ -94,8 +99,7 @@ struct cloudsuite_instr {
   unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
 
 #ifdef CHERI
-
-
+  unsigned char is_cap;
 
   // Memory operands with capability metadata (address = cap.base + cap.offset)
   struct {

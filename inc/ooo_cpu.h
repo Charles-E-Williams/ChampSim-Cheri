@@ -72,9 +72,6 @@ struct LSQ_ENTRY : champsim::program_ordered<LSQ_ENTRY> {
   bool fetch_issued = false;
 
 
-  #ifdef CHERI
-  champsim::capability_metadata cap_metadata {};
-  #endif
 
   uint64_t producer_id = std::numeric_limits<uint64_t>::max();
   std::vector<std::reference_wrapper<std::optional<LSQ_ENTRY>>> lq_depend_on_me{};
