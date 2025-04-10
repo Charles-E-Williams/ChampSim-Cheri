@@ -19,24 +19,13 @@
 #include <limits>
 
 #define CHERI
-// #ifdef CHERI
-// #include "/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/cheri_compressed_cap.h"
-// #endif
+
 // special registers that help us identify branches
 namespace champsim
 {
-#ifdef CHERI
-constexpr char REG_STACK_POINTER = 2;
-constexpr char REG_FLAGS = 33;
-constexpr char REG_INSTRUCTION_POINTER = 1;
-constexpr char SCR1_REG = 70;
-
-#else
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
-#endif
-
 } // namespace champsim
 
 // instruction format
@@ -54,8 +43,10 @@ constexpr std::size_t CAP_MEM_MASK = 0x8;
 
 struct capability_metadata
 {
-  unsigned long long pesbt, cursor;
-  unsigned char tag;
+  unsigned long long base, length, offset;
+  unsigned short perms;
+  unsigned long otype;
+  unsigned char flag, tag, sealed;
 };
 #endif
 
@@ -68,8 +59,7 @@ struct input_instr {
   unsigned char is_branch;
   unsigned char branch_taken;
 
-  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+        // input registers
 #ifdef CHERI
   unsigned char is_cap;
   // Memory operands with capability metadata (address = cap.base + cap.offset)
@@ -78,7 +68,14 @@ struct input_instr {
     struct capability_metadata cap;
   } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
   
+  struct {
+    unsigned char reg_id;
+    struct capability_metadata cap;
+  } destination_registers[NUM_INSTR_DESTINATIONS], source_registers[NUM_INSTR_SOURCES];
+
 #else
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];   
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
