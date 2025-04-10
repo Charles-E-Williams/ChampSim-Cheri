@@ -41,13 +41,13 @@ constexpr std::size_t CAP_SRC_MASK = 0x2;
 constexpr std::size_t CAP_DEST_MASK = 0x4;
 constexpr std::size_t CAP_MEM_MASK = 0x8;
 
-struct capability_metadata
+struct cap_metadata
 {
   unsigned long long base, length, offset;
   unsigned short perms;
-  unsigned long otype;
-  unsigned char flag, tag, sealed;
+  unsigned char tag;
 };
+
 #endif
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
@@ -65,12 +65,12 @@ struct input_instr {
   // Memory operands with capability metadata (address = cap.base + cap.offset)
   struct {
     unsigned long long address;
-    struct capability_metadata cap;
+    struct cap_metadata cap;
   } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
   
   struct {
     unsigned char reg_id;
-    struct capability_metadata cap;
+    struct cap_metadata cap;
   } destination_registers[NUM_INSTR_DESTINATIONS], source_registers[NUM_INSTR_SOURCES];
 
 #else
@@ -92,19 +92,24 @@ struct cloudsuite_instr {
   unsigned char asid[2];
 
 
-  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
+ 
 
 #ifdef CHERI
-  unsigned char is_cap;
 
+  unsigned char is_cap;
   // Memory operands with capability metadata (address = cap.base + cap.offset)
   struct {
-    capability_metadata cap;
     unsigned long long address;
+    struct cap_metadata cap;
   } destination_memory[NUM_INSTR_DESTINATIONS_SPARC], source_memory[NUM_INSTR_SOURCES];
+  
+  struct {
+    unsigned char reg_id;
+    struct cap_metadata cap;
+  } destination_registers[NUM_INSTR_DESTINATIONS_SPARC], source_registers[NUM_INSTR_SOURCES];
 #else
-
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory
 
