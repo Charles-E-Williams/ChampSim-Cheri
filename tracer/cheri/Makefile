@@ -1,6 +1,6 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBUG 
-#-g -fsanitize=address,undefined
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBU
+# -g -fsanitize=address,undefined
 LDFLAGS = -llzma -lre2 -pthread  -flto=auto -lboost_regex
 LDCHERI = -L/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/build -lcheri_compressed_cap14
 

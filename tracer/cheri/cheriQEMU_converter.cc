@@ -69,7 +69,7 @@ const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
     {"cjal", BRANCH_DIRECT_CALL},      // CHERI direct call
     
     // Indirect jumps and calls (I-type/JALR)
-//    {"jalr", BRANCH_INDIRECT_CALL},    // Usually a call, but context-dependent
+    // {"jalr", BRANCH_INDIRECT_CALL},    // Usually a call, but context-dependent
     {"jr", BRANCH_INDIRECT},           // Pseudo-instruction (jalr x0, rs, 0)
     {"cjalr", BRANCH_INDIRECT_CALL},   // CHERI indirect call
     {"jalr.cap", BRANCH_INDIRECT_CALL}, // CHERI capability call
@@ -78,6 +78,9 @@ const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
     // Return instructions
     {"ret", BRANCH_RETURN}             // Pseudo-instruction (jalr x0, ra, 0)
 };
+
+
+
 
 struct ProgramTrace
 {
@@ -102,6 +105,7 @@ struct ProgramTrace
     bool verbose;
     std::string mnemonic;
     RiscvBranchType branchType = NOT_BRANCH;
+    double bytes_written = 0.0;
     
     
     
@@ -146,17 +150,26 @@ struct ProgramTrace
         
 
         // // Print destination registers
-        for (std::size_t i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
-            if (curr_instr.destination_registers[i].reg_id) {
-                std::cout << "Reg " << (int)curr_instr.destination_registers[i].reg_id << " ";
+        for (const auto& regs : curr_instr.destination_registers) {
+            if (regs.reg_id) {
+                std::cout << "\n Reg " << (int)regs.reg_id
+                << " | Base 0x" << regs.cap.base
+                << " | Length: 0x" << regs.cap.length
+                << " | Offset: 0x" << regs.cap.offset
+                << " | Perms: 0x" << regs.cap.perms
+                << " | Object Type: 0x" << regs.cap.otype
+                << " | Flag:" << regs.cap.flag
+                << " | Sealed:" << regs.cap.sealed
+                << " | Tag:" << (int)regs.cap.tag;
             }
         }
         
         std::cout << "\nSource Registers: ";
         // Print source registers
-        for (std::size_t i = 0; i < NUM_INSTR_SOURCES; i++) {
-            if (curr_instr.source_registers[i].reg_id) {
-                std::cout << "Reg " << (int)curr_instr.source_registers[i].reg_id << " ";
+        for (const auto& regs : curr_instr.source_registers) {
+            if (regs.reg_id) {
+                std::cout << "Reg " << (int)regs.reg_id << " ";
+
             }
         }
         
@@ -165,10 +178,15 @@ struct ProgramTrace
         std::cout << "\nDestination Memory:";
         for (const auto& mem : curr_instr.destination_memory) {
             if (mem.address) {
-                // std::cout << "\n Addr: 0x" << std::hex << mem.address
-                // << " | PESBT: 0x" << mem.cap.pesbt
-                // << " | Cursor: 0x" << mem.cap.cursor
-                // << " | Tag: " << (int)mem.cap.tag;
+                std::cout << "\n Address: 0x" << std::hex << mem.address
+                << " | Base 0x" << mem.cap.base
+                << " | Length: 0x" << mem.cap.length
+                << " | Offset: 0x" << mem.cap.offset
+                << " | Perms: 0x" << mem.cap.perms
+                << " | Object Type: 0x" << mem.cap.otype
+                << " | Flag:" << (int)mem.cap.flag
+                << " | Sealed:" << (int)mem.cap.sealed
+                << " | Tag:" << (int)mem.cap.tag;
             }
         }
         
@@ -176,23 +194,28 @@ struct ProgramTrace
         std::cout << "\nSource Memory:";
         for (const auto& mem : curr_instr.source_memory) {
             if (mem.address) {
-                // std::cout << "\n Addr: 0x" << std::hex << mem.address
-                // << " | PESBT: 0x" << mem.cap.pesbt
-                // << " | Cursor: 0x" << mem.cap.cursor
-                // << " | Tag: " << (int)mem.cap.tag;
+                std::cout << "\n Address: 0x" << std::hex << mem.address
+                << " | Base 0x" << mem.cap.base
+                << " | Length: 0x" << mem.cap.length
+                << " | Offset: 0x" << mem.cap.offset
+                << " | Perms: 0x" << mem.cap.perms
+                << " | Object Type: 0x" << mem.cap.otype
+                << " | Flag:" << (int)mem.cap.flag
+                << " | Sealed:" << (int)mem.cap.sealed
+                << " | Tag:" << (int)mem.cap.tag;
             }
         }
+
+        
         
         std::cout << "\n=========================\n" << std::dec << std::endl;
     }
 
-
-    private:
         const char* RiscvBranchType_string() const {
             switch(branchType) {
                 case BRANCH_DIRECT_JUMP : return "Branch Direct Jump";
                 case BRANCH_INDIRECT : return "Branch Indirect";
-                case BRANCH_CONDITIONAL : return "Branch Unconditional";
+                case BRANCH_CONDITIONAL : return "Branch Conditional";
                 case BRANCH_DIRECT_CALL : return "Branch Direct Call";
                 case BRANCH_INDIRECT_CALL : return "Branch Indirect Call";
                 case BRANCH_RETURN : return "Branch Return";
@@ -225,47 +248,17 @@ const boost::regex registerPattern(
     "(?:"
         // Format 1: src1, src2, src3 (for FP instructions with 3 sources)
         "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)|"
-        // Format 2: src1, src2 or src1, immediate
-        "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)|"
-        // Format 3: immediate(src)
+        // Format 2: src1, src2 or src1, immediate - with negative lookahead to prevent matching jalr format
+        "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)(?!\\s*,)|"
+        // Format 3: immediate(src) - supports store/load instructions like sw rs2, offset(rs1)
         "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)|"
         // Format 4: single src register (move instr)
-        "([a-z][0-9a-z]+)"
+        "([a-z][0-9a-z]+)|"
+        // Format 5: src1, src2, immediate (for jalr-like instructions and alternative store format)
+        "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+)"
     ")"
 );
 
-
-// const boost::regex conditionalDirectPattern (
-//     "\\b(beq|bne|blt|bge|bltu|bgeu|beqz|bnez|bgtu|ble|bleu|bgez|blez|bgtz|bltz|bgt)\\b"
-//     "\\s+([xsafct][0-9]+|ra|sp|gp|tp|zero)\\s*,?\\s*"  // First register with flexible comma
-//     "(([xsafct][0-9]+|ra|sp|gp|tp|zero)\\s*,\\s*)?"    // Second register is optional for pseudo-instructions
-//     "([a-zA-Z0-9_\\.]+|[+-]?[0-9]+)"                   // Label or offset
-// );
-
-// // Unconditional direct jump pattern (J-type)
-// // Matches instructions like: jal label or jal x1, label
-// const boost::regex unconditionalDirectPattern (
-//     "\\b(j|jal|cjal)\\b"
-//     "(\\s+([xsafct][0-9]+|ra|sp|gp|tp|zero)\\s*,)?"  // Optional destination register
-//     "\\s+([a-zA-Z0-9_\\.]+|[+-]?[0-9]+)"             // Label or offset
-// );
-
-// // Unconditional indirect jump pattern (I-type/JALR)
-// // Matches instructions like: jalr x1, x2, 0 or jr x1 or ret
-// const boost::regex unconditionalIndirectPattern (
-//     "\\b(jalr|jr|ret|cjalr|jalr\\.cap)\\b"
-//     "(\\s+([xsafct][0-9]+|ra|sp|gp|tp|zero)"     // Optional destination register
-//     "(\\s*,\\s*([0-9]+\\s*\\()?(\\s*[xsafct][0-9]+|ra|sp|gp|tp|zero)(\\s*\\))?"  // Source register with optional offset
-//     "(\\s*,\\s*([+-]?[0-9]+))?)?)?"             // Optional immediate offset
-// );
-
-
-// const boost::regex cap_tag_write_pattern(
-//     R"(Cap Tag (Read|Write) \[([0-9a-fA-Fx]+)\/[0-9a-fA-Fx]+\] (\d+) -> (\d+))"
-// );
-// const boost::regex cap_tag_read_pattern(
-//     R"(Cap\s+Tag\s+Read\s+\[([0-9a-fA-Fx]+)\/([0-9a-fA-Fx]+)\]\s+->\s+(\d+))"
-// );
 
 const std::unordered_map<std::string, int> reg_map = {
     // Integer registers
@@ -363,7 +356,14 @@ void write_instr(ProgramTrace& trace, std::ofstream& out) {
 
 
     if (trace.verbose) trace.debug_print_instruction();
-    out.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
+
+    double bytes_written = static_cast<double>(sizeof(trace_instr_format));
+    out.write(reinterpret_cast<const char*>(&trace.curr_instr), bytes_written);
+    trace.bytes_written += bytes_written; 
+
+    if (trace.verbose) 
+        std::cout << "Wrote " << bytes_written << " bytes. Total bytes: " << trace.bytes_written << " bytes\n";
+    
     trace.instr_trace_init();
 }
 
@@ -385,7 +385,6 @@ cap_data decode_mem_cap(ProgramTrace& trace)
     c.perms = result.all_permissions();
     c.tag = result.cr_tag;
     
-    assert(result.cr_bounds_valid);
     return c;
 }
 
@@ -399,7 +398,7 @@ void process_mem_access(ProgramTrace& trace, const boost::smatch& match, bool is
 
     trace.mem_cap = {pesbt, cursor, tag};
 
-    const auto& ops = is_store ? trace.curr_instr.destination_memory : trace.curr_instr.source_memory;
+    auto*ops = is_store ? &trace.curr_instr.destination_memory[0] : &trace.curr_instr.source_memory[0];
     const std::size_t size = is_store ? NUM_INSTR_DESTINATIONS : NUM_INSTR_SOURCES;
 
     for (std::size_t i = 0; i < size; i++) {
@@ -452,6 +451,7 @@ void process_cap_reg_write(ProgramTrace& trace, const boost::smatch& match)
 {
 
     const std::string reg_name = match[1].str();
+    std::cout << "regname = " << reg_name;
     const uint8_t reg_id  = reg_map.at(reg_name);
 
     std::string v,p,f,b,l,o,t;
@@ -494,7 +494,6 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
         if (trace.curr_instr.is_branch) {
 
             switch (trace.branchType) {
-
             //writes IP only
             case BRANCH_DIRECT_JUMP: 
                 trace.curr_instr.destination_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
@@ -546,16 +545,19 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
             case BRANCH_OTHER: //JALR is context dependent
                 trace.curr_instr.branch_taken = true;
 
-                if(reg_map.at(match[2].str()) == 0) {  
-                    if (reg_map.at(match[3].str()) != 1) { //indirect jmp 
+
+                if(reg_map.at(match[1].str()) == 0) {  
+                    if (reg_map.at(match[5].str()) != 1) { //indirect jmp 
                         trace.curr_instr.destination_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
                         trace.curr_instr.source_registers[0].reg_id = ::REG_AX;
+                        break;
                     }
 
                     else { //return
                         trace.curr_instr.source_registers[0].reg_id = champsim::REG_STACK_POINTER;
                         trace.curr_instr.destination_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
                         trace.curr_instr.destination_registers[1].reg_id = champsim::REG_STACK_POINTER;
+                        break;
                     }
                 } else  { //indirect call       
                     trace.curr_instr.destination_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
@@ -563,6 +565,7 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                     trace.curr_instr.source_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
                     trace.curr_instr.source_registers[1].reg_id = champsim::REG_STACK_POINTER;
                     trace.curr_instr.source_registers[0].reg_id = ::REG_AX;
+                    break;
                 }
                 break;
 
@@ -573,10 +576,16 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
         else { 
             if (store_instructions.count(trace.mnemonic) > 0) { //stores
 
-                std::string src1;
-                src1 = match[2].str();
+                std::string src1, src2;
+                src1 = match[1].str();
                 trace.curr_instr.source_registers[0].reg_id = reg_map.at(src1);
-                std::string src2 = match[8].str();
+
+                if (!match[8].str().empty())
+                    src2 = match[8].str();
+
+                else if (!match[9].str().empty())
+                    src2 = match[9].str();
+
                 trace.curr_instr.source_registers[1].reg_id = reg_map.at(src2);
             }
 
@@ -614,9 +623,10 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
         }
     }
 
-    else {
-        if (trace.verbose) 
-            std::cerr << "Error: Unknown operands found: " << operands << std::endl;
+    else { 
+        if (trace.verbose) {
+            std::cerr << "No register operands found: " << operands << std::endl;
+        }
     }
 
 
@@ -689,6 +699,7 @@ int main(int argc, char* argv[])
             trace.mnemonic = match[3].str();
             auto RiscvBranchType = CONTROL_FLOW_INST.count(trace.mnemonic) ? CONTROL_FLOW_INST.at(trace.mnemonic) : NOT_BRANCH;
             trace.curr_instr.is_branch = RiscvBranchType != NOT_BRANCH;
+            trace.branchType = RiscvBranchType;
 
             if (trace.curr_instr.is_branch) 
                 trace.pending_branch = true;
@@ -721,6 +732,8 @@ int main(int argc, char* argv[])
 
     trace_file.close();
     trace_outFile.close();
+
+    std::cout << "Size of raw trace file: " << trace.bytes_written / static_cast<double>(1 << 30) << " GB\n";
 
     return EXIT_SUCCESS;
 
