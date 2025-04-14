@@ -1,0 +1,437 @@
+#include <fstream>
+#include <iostream>
+#include <boost/regex.hpp>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <array>
+#include <cstdint>
+#include <cstring>
+#include <cassert>
+#include <vector>
+#include <re2/re2.h>
+
+#include "../../inc/trace_instruction.h"
+
+using trace_instr_format = input_instr;
+namespace 
+{
+  constexpr char REG_AX = 56;  
+} 
+
+// Regex patterns 
+// const re2::RE2 instr_pattern(R"(\[\d+:\d+\]\s+(0x[0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+([\w\.]+)\s*(.*))");
+const re2::RE2 instr_pattern("\\[(\\d+:\\d+)\\]\\s+(0x[0-9a-fA-F]+):\\s+([0-9a-fA-F]+)\\s+([\\w\\.]+)\\s+(.*?)(?:\\s+#(0x[0-9a-fA-F]+))?$");
+const re2::RE2 reg_write_pattern(R"(Write (x\d+)/\w+ = ([0-9a-fA-F]+))");
+    // Patterns for different instruction formats
+const re2::RE2 load_store_pattern("([a-z][0-9a-z]+),\\s*(-?\\d+)\\(([a-z][0-9a-z]+)\\)"); // lw x1, 8(x2)
+const re2::RE2 arith_imm_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+),\\s*(-?\\d+)");  // addi x1, x2, 10
+const re2::RE2 arith_reg_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+)"); // add x1, x2, x3
+const re2::RE2 jump_pattern("([a-z][0-9a-z]+),\\s*(0x[0-9a-fA-F]+|\\-?\\d+)"); // jal x1, 0x1000
+const re2::RE2 single_reg_pattern("([a-z][0-9a-z]+)"); // jr x1
+
+// Define regex pattern for RISC-V load instructions
+const re2::RE2 load_pattern(
+    "^(?:"
+    // Standard RISC-V load instructions
+    "l[bhwd](?:[uw])?|lc|"
+    // CHERI load instructions
+    "cl[bhwd](?:[uw])?|clc|"
+    // Floating-point loads
+    "fl[hwdq]|cfl[hwdq]|"
+    // Load-reserve with optional memory ordering suffixes
+    "lr\\.[bhwdc](?:\\.(acq|rel|aqrl))?|"
+    "clr\\.[bhwdc](?:\\.(acq|rel|aqrl))?"
+    ")$"
+);
+
+// Define regex pattern for RISC-V store instructions
+const re2::RE2 store_pattern(
+    "^(?:"
+    // Standard RISC-V store instructions
+    "s[bhwd]|sc|"
+    // CHERI store instructions
+    "cs[bhwd]|csc|"
+    // Floating-point stores
+    "fs[hwdq]|cfs[hwdq]|"
+    // Store-conditional with optional memory ordering suffixes
+    "sc\\.[bhwdc](?:\\.(rel|aqrl))?|"
+    "csc\\.[bhwdc](?:\\.(rel|aqrl))?"
+    ")$"
+);
+
+const boost::regex registerPattern(
+    // Match instruction label/name if present (optional)
+   "(?:\\w+\\s+)?"
+    // Match destination register
+   "([a-z][0-9a-z]+)\\s*,\\s*"
+    // Match different source patterns:
+   "(?:"
+    // Format 1: src1, src2, src3 (for FP instructions with 3 sources)
+   "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)|"
+    // Format 2: src1, src2 or src1, immediate
+   "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)(?:$|\\s)|"
+    // Format 3: immediate(src) - supports store/load instructions like sw rs2, offset(rs1)
+   "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)|"
+    // Format 4: single src register (move instr)
+   "([a-z][0-9a-z]+)|"
+    // Format 5: src1, src2, immediate (for jalr-like instructions and alternative store format)
+   "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+)|"
+    // Format 6: single register, immediate
+   "(-?\\d+)"
+   ")"
+   );
+
+// Branch type classification enum
+enum RiscvBranchType {
+    BRANCH_DIRECT_JUMP = 0,  // Unconditional direct jumps (j)
+    BRANCH_INDIRECT,         // Unconditional indirect jumps (jalr without link)
+    BRANCH_CONDITIONAL,      // Conditional branches (beq, bne, etc.)
+    BRANCH_DIRECT_CALL,      // Direct calls (jal)
+    BRANCH_INDIRECT_CALL,    // Indirect calls (jalr with link)
+    BRANCH_RETURN,           // Return instructions (ret/jalr used as return)
+    BRANCH_JALR,             // JALR is context dependent
+    BRANCH_OTHER,            // Other types of branches
+    NOT_BRANCH,              // Not a branch instruction
+    ERROR
+  };
+
+typedef enum {
+    aluInstClass = 0,
+    loadInstClass = 1,
+    storeInstClass = 2,
+    Branch = 3,
+    fpInstClass = 4,
+    undefInstClass = 5
+  } InstClass;
+
+const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
+    // Conditional branches (B-type)
+    {"beq", BRANCH_CONDITIONAL}, {"bne", BRANCH_CONDITIONAL}, {"blt", BRANCH_CONDITIONAL}, 
+    {"bge", BRANCH_CONDITIONAL}, {"bltu", BRANCH_CONDITIONAL}, {"bgeu", BRANCH_CONDITIONAL},
+    {"beqz", BRANCH_CONDITIONAL}, {"bnez", BRANCH_CONDITIONAL}, {"bgtu", BRANCH_CONDITIONAL},      
+    {"ble", BRANCH_CONDITIONAL},  {"bleu", BRANCH_CONDITIONAL}, {"bgez", BRANCH_CONDITIONAL},      
+    {"blez", BRANCH_CONDITIONAL},  {"bgtz", BRANCH_CONDITIONAL},  
+    {"bltz", BRANCH_CONDITIONAL},  {"bgt", BRANCH_CONDITIONAL},       
+    
+    // Direct jumps (J-type without link)
+    {"j", BRANCH_DIRECT_JUMP},         // Pseudo-instruction (alias for jal zero)
+    
+    // Direct calls (J-type with link)
+    {"jal", BRANCH_DIRECT_CALL},       // When used with ra or other registers
+    
+    // Indirect jumps and calls (I-type/JALR)
+    // {"jalr", BRANCH_INDIRECT_CALL},    // Usually a call, but context-dependent
+    {"jr", BRANCH_INDIRECT},           // Pseudo-instruction (jalr x0, rs, 0)
+    {"jalr", BRANCH_JALR}, // CHERI capability call
+  
+    // Return instructions
+    {"ret", BRANCH_RETURN}             // Pseudo-instruction (jalr x0, ra, 0)
+};
+
+const std::unordered_map<std::string, int> REG_MAP = {
+    // Integer registers
+    {"zero",0 },
+    {"ra", 1}, {"sp", 2}, {"gp", 3}, {"tp", 4},
+    {"t0", 5}, {"t1", 6}, {"t2", 7},
+    {"s0", 8}, {"fp", 8}, {"s1", 9},
+    {"a0", 10}, {"a1", 11}, {"a2", 12}, {"a3", 13},
+    {"a4", 14}, {"a5", 15}, {"a6", 16}, {"a7", 17},
+    {"s2", 18}, {"s3", 19}, {"s4", 20}, {"s5", 21},
+    {"s6", 22}, {"s7", 23}, {"s8", 24}, {"s9", 25},
+    {"s10", 26}, {"s11", 27}, {"t3", 28}, {"t4", 29}, {"t5", 30}, {"t6", 31},
+
+    // Explicit integer registers
+    {"x0", 0}, {"x1", 1}, {"x2", 2}, {"x3", 3}, {"x4", 4},
+    {"x5", 5}, {"x6", 6}, {"x7", 7}, {"x8", 8}, {"x9", 9},
+    {"x10", 10}, {"x11", 11}, {"x12", 12}, {"x13", 13}, {"x14", 14},
+    {"x15", 15}, {"x16", 16}, {"x17", 17}, {"x18", 18}, {"x19", 19},
+    {"x20", 20}, {"x21", 21}, {"x22", 22}, {"x23", 23}, {"x24", 24},
+    {"x25", 25}, {"x26", 26}, {"x27", 27}, {"x28", 28}, {"x29", 29}, {"x30", 30}, {"x31", 31},
+
+    // fp registers
+    {"f0", 0}, {"f1", 1}, {"f2", 2}, {"f3", 3},
+    {"f4", 4}, {"f5", 5}, {"f6", 6}, {"f7", 7},
+    {"f8", 8}, {"f9", 9}, {"f10", 10}, {"f11", 11},
+    {"f12", 12}, {"f13", 13}, {"f14", 14}, {"f15", 15},
+    {"f16", 16}, {"f17", 17}, {"f18", 18}, {"f19", 19},
+    {"f20", 20}, {"f21", 21}, {"f22", 22}, {"f23", 23},
+    {"f24", 24}, {"f25", 25}, {"f26", 26}, {"f27", 27},
+    {"f28", 28}, {"f29", 29}, {"f30", 30}, {"f31", 31},
+
+    {"ft0", 0}, {"ft1", 1}, {"ft2", 2}, {"ft3", 3}, {"ft4", 4}, {"ft5", 5}, {"ft6", 6}, {"ft7", 7},
+    {"fs0", 8}, {"fs1", 9},
+    {"fa0", 10}, {"fa1", 11}, {"fa2", 12}, {"fa3", 13}, {"fa4", 14}, {"fa5", 15},
+    {"fa6", 16}, {"fa7", 17},
+    {"fs2", 18}, {"fs3", 19}, {"fs4", 20}, {"fs5", 21}, {"fs6", 22}, {"fs7", 23},
+    {"fs8", 24}, {"fs9", 25}, {"fs10", 26}, {"fs11", 27},
+    {"ft8", 28}, {"ft9", 29}, {"ft10", 30}, {"ft11", 31}
+};
+
+uint8_t remap_regid(uint8_t reg) {
+
+    switch (reg) {
+        case 2: return 64;
+        case 25: return 65;
+        case 26: return 66;
+        default: return reg;
+    }
+    return 0;
+}
+
+struct ProgramTrace {
+
+    trace_instr_format curr_instr;
+    std::array<uint64_t, 32> gpr = {0};
+    bool pending_instr = false;
+    bool pending_branch = false;
+    bool is_ld_store = false;
+    uint64_t target_addr = 0;
+    std::string mnemonic;
+    RiscvBranchType branchType = NOT_BRANCH;
+    InstClass inst;
+    double bytes_written = 0.0;
+    bool verbose;    
+
+
+    void clear() {
+
+        pending_instr = false;
+        pending_branch = false;
+        is_ld_store = false;
+        target_addr = 0;
+        branchType  = NOT_BRANCH;
+        
+        std::memset(curr_instr.destination_registers, 0, sizeof(curr_instr.destination_registers));
+        std::memset(curr_instr.source_registers, 0, sizeof(curr_instr.source_registers));    
+        std::memset(curr_instr.destination_memory, 0, sizeof(curr_instr.destination_memory));
+        std::memset(curr_instr.source_memory, 0, sizeof(curr_instr.source_memory));
+        std::memset(&curr_instr, 0, sizeof(trace_instr_format));
+        mnemonic.clear();
+    }
+
+    void debug_print_instruction() const {
+
+        std::cout << "\n=== Instruction Debug ==="
+         << "\nInstruction: " << mnemonic 
+         << "\nPC: 0x" << std::hex << curr_instr.ip
+         << "\nIs Branch: " << std::dec << (int)curr_instr.is_branch
+         << "\nBranch Type: " << RiscvBranchType_string()
+         << "\nBranch Taken: " << (int)curr_instr.branch_taken
+         << "\n\nDestination Registers: ";
+        
+
+        // // Print destination registers
+        for (const auto& regs : curr_instr.destination_registers) 
+                std::cout << "\n Register Number " << std::dec << static_cast<int>(regs);
+        
+        
+        
+        std::cout << "\nSource Registers: ";
+        // Print source registers
+        for (const auto& regs : curr_instr.source_registers) 
+                std::cout << "\n Register Number " << std::dec << static_cast<int>(regs); 
+                
+        
+        
+        std::cout << "\n\nMemory Operands:";
+        // Print destination memory
+        std::cout << "\nDestination Memory:";
+        for (const auto& addr : curr_instr.destination_memory) 
+                std::cout << "\n Memory Address: 0x" << std::hex << addr;
+
+        
+        // Print source memory
+        std::cout << "\nSource Memory:";
+        for (const auto& addr : curr_instr.source_memory) 
+                std::cout << "\n Memory Address: 0x" << std::hex << addr;
+            
+        std::cout << "\n=========================\n" << std::dec << std::endl;
+    }
+
+    const char* RiscvBranchType_string() const {
+        switch(branchType) {
+            case BRANCH_DIRECT_JUMP : return "Branch Direct Jump";
+            case BRANCH_INDIRECT : return "Branch Indirect";
+            case BRANCH_CONDITIONAL : return "Branch Conditional";
+            case BRANCH_DIRECT_CALL : return "Branch Direct Call";
+            case BRANCH_INDIRECT_CALL : return "Branch Indirect Call";
+            case BRANCH_RETURN : return "Branch Return";
+            case BRANCH_JALR : return "Branch jalr";
+            case BRANCH_OTHER : return "Branch Other";
+            case NOT_BRANCH : return "Not a Branch";
+            case ERROR : assert(false); //shouldn't end up here...
+        }
+        return "";
+    }
+
+};
+
+
+void process_branch(ProgramTrace& trace, std::string register_ops)
+{
+
+    RiscvBranchType bType = (CONTROL_FLOW_INST.count(trace.mnemonic)  > 0) ? CONTROL_FLOW_INST.at(trace.mnemonic) : NOT_BRANCH;            
+    trace.curr_instr.is_branch = bType != NOT_BRANCH;
+    trace.branchType = bType;
+    boost::smatch m;
+
+    switch (trace.branchType) {
+        //writes IP only
+        case BRANCH_DIRECT_JUMP: 
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.branch_taken = true;
+            break;
+    
+        //read something else, write ip
+        case BRANCH_INDIRECT: 
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[0] = ::REG_AX;
+            break;
+
+        // reads other, writes and reads ip
+        case BRANCH_CONDITIONAL: 
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[1] = ::REG_AX;
+            break;
+    
+        //reads ip, sp, writes sp,ip
+        case BRANCH_DIRECT_CALL: 
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0]= champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[0]= champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
+            break;
+
+        // reads other, ip, sp, writes sp and ip
+        case BRANCH_INDIRECT_CALL: 
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[2] = ::REG_AX;
+            break;
+
+        // reads sp, writes sp,ip
+        case BRANCH_RETURN: 
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            break;
+
+        case BRANCH_JALR: //JALR is context dependent
+            trace.curr_instr.branch_taken = true;
+            boost::regex_search(register_ops, m, registerPattern);
+            std::cout << register_ops << std::endl;
+            std::cout << m[1].str() << std::endl;
+            if(REG_MAP.at(m[1].str()) == 0) {  
+                if (REG_MAP.at(m[5].str()) != 1) { //indirect jmp 
+                    trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+                    trace.curr_instr.source_registers[0] = ::REG_AX;
+                    trace.branchType = BRANCH_INDIRECT;
+                    break;
+                }
+
+                else { //return
+                    trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
+                    trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+                    trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+                    trace.branchType = BRANCH_RETURN;
+                    break;
+                }
+            } else  { //indirect call       
+                trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+                trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+                trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+                trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
+                trace.curr_instr.source_registers[2] = ::REG_AX;
+                trace.branchType = BRANCH_INDIRECT_CALL;
+                break;
+            }
+            break;
+
+        default: assert(false);
+        }
+ 
+}
+
+bool parse_trase(std::string& filepath, ProgramTrace& trace)
+{
+    trace.clear();
+    std::string line;
+    std::ifstream trace_file(filepath);
+    if (!trace_file.is_open()) {
+        std::cerr << "Error: Trace file at path " << filepath << " could not be opened.\n";
+        return false;
+    }
+    
+    while (std::getline(trace_file,line)) {
+        std::string cpu, pc, opcode, mnemonic, regoperands;
+        if (RE2::PartialMatch(line, instr_pattern, &cpu, &pc, &opcode, &mnemonic, &regoperands)) {
+            trace.mnemonic = mnemonic;
+            std::cout << trace.mnemonic << std::endl;
+            trace.curr_instr.ip = std::stoull(pc,nullptr,0x10);
+
+            if (CONTROL_FLOW_INST.count(mnemonic) > 0) {
+                std::size_t pos = regoperands.find('#');
+
+                if (pos != std::string::npos) 
+                    trace.target_addr = std::stoull(regoperands.substr(pos+2),nullptr,0x10);
+                
+                process_branch(trace,regoperands);
+
+
+
+            }
+
+        }
+            
+
+
+    }
+
+
+    return true;
+
+}
+
+
+
+
+int main(int argc, char* argv[])
+{
+
+    if (argc < 3) {
+        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace> <start_pc> [-v] \n";
+        exit(EXIT_FAILURE);
+    }
+
+    std::string fileName = argv[1];
+    std::ifstream trace_file(fileName);
+    std::string oFilename = std::string(argv[2]) + ".champsim.bin";
+
+    if (!trace_file.is_open()) {
+        std::cerr << "Error: Trace file at path" << std::string(argv[1]) << " could not be opened.\n";
+        exit (EXIT_FAILURE);
+    }
+    // std::ofstream trace_outFile(oFilename, std::ios::binary);
+    // if(!trace_outFile.is_open())
+    // {
+    //     std::cerr << "Error: Could not open output file " << oFilename << std::endl;
+    //     exit(EXIT_FAILURE);
+    // }
+
+
+
+    ProgramTrace trace;
+    trace.verbose = (argc > 4 && std::string(argv[4]) == "-v");
+    
+    assert(parse_trase(fileName, trace));
+
+
+}

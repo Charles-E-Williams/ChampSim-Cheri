@@ -8,10 +8,11 @@
 #include <cstdint>
 #include <cstring>
 #include <cassert>
+#include <re2/re2.h>
 #include "/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/cheri_compressed_cap.h"
 
+#define CHERI
 #include "../../inc/trace_instruction.h"
-
 
 using cap_data = cap_metadata;
 using trace_instr_format = input_instr;
@@ -20,6 +21,71 @@ namespace
 {
   constexpr char REG_AX = 56;  
 } 
+
+// Regex patterns 
+const boost::regex instr_pattern(R"(\[\d+:\d+\]\s+(0x[0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+([\w\.]+)\s*(.*))");
+const boost::regex cap_mem_pattern(
+    R"(Cap Memory (Read|Write) \[([0-9a-fA-Fx]+)\] = v:(\d+) PESBT:([0-9a-fA-F]+) Cursor:([0-9a-fA-F]+))"
+);
+const boost::regex cap_reg_write_pattern(
+    R"(Write (c\d+)\/(\w+)\|v:(\d+) s:(\d+) p:([0-9a-fA-F]+) f:(\d+) b:([0-9a-fA-F]+) l:([0-9a-fA-F]+).*\|o:([0-9a-fA-F]+) t:([0-9a-fA-F]+))"
+);
+const boost::regex reg_write_pattern(R"(Write (x\d+)/\w+ = ([0-9a-fA-F]+))");
+
+const boost::regex tag_wr_pattern("Cap Tag Write \\[([0-9a-f]+)/([0-9a-f]+)\\] (\\d+) -> (\\d+)");
+
+// Define regex pattern for RISC-V load instructions
+const boost::regex load_pattern(
+    "^(?:"
+    // Standard RISC-V load instructions
+    "l[bhwd](?:[uw])?|lc|"
+    // CHERI load instructions
+    "cl[bhwd](?:[uw])?|clc|"
+    // Floating-point loads
+    "fl[hwdq]|cfl[hwdq]|"
+    // Load-reserve with optional memory ordering suffixes
+    "lr\\.[bhwdc](?:\\.(acq|rel|aqrl))?|"
+    "clr\\.[bhwdc](?:\\.(acq|rel|aqrl))?"
+    ")$"
+);
+
+// Define regex pattern for RISC-V store instructions
+const boost::regex store_pattern(
+    "^(?:"
+    // Standard RISC-V store instructions
+    "s[bhwd]|sc|"
+    // CHERI store instructions
+    "cs[bhwd]|csc|"
+    // Floating-point stores
+    "fs[hwdq]|cfs[hwdq]|"
+    // Store-conditional with optional memory ordering suffixes
+    "sc\\.[bhwdc](?:\\.(rel|aqrl))?|"
+    "csc\\.[bhwdc](?:\\.(rel|aqrl))?"
+    ")$"
+);
+
+const boost::regex registerPattern(
+    // Match instruction label/name if present (optional)
+    "(?:\\w+\\s+)?"
+    // Match destination register
+    "([a-z][0-9a-z]+)\\s*,\\s*"
+    // Match different source patterns:
+    "(?:"
+        // Format 1: src1, src2, src3 (for FP instructions with 3 sources)
+        "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)|"
+        // Format 2: src1, src2 or src1, immediate - with negative lookahead to prevent matching jalr format
+        "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)(?!\\s*,)|"
+        // Format 3: immediate(src) - supports store/load instructions like sw rs2, offset(rs1)
+        "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)|"
+        // Format 4: single src register (move instr)
+        "([a-z][0-9a-z]+)|"
+        // Format 5: src1, src2, immediate (for jalr-like instructions and alternative store format)
+        "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+)|"
+        // Format 6: single registerm immediate
+        "(-?\\d+)"
+    ")"
+);
+
 
 
 // Branch type classification enum
@@ -39,30 +105,10 @@ typedef enum {
     aluInstClass = 0,
     loadInstClass = 1,
     storeInstClass = 2,
-    condBranchInstClass = 3,
-    uncondDirectBranchInstClass = 4,
-    uncondIndirectBranchInstClass = 5,
-    fpInstClass = 6,
-    slowAluInstClass = 7,
-    undefInstClass = 8
+    Branch = 3,
+    fpInstClass = 4,
+    undefInstClass = 5
   } InstClass;
-
-std::unordered_set<std::string> store_instructions = {
-    "sw",     // Store Word
-    "sh",     // Store Halfword
-    "sb",     // Store Byte
-    "sd",     // Store Doubleword
-    "fsw",    // Store Single-Precision Floating-Point
-    "fsd",     // Store Double-Precision Floating-Point
-    "cfsw",
-    "csd",
-    "sc",
-    "cfsd",
-    "sc.w",
-    "sc.d",
-    "csc",
-    "csc.d"
-};
 
 const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
     // Conditional branches (B-type)
@@ -91,6 +137,82 @@ const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
     {"ret", BRANCH_RETURN}             // Pseudo-instruction (jalr x0, ra, 0)
 };
 
+const std::unordered_map<std::string, int> reg_map = {
+    // Integer registers
+    {"zero",0 },
+    {"ra", 1}, {"sp", 2}, {"gp", 3}, {"tp", 4},
+    {"t0", 5}, {"t1", 6}, {"t2", 7},
+    {"s0", 8}, {"fp", 8}, {"s1", 9},
+    {"a0", 10}, {"a1", 11}, {"a2", 12}, {"a3", 13},
+    {"a4", 14}, {"a5", 15}, {"a6", 16}, {"a7", 17},
+    {"s2", 18}, {"s3", 19}, {"s4", 20}, {"s5", 21},
+    {"s6", 22}, {"s7", 23}, {"s8", 24}, {"s9", 25},
+    {"s10", 26}, {"s11", 27}, {"t3", 28}, {"t4", 29}, {"t5", 30}, {"t6", 31},
+
+    // Explicit integer registers
+    {"x0", 0}, {"x1", 1}, {"x2", 2}, {"x3", 3}, {"x4", 4},
+    {"x5", 5}, {"x6", 6}, {"x7", 7}, {"x8", 8}, {"x9", 9},
+    {"x10", 10}, {"x11", 11}, {"x12", 12}, {"x13", 13}, {"x14", 14},
+    {"x15", 15}, {"x16", 16}, {"x17", 17}, {"x18", 18}, {"x19", 19},
+    {"x20", 20}, {"x21", 21}, {"x22", 22}, {"x23", 23}, {"x24", 24},
+    {"x25", 25}, {"x26", 26}, {"x27", 27}, {"x28", 28}, {"x29", 29}, {"x30", 30}, {"x31", 31},
+
+    // CHERI capability registers
+    {"c0", 0},  {"c1", 1},  {"c2", 2},  {"c3", 3},
+    {"c4", 4},  {"c5", 5},  {"c6", 6},  {"c7", 7},
+    {"c8", 8},  {"c9", 9},  {"c10", 10}, {"c11", 11},
+    {"c12", 12}, {"c13", 13}, {"c14", 14}, {"c15", 15},
+    {"c16", 16}, {"c17", 17}, {"c18", 18}, {"c19", 19},
+    {"c20", 20}, {"c21", 21}, {"c22", 22}, {"c23", 23},
+    {"c24", 24}, {"c25", 25}, {"c26", 26}, {"c27", 27},
+    {"c28", 28}, {"c29", 29}, {"c30", 30}, {"c31", 31},
+
+    {"cnull", 0}, //null capability
+    {"cra", 1},  // capability return address
+    {"csp", 2},  // capability stack pointer
+    {"cgp", 3},  // capability global pointer
+    {"ctp", 4},  // capability thread pointer
+    {"ct0", 5},  {"ct1", 6},  {"ct2", 7},
+    {"cs0", 8},  {"cs1", 9},
+    {"ca0", 10}, {"ca1", 11}, {"ca2", 12}, {"ca3", 13},
+    {"ca4", 14}, {"ca5", 15}, {"ca6", 16}, {"ca7", 17},
+    {"cs2", 18}, {"cs3", 19}, {"cs4", 20}, {"cs5", 21},
+    {"cs6", 22}, {"cs7", 23}, {"cs8", 24}, {"cs9", 25},
+    {"cs10", 26}, {"cs11", 27}, {"ct3", 28}, {"ct4", 29}, {"ct5", 30}, {"ct6", 31},
+
+    // fp registers
+    {"f0", 0}, {"f1", 1}, {"f2", 2}, {"f3", 3},
+    {"f4", 4}, {"f5", 5}, {"f6", 6}, {"f7", 7},
+    {"f8", 8}, {"f9", 9}, {"f10", 10}, {"f11", 11},
+    {"f12", 12}, {"f13", 13}, {"f14", 14}, {"f15", 15},
+    {"f16", 16}, {"f17", 17}, {"f18", 18}, {"f19", 19},
+    {"f20", 20}, {"f21", 21}, {"f22", 22}, {"f23", 23},
+    {"f24", 24}, {"f25", 25}, {"f26", 26}, {"f27", 27},
+    {"f28", 28}, {"f29", 29}, {"f30", 30}, {"f31", 31},
+
+
+    {"ft0", 0}, {"ft1", 1}, {"ft2", 2}, {"ft3", 3}, {"ft4", 4}, {"ft5", 5}, {"ft6", 6}, {"ft7", 7},
+    {"fs0", 8}, {"fs1", 9},
+    {"fa0", 10}, {"fa1", 11}, {"fa2", 12}, {"fa3", 13}, {"fa4", 14}, {"fa5", 15},
+    {"fa6", 16}, {"fa7", 17},
+    {"fs2", 18}, {"fs3", 19}, {"fs4", 20}, {"fs5", 21}, {"fs6", 22}, {"fs7", 23},
+    {"fs8", 24}, {"fs9", 25}, {"fs10", 26}, {"fs11", 27},
+    {"ft8", 28}, {"ft9", 29}, {"ft10", 30}, {"ft11", 31}
+};
+
+
+uint8_t remap_regid(uint8_t reg) {
+
+    switch (reg) {
+        case 2: return 64;
+        case 25: return 65;
+        case 26: return 66;
+        default: return reg;
+    }
+    return 0;
+}
+
+uint64_t get_addr(uint64_t base, uint64_t offset) {return (base+offset); }
 
 struct ProgramTrace
 {
@@ -118,6 +240,7 @@ struct ProgramTrace
     uint64_t next_pc = 0;
     std::string mnemonic;
     RiscvBranchType branchType = NOT_BRANCH;
+    InstClass inst;
 
 
     double bytes_written = 0.0;
@@ -209,7 +332,7 @@ struct ProgramTrace
         std::cout << "\n=========================\n" << std::dec << std::endl;
     }
 
-        const char* RiscvBranchType_string() const {
+    const char* RiscvBranchType_string() const {
             switch(branchType) {
                 case BRANCH_DIRECT_JUMP : return "Branch Direct Jump";
                 case BRANCH_INDIRECT : return "Branch Indirect";
@@ -221,9 +344,79 @@ struct ProgramTrace
                 case NOT_BRANCH : return "Not a Branch";
                 case ERROR : assert(false); //shouldn't end up here...
             }
-
             return "";
     }
+
+    void pre_process_trace(std::ifstream& trace_file) {
+
+        std::string line;
+        while (std::getline(trace_file, line)) {
+            boost::smatch m;
+
+            if(line.find("Write c") != std::string::npos) {
+                std::string next_line;
+                auto old_post = trace_file.tellg();
+                if(getline(trace_file,next_line) && next_line.find("|o:") != std::string::npos) 
+                    line += " " + next_line;
+                else {
+                    std::cerr << "ERROR: Capability Register Write metadata not found in the next line\n";
+                    exit(EXIT_FAILURE);
+                }
+            }
+              
+            if (boost::regex_search(line,m,cap_reg_write_pattern)) {
+                const std::string reg_name = m[1].str();
+                const uint8_t reg_id  = reg_map.at(reg_name);
+            
+                std::string v,p,b,l,o;
+            
+
+                v = m[3].str(); p = m[5].str(); 
+                b = m[7].str(); l = m[8].str();
+                o = m[9].str(); 
+            
+                cap_data cap;
+                cap.tag = std::stoi(v);
+                cap.perms = std::stoul(p,nullptr, 0x10);
+                cap.base = std::stoull(b,nullptr, 0x10);
+                cap.length = std::stoull(l,nullptr, 0x10);
+                cap.offset = std::stoul(o,nullptr, 0x10);
+                cap_regs[reg_id] = cap;
+                has_cap[reg_id] = true;     
+            }
+
+
+            else if (boost::regex_search(line,m,reg_write_pattern)) {
+                std::string reg_name = m[1].str();
+                const uint8_t reg_id  = reg_map.at(reg_name);
+                const std::string reg_value = m[2].str();
+                gpr[reg_id] = std::stoull(reg_value,nullptr,0x10);
+
+            }
+
+
+            else if (line.find("restore_state_to_opc") != std::string::npos)
+                break;
+        }
+
+        for (std::size_t i = 0; i < gpr.size(); i++)
+            printf("GPR[%lu]: %lu\n", i, gpr[i]);
+
+        int i = 0;
+        for (const auto&  cap : cap_regs) {
+            if(has_cap[i])
+                std::cout << "\n Register Number " << std::dec << i
+                << " | Base 0x" << std::hex << cap.base
+                << " | Length: 0x" << std::hex << cap.length
+                << " | Offset: 0x" <<  std::hex << cap.offset
+                << " | Perms: 0x" << std::hex << cap.perms
+                << " | Tag:" << std::dec << (int)cap.tag;
+            i++;
+        }
+        trace_file.clear();
+        exit(1);
+    }
+
 };
 
 
@@ -238,134 +431,11 @@ void set_reg_cap(ProgramTrace& trace, std::size_t src_idx, uint8_t reg_id, const
     }
 }
 
-// Regex patterns 
-const boost::regex instr_pattern(R"(\[\d+:\d+\]\s+(0x[0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+([\w\.]+)\s*(.*))");
-const boost::regex cap_mem_pattern(
-    R"(Cap Memory (Read|Write) \[([0-9a-fA-Fx]+)\] = v:(\d+) PESBT:([0-9a-fA-F]+) Cursor:([0-9a-fA-F]+))"
-);
-const boost::regex cap_reg_write_pattern(
-    R"(Write (c\d+)\/\w+\|v:(\d+) s:(\d+) p:([0-9a-fA-F]+) f:(\d+) b:([0-9a-fA-F]+) l:([0-9a-fA-F]+).*\|o:([0-9a-fA-F]+) t:([0-9a-fA-F]+))"
-);
-const boost::regex reg_write_pattern(R"(Write (x\d+)/\w+ = ([0-9a-fA-F]+))");
-
-// Define regex pattern for RISC-V load instructions
-const boost::regex load_pattern(
-    "^(?:"
-    // Standard RISC-V load instructions
-    "l[bhwd](?:[uw])?|lc|"
-    // CHERI load instructions
-    "cl[bhwd](?:[uw])?|clc|"
-    // Floating-point loads
-    "fl[hwdq]|cfl[hwdq]|"
-    // Load-reserve with optional memory ordering suffixes
-    "lr\\.[bhwdc](?:\\.(acq|rel|aqrl))?|"
-    "clr\\.[bhwdc](?:\\.(acq|rel|aqrl))?"
-    ")$"
-);
-
-// Define regex pattern for RISC-V store instructions
-const boost::regex store_pattern(
-    "^(?:"
-    // Standard RISC-V store instructions
-    "s[bhwd]|sc|"
-    // CHERI store instructions
-    "cs[bhwd]|csc|"
-    // Floating-point stores
-    "fs[hwdq]|cfs[hwdq]|"
-    // Store-conditional with optional memory ordering suffixes
-    "sc\\.[bhwdc](?:\\.(rel|aqrl))?|"
-    "csc\\.[bhwdc](?:\\.(rel|aqrl))?"
-    ")$"
-);
-
-const boost::regex registerPattern(
-    // Match instruction label/name if present (optional)
-    "(?:\\w+\\s+)?"
-    // Match destination register
-    "([a-z][0-9a-z]+)\\s*,\\s*"
-    // Match different source patterns:
-    "(?:"
-        // Format 1: src1, src2, src3 (for FP instructions with 3 sources)
-        "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)|"
-        // Format 2: src1, src2 or src1, immediate - with negative lookahead to prevent matching jalr format
-        "([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+|[a-z][0-9a-z]+)(?!\\s*,)|"
-        // Format 3: immediate(src) - supports store/load instructions like sw rs2, offset(rs1)
-        "(-?\\d+)\\s*\\(\\s*([a-z][0-9a-z]+)\\s*\\)|"
-        // Format 4: single src register (move instr)
-        "([a-z][0-9a-z]+)|"
-        // Format 5: src1, src2, immediate (for jalr-like instructions and alternative store format)
-        "([a-z][0-9a-z]+)\\s*,\\s*([a-z][0-9a-z]+)\\s*,\\s*(-?\\d+)|"
-        // Format 6: single registerm immediate
-        "(-?\\d+)"
-    ")"
-);
-
-
-const std::unordered_map<std::string, int> reg_map = {
-    // Integer registers
-    {"zero",0 },
-    {"ra", 1}, {"sp", 2}, {"gp", 3}, {"tp", 4},
-    {"t0", 5}, {"t1", 6}, {"t2", 7},
-    {"s0", 8}, {"fp", 8}, {"s1", 9},
-    {"a0", 10}, {"a1", 11}, {"a2", 12}, {"a3", 13},
-    {"a4", 14}, {"a5", 15}, {"a6", 16}, {"a7", 17},
-    {"s2", 18}, {"s3", 19}, {"s4", 20}, {"s5", 21},
-    {"s6", 22}, {"s7", 23}, {"s8", 24}, {"s9", 25},
-    {"s10", 26}, {"s11", 27}, {"t3", 28}, {"t4", 29}, {"t5", 30}, {"t6", 31},
-
-    // Explicit integer registers
-    {"x0", 0}, {"x1", 1}, {"x2", 2}, {"x3", 3}, {"x4", 4},
-    {"x5", 5}, {"x6", 6}, {"x7", 7}, {"x8", 8}, {"x9", 9},
-    {"x10", 10}, {"x11", 11}, {"x12", 12}, {"x13", 13}, {"x14", 14},
-    {"x15", 15}, {"x16", 16}, {"x17", 17}, {"x18", 18}, {"x19", 19},
-    {"x20", 20}, {"x21", 21}, {"x22", 22}, {"x23", 23}, {"x24", 24},
-    {"x25", 25}, {"x26", 26}, {"x27", 27}, {"x28", 28}, {"x29", 29}, {"x30", 30}, {"x31", 31},
-
-    // CHERI capability registers
-    {"c0", 0},  {"c1", 1},  {"c2", 2},  {"c3", 3},
-    {"c4", 4},  {"c5", 5},  {"c6", 6},  {"c7", 7},
-    {"c8", 8},  {"c9", 9},  {"c10", 10}, {"c11", 11},
-    {"c12", 12}, {"c13", 13}, {"c14", 14}, {"c15", 15},
-    {"c16", 16}, {"c17", 17}, {"c18", 18}, {"c19", 19},
-    {"c20", 20}, {"c21", 21}, {"c22", 22}, {"c23", 23},
-    {"c24", 24}, {"c25", 25}, {"c26", 26}, {"c27", 27},
-    {"c28", 28}, {"c29", 29}, {"c30", 30}, {"c31", 31},
-
-    {"cnull", 0}, //null capability
-    {"cra", 1},  // capability return address
-    {"csp", 2},  // capability stack pointer
-    {"cgp", 3},  // capability global pointer
-    {"ctp", 4},  // capability thread pointer
-    {"ct0", 5},  {"ct1", 6},  {"ct2", 7},
-    {"cs0", 8},  {"cs1", 9},
-    {"ca0", 10}, {"ca1", 11}, {"ca2", 12}, {"ca3", 13},
-    {"ca4", 14}, {"ca5", 15}, {"ca6", 16}, {"ca7", 17},
-    {"cs2", 18}, {"cs3", 19}, {"cs4", 20}, {"cs5", 21},
-    {"cs6", 22}, {"cs7", 23}, {"cs8", 24}, {"cs9", 25},
-    {"cs10", 26}, {"cs11", 27}, {"ct3", 28}, {"ct4", 29}, {"ct5", 30}, {"ct6", 31},
-
-    // fp registers
-    {"f0", 0}, {"f1", 1}, {"f2", 2}, {"f3", 3},
-    {"f4", 4}, {"f5", 5}, {"f6", 6}, {"f7", 7},
-    {"f8", 8}, {"f9", 9}, {"f10", 10}, {"f11", 11},
-    {"f12", 12}, {"f13", 13}, {"f14", 14}, {"f15", 15},
-    {"f16", 16}, {"f17", 17}, {"f18", 18}, {"f19", 19},
-    {"f20", 20}, {"f21", 21}, {"f22", 22}, {"f23", 23},
-    {"f24", 24}, {"f25", 25}, {"f26", 26}, {"f27", 27},
-    {"f28", 28}, {"f29", 29}, {"f30", 30}, {"f31", 31},
-
-
-    {"ft0", 0}, {"ft1", 1}, {"ft2", 2}, {"ft3", 3}, {"ft4", 4}, {"ft5", 5}, {"ft6", 6}, {"ft7", 7},
-    {"fs0", 8}, {"fs1", 9},
-    {"fa0", 10}, {"fa1", 11}, {"fa2", 12}, {"fa3", 13}, {"fa4", 14}, {"fa5", 15},
-    {"fa6", 16}, {"fa7", 17},
-    {"fs2", 18}, {"fs3", 19}, {"fs4", 20}, {"fs5", 21}, {"fs6", 22}, {"fs7", 23},
-    {"fs8", 24}, {"fs9", 25}, {"fs10", 26}, {"fs11", 27},
-    {"ft8", 28}, {"ft9", 29}, {"ft10", 30}, {"ft11", 31}
-};
-
 
 void write_instr(ProgramTrace& trace, std::ofstream& out) {
+
+    if (trace.inst == loadInstClass)
+        assert(trace.curr_instr.source_memory->address);
 
 
     if (trace.branchType == BRANCH_CONDITIONAL) {
@@ -388,7 +458,6 @@ void write_instr(ProgramTrace& trace, std::ofstream& out) {
             }
         }
     }
-
 
     if (trace.verbose) trace.debug_print_instruction();
 
@@ -517,7 +586,6 @@ void process_cap_reg_write(ProgramTrace& trace, const boost::smatch& match)
 
 
 
-
 void parse_trace(ProgramTrace& trace, const std::string& operands)
 {
 
@@ -540,12 +608,11 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                 trace.curr_instr.source_registers[0].reg_id = ::REG_AX;
                 break;
 
-            // reads flags, writes and reads ip
+            // reads other, writes and reads ip
             case BRANCH_CONDITIONAL: 
-
                 trace.curr_instr.destination_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
                 trace.curr_instr.source_registers[0].reg_id = champsim::REG_INSTRUCTION_POINTER;
-                trace.curr_instr.source_registers[1].reg_id = champsim::REG_FLAGS;
+                trace.curr_instr.source_registers[1].reg_id = ::REG_AX;
                 break;
         
             //reads ip, sp, writes sp,ip
@@ -575,10 +642,8 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                 trace.curr_instr.destination_registers[1].reg_id = champsim::REG_STACK_POINTER;
                 break;
 
-
             case BRANCH_OTHER: //JALR is context dependent
                 trace.curr_instr.branch_taken = true;
-
 
                 if(reg_map.at(match[1].str()) == 0) {  
                     if (reg_map.at(match[5].str()) != 1) { //indirect jmp 
@@ -611,17 +676,21 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
         }
 
         else { 
+
             boost::smatch m;
             if (boost::regex_search(trace.mnemonic,m,store_pattern)) {
-
+                //extract src registers for store instruction
+                trace.inst = storeInstClass;
                 std::string src1, src2;
                 src1 = match[1].str();
+                assert(!src1.empty());
+
                 trace.curr_instr.source_registers[0].reg_id = reg_map.at(src1);
-                
                 set_reg_cap(trace,0,reg_map.at(src1),src1);
 
                 if (!match[8].str().empty()) {
                     src2 = match[8].str();
+
                     set_reg_cap(trace,1,reg_map.at(src2),src2);  
                 }
 
@@ -630,18 +699,21 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                     set_reg_cap(trace,1,reg_map.at(src2),src2);
                 }
 
+                assert(!src2.empty());
                 trace.curr_instr.source_registers[1].reg_id = reg_map.at(src2);
+
             }
+
 
             else if (boost::regex_search(trace.mnemonic,m,load_pattern))  {   
-                exit(1);
+               
+               trace.inst = loadInstClass;
             }
  
-
             else {
 
                 if(match[2].matched && match[3].matched && match[4].matched) {
-
+                    trace.inst = fpInstClass;
                     std::string src1, src2, src3;
                     src1 = match[2].str(); src2 = match[3].str(); src3 = match[4].str();
 
@@ -656,6 +728,7 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                 }
 
                 else if (match[5].matched) {
+                    trace.inst = aluInstClass;
                     std::string src1 = match[5].str();
                     trace.curr_instr.source_registers[0].reg_id = reg_map.at(src1);
                     set_reg_cap(trace,0,reg_map.at(src1),src1);
@@ -670,11 +743,13 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
                 }
 
                 else if (match[8].matched) {
+                    trace.inst = aluInstClass;
                     trace.curr_instr.source_registers[0].reg_id = reg_map.at(match[8].str());
                     set_reg_cap(trace,0,reg_map.at(match[8].str()),match[8].str());
                 }  
 
                 else if (match[9].matched) {
+                    trace.inst = aluInstClass;
                     trace.curr_instr.source_registers[0].reg_id = reg_map.at(match[9].str());
                     set_reg_cap(trace,0,reg_map.at(match[9].str()),match[9].str());
                 }  
@@ -687,10 +762,17 @@ void parse_trace(ProgramTrace& trace, const std::string& operands)
             std::cerr << "No register operands found: " << operands << std::endl;
         }
     }
-
-
-
 }
+
+void process_source_mem(ProgramTrace& trace, const std::string& addr)
+{
+    if (trace.inst != storeInstClass) 
+        std::cerr << "Hmmmm. Strange\n";
+    
+    else 
+        trace.curr_instr.destination_memory[0].address = std::stoull(addr, NULL, 0x10);
+}
+
 
 int main(int argc, char* argv[])
 {
@@ -721,7 +803,8 @@ int main(int argc, char* argv[])
     trace.verbose = (argc > 3 && std::string(argv[3]) == "-v");
     std::string line;
 
-    trace.instr_trace_init();
+    trace.instr_trace_init(); trace.pre_process_trace(trace_file);
+
     while (std::getline(trace_file, line)) {
         boost::smatch match;
 
@@ -762,8 +845,10 @@ int main(int argc, char* argv[])
             trace.branchType = bType;
 
 
-            if (trace.curr_instr.is_branch) 
+            if (trace.curr_instr.is_branch) {
                 trace.pending_branch = true;
+                trace.inst = Branch;
+            }
             
 
             trace.pending_instr = true;    
@@ -783,6 +868,10 @@ int main(int argc, char* argv[])
 
             else if (boost::regex_search(line,match, cap_mem_pattern)) {
                 process_mem_access(trace, match, match[1].str() == "Write");
+            }
+
+            else if (boost::regex_search(line,match,tag_wr_pattern)) {
+                process_source_mem(trace,match[1].str());
             }
         }
     }

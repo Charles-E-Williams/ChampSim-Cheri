@@ -18,7 +18,7 @@
 #define TRACE_INSTRUCTION_H
 #include <limits>
 
-#define CHERI
+// #define CHERI
 
 // special registers that help us identify branches
 namespace champsim
