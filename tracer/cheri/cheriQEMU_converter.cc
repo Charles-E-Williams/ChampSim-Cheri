@@ -840,9 +840,7 @@ int main(int argc, char* argv[])
 
             trace.curr_instr.ip = std::stoull(match[1].str(), nullptr, 0x10);
             trace.mnemonic = match[3].str();
-            RiscvBranchType bType = (CONTROL_FLOW_INST.count(trace.mnemonic)  > 0) ? CONTROL_FLOW_INST.at(trace.mnemonic) : NOT_BRANCH;            
-            trace.curr_instr.is_branch = bType != NOT_BRANCH;
-            trace.branchType = bType;
+
 
 
             if (trace.curr_instr.is_branch) {
