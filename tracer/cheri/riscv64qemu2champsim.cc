@@ -25,12 +25,7 @@ const re2::RE2 instr_pattern("\\[(\\d+:\\d+)\\]\\s+(0x[0-9a-fA-F]+):\\s+([0-9a-f
 const re2::RE2 reg_write_pattern(R"(Write (x\d+)/\w+ = ([0-9a-fA-F]+))");
     // Patterns for different instruction formats
 const re2::RE2 load_store_pattern("([a-z][0-9a-z]+),\\s*(-?\\d+)\\(([a-z][0-9a-z]+)\\)"); // lw x1, 8(x2)
-// const re2::RE2 arith_imm_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+),\\s*(-?\\d+)");  // addi x1, x2, 10
-// const re2::RE2 arith_reg_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+)$");
-// const re2::RE2 jump_pattern("([a-z][0-9a-z]+),\\s*(0x[0-9a-fA-F]+|\\-?\\d+)"); // jal x1, 0x1000
-// const re2::RE2 single_reg_pattern("([a-z][0-9a-z]+)"); // jr x1
-// const re2::RE2 fp_instr_pattern("(rne|dyn|rtz|rdn|rup|rmm),\\s*(f[0-9]+|ft[0-9]+|fs[0-9]+|fa[0-9]+)(?:,\\s*(f[0-9]+|ft[0-9]+|fs[0-9]+|fa[0-9]+))?(?:,\\s*(f[0-9]+|ft[0-9]+|fs[0-9]+|fa[0-9]+))?(?:,\\s*(f[0-9]+|ft[0-9]+|fs[0-9]+|fa[0-9]+))?");const re2::RE2 two_reg_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+)$");
-// const re2::RE2 atomic_op_pattern("([a-z][0-9a-z]+),\\s*([a-z][0-9a-z]+),\\s*\\(([a-z][0-9a-z]+)\\)");
+const re2::RE2 mem_pattern("Memory (Read|Write) \\[([0-9A-Fa-f]+)\\] = ([0-9A-Fa-f]+)");
 // All standard RISC-V load instructions (excluding capability loads)
 const std::unordered_set<std::string> load_instructions = {
     // Standard integer loads
@@ -96,14 +91,7 @@ enum RiscvBranchType {
     ERROR
   };
 
-typedef enum {
-    aluInstClass = 0,
-    loadInstClass = 1,
-    storeInstClass = 2,
-    Branch = 3,
-    fpInstClass = 4,
-    undefInstClass = 5
-  } InstClass;
+
 
 const std::unordered_map<std::string, RiscvBranchType> CONTROL_FLOW_INST = {
     // Conditional branches (B-type)
@@ -167,8 +155,30 @@ const std::unordered_map<std::string, int> REG_MAP = {
     {"fs8", 24}, {"fs9", 25}, {"fs10", 26}, {"fs11", 27},
     {"ft8", 28}, {"ft9", 29}, {"ft10", 30}, {"ft11", 31},
 
-    {"csp",2}
+
+    //compressed registers
+    {"ca0", 0}, {"ca1", 1}, {"ca2", 2}, {"ca3", 3},
+    {"ca4", 4}, {"ca5", 5}, {"ca6", 6}, {"ca7", 7},
+    {"cs0", 16}, {"cs1", 17}, {"cs2", 18}, {"cs3", 19},
+    {"cs4", 20}, {"cs5", 21}, {"cs6", 22}, {"cs7", 23},
+    {"cs8", 24}, {"cs9", 25}, {"cs10", 26}, {"cs11", 27},
+    {"cs12", 28}, {"cs13", 29}, {"cs14", 30}, {"cs15", 31},
+
+
+    {"cnull", 0}, 
+    {"cra", 1},  // capability return address
+    {"csp", 2},  // capability stack pointer 
+    {"cgp", 3},  // capability global pointer
+    {"ctp", 4},  // capability thread pointer
+    {"ct0", 5},  {"ct1", 6},  {"ct2", 7},
+    {"cs0", 8},  {"cs1", 9},
+    {"ca0", 10}, {"ca1", 11}, {"ca2", 12}, {"ca3", 13},
+    {"ca4", 14}, {"ca5", 15}, {"ca6", 16}, {"ca7", 17},
+    {"cs2", 18}, {"cs3", 19}, {"cs4", 20}, {"cs5", 21},
+    {"cs6", 22}, {"cs7", 23}, {"cs8", 24}, {"cs9", 25},
+    {"cs10", 26}, {"cs11", 27}, {"ct3", 28}, {"ct4", 29}, {"ct5", 30}, {"ct6", 31}
 };
+
 
 uint8_t remap_regid(uint8_t reg) {
 
@@ -184,53 +194,41 @@ uint8_t remap_regid(uint8_t reg) {
 struct ProgramTrace {
 
     trace_instr_format curr_instr;
-    std::array<uint64_t, 32> gpr = {0};
     bool pending_instr = false;
-    bool pending_branch = false;
-    bool is_ld_store = false;
     uint64_t target_addr = 0;
-    std::string mnemonic;
+    std::string mnemonic, curr_mnemonic;
     RiscvBranchType branchType = NOT_BRANCH;
-    InstClass inst;
-    double bytes_written = 0.0;
     bool verbose;    
-
 
     void clear() {
 
         pending_instr = false;
-        pending_branch = false;
-        is_ld_store = false;
         target_addr = 0;
         branchType  = NOT_BRANCH;
         
-        // std::memset(curr_instr.destination_registers, 0, sizeof(curr_instr.destination_registers));
-        // std::memset(curr_instr.source_registers, 0, sizeof(curr_instr.source_registers));    
-        // std::memset(curr_instr.destination_memory, 0, sizeof(curr_instr.destination_memory));
-        // std::memset(curr_instr.source_memory, 0, sizeof(curr_instr.source_memory));
-        std::memset(&curr_instr, 0, sizeof(trace_instr_format));
+        curr_instr = trace_instr_format();
     }
 
     void debug_print_instruction() const {
 
         std::cout << "\n=== Instruction Debug ==="
-         << "\nInstruction: " << mnemonic 
+         << "\nInstruction: " << curr_mnemonic 
          << "\nPC: 0x" << std::hex << curr_instr.ip
          << "\nIs Branch: " << std::dec << (int)curr_instr.is_branch
          << "\nBranch Type: " << RiscvBranchType_string()
          << "\nBranch Taken: " << (int)curr_instr.branch_taken
          << "\n\nDestination Registers: ";
         
-
         // // Print destination registers
-        for (const auto& regs : curr_instr.destination_registers) 
+        for (const auto& regs : curr_instr.destination_registers)
+            if (regs)
                 std::cout << "\n Register Number " << std::dec << static_cast<int>(regs);
-        
         
         
         std::cout << "\nSource Registers: ";
         // Print source registers
         for (const auto& regs : curr_instr.source_registers) 
+            if (regs)
                 std::cout << "\n Register Number " << std::dec << static_cast<int>(regs); 
                 
         
@@ -272,45 +270,49 @@ struct ProgramTrace {
 void process_branch(ProgramTrace& trace, std::string register_ops)
 {
 
+    
     RiscvBranchType bType = (CONTROL_FLOW_INST.count(trace.mnemonic)  > 0) ? CONTROL_FLOW_INST.at(trace.mnemonic) : NOT_BRANCH;            
-    std::cout << trace.mnemonic << std::endl;
     trace.curr_instr.is_branch = bType != NOT_BRANCH;
     trace.branchType = bType;
-    trace.inst = Branch;
 
 
     switch (trace.branchType) {
         //writes IP only
-        case BRANCH_DIRECT_JUMP: 
+
+        case BRANCH_DIRECT_JUMP: {//gg
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.branch_taken = true;
             break;
+        }
     
         //read something else, write ip
-        case BRANCH_INDIRECT: 
+        case BRANCH_INDIRECT: { //gg
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[0] = ::REG_AX;
             break;
+        }
 
         // reads other, writes and reads ip
-        case BRANCH_CONDITIONAL: 
+        case BRANCH_CONDITIONAL: { //gg
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = ::REG_AX;
             break;
+        }
     
         //reads ip, sp, writes sp,ip
-        case BRANCH_DIRECT_CALL: 
+        case BRANCH_DIRECT_CALL: { //gg
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0]= champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
             trace.curr_instr.source_registers[0]= champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
             break;
-
+        }
         // reads other, ip, sp, writes sp and ip
-        case BRANCH_INDIRECT_CALL: 
+        case BRANCH_INDIRECT_CALL: { //this will never reach
+            
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
@@ -318,24 +320,25 @@ void process_branch(ProgramTrace& trace, std::string register_ops)
             trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
             trace.curr_instr.source_registers[2] = ::REG_AX;
             break;
-
+        }
         // reads sp, writes sp,ip
-        case BRANCH_RETURN: 
+        case BRANCH_RETURN:  { //gg
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-            break;
 
-        case BRANCH_JALR: { //JALR is context dependent
+            break;
+        }
+
+        case BRANCH_JALR: { //JALR is context dependent, gg
             trace.curr_instr.branch_taken = true;
             std::size_t first_comma = register_ops.find(',');
             std::string first_reg = register_ops.substr(0,first_comma);
             if(REG_MAP.at(first_reg) == 0) {  
-
                 std::size_t second_comma = register_ops.find(',', first_comma + 1);
                 std::string second_reg = register_ops.substr(first_comma+1, second_comma - (first_comma + 1));
-                
+
                 if (REG_MAP.at(second_reg) != 1) { //indirect jmp 
                     trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
                     trace.curr_instr.source_registers[0] = ::REG_AX;
@@ -362,42 +365,37 @@ void process_branch(ProgramTrace& trace, std::string register_ops)
             break;
         }
         default: assert(false);
-        }
- 
+    }
 }
-
 
 void process_store(ProgramTrace& trace, std::string& operands)
 {
-    trace.inst = storeInstClass;
     std::string r1,r2,offset;
-    if(RE2::PartialMatch(operands,load_store_pattern,&r1,&offset,&r2)) {
-        trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(r1));
-        trace.curr_instr.source_registers[1] = remap_regid(REG_MAP.at(r2));
-        trace.curr_instr.destination_memory[0] = trace.gpr[REG_MAP.at(r2)] + std::stoi(offset,nullptr,0xa);
-        if (trace.gpr[REG_MAP.at(r2)]== 0){
-            std::cerr << operands << std::endl;
-            return;
+    try { 
+        if(RE2::PartialMatch(operands,load_store_pattern,&r1,&offset,&r2)) {
 
+            trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(r1));
+            trace.curr_instr.source_registers[1] = remap_regid(REG_MAP.at(r2));
         }
     }
-
+    catch (const std::out_of_range&) {
+        std::cerr << "process_store: out of range error: " << r1 << " " << r2 << std::endl;
+    }
 }
 
 void process_load(ProgramTrace& trace, std::string& operands)
 {
-    trace.inst = loadInstClass;
 
     std::string r1,r2,offset;
-    if(RE2::PartialMatch(operands,load_store_pattern,&r1,&offset,&r2)) {
-        trace.curr_instr.destination_registers[0] = remap_regid(REG_MAP.at(r1));
-        trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(r2));
-        trace.curr_instr.source_memory[0] = trace.gpr[REG_MAP.at(r2)] + std::stoi(offset,nullptr,0xa);
-        if (trace.gpr[REG_MAP.at(r2)] == 0){
-            std::cerr << "hmmmm.\n";
-            return;
+    try {
+        if(RE2::PartialMatch(operands,load_store_pattern,&r1,&offset,&r2)) {
+            trace.curr_instr.destination_registers[0] = remap_regid(REG_MAP.at(r1));
+            trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(r2));
         }
-    }
+    } 
+    catch (const std::out_of_range&) {
+        std::cerr << "process_load: out of range error: " << r1 << " " << r2 << std::endl;
+    } 
 }
 
 
@@ -405,10 +403,8 @@ void process_int_fp_instr(ProgramTrace& trace, std::string& operands)
 {
     boost::smatch m;
 
-
     if(boost::regex_search(operands, m, registerPattern)) {
         if(m[2].matched && m[3].matched && m[4].matched) {
-            trace.inst = fpInstClass;
             std::string src1, src2, src3;
             src1 = m[2].str(); src2 = m[3].str(); src3 = m[4].str();
 
@@ -418,7 +414,6 @@ void process_int_fp_instr(ProgramTrace& trace, std::string& operands)
         }
 
         else if (m[5].matched) {
-            trace.inst = aluInstClass;
             std::string src1 = m[5].str();
             trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(src1));
 
@@ -430,12 +425,10 @@ void process_int_fp_instr(ProgramTrace& trace, std::string& operands)
         }
 
         else if (m[8].matched) {
-            trace.inst = aluInstClass;
             trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(m[8].str()));
         }  
 
         else if (m[9].matched) {
-            trace.inst = aluInstClass;
             trace.curr_instr.source_registers[0] = remap_regid(REG_MAP.at(m[9].str()));
         }  
     }
@@ -443,22 +436,20 @@ void process_int_fp_instr(ProgramTrace& trace, std::string& operands)
 
 
 void write_instr(ProgramTrace& trace, std::ofstream& out) {
+    
 
-    if (trace.branchType == BRANCH_CONDITIONAL && trace.inst == Branch) {
-        trace.curr_instr.branch_taken = (trace.curr_instr.ip +4) != trace.target_addr;
-        trace.pending_branch = false;
-    }
+    if (trace.branchType == BRANCH_CONDITIONAL) 
+        trace.curr_instr.branch_taken = (trace.curr_instr.ip +4 ) != trace.target_addr;
+
     
     if (trace.verbose) trace.debug_print_instruction();
 
-
     out.write(reinterpret_cast<const char*>(&trace.curr_instr),sizeof(trace_instr_format));
-
     trace.clear();
 }
 
 
-bool parse_trase(std::string& filepath, std::string& ofile, ProgramTrace& trace)
+bool parse_trace(std::string& filepath, std::string& ofile, ProgramTrace& trace)
 {
     trace.clear();
     std::string line;
@@ -478,21 +469,21 @@ bool parse_trase(std::string& filepath, std::string& ofile, ProgramTrace& trace)
     
     while (std::getline(trace_file,line)) {
         std::string cpu, pc, opcode, mnemonic, reg_operands;
-        std::string reg, data;
+        std::string mem_op, mem_addr, val;
 
   
         if (RE2::PartialMatch(line, instr_pattern, &cpu, &pc, &opcode, &mnemonic, &reg_operands)) {
             trace.mnemonic = mnemonic;
-            if (trace.mnemonic == "fence" || trace.mnemonic == "csrrs") continue;
+            if (trace.mnemonic == "fence" || trace.mnemonic == "csrrs" || trace.mnemonic == "illegal") continue;
+
+            trace.curr_instr.ip = std::stoull(pc,nullptr,0x10);
 
             if (trace.pending_instr) {
-                if (trace.pending_branch)
-                    trace.target_addr = std::stoull(pc,nullptr,0x10);
                 write_instr(trace,trace_outFile);
             }
 
-            trace.curr_instr.ip = std::stoull(pc,nullptr,0x10);
             trace.pending_instr = true;
+            trace.curr_mnemonic = trace.mnemonic;
             trace.mnemonic = mnemonic;
             if (CONTROL_FLOW_INST.count(mnemonic) > 0) { //branch instruction 
                 std::size_t pos = reg_operands.find('#');
@@ -500,8 +491,6 @@ bool parse_trase(std::string& filepath, std::string& ofile, ProgramTrace& trace)
                 if (pos != std::string::npos) 
                     trace.target_addr = std::stoull(reg_operands.substr(pos+2),nullptr,0x10);
             
-    
-
                 process_branch(trace,reg_operands);
             } 
             else if (store_instructions.count(mnemonic)){
@@ -510,7 +499,6 @@ bool parse_trase(std::string& filepath, std::string& ofile, ProgramTrace& trace)
 
             }
 
-
             else if (load_instructions.count(mnemonic)) {
 
                 process_load(trace, reg_operands);
@@ -518,28 +506,26 @@ bool parse_trase(std::string& filepath, std::string& ofile, ProgramTrace& trace)
 
             else {
                 process_int_fp_instr(trace,reg_operands);
-            }
+            }      
         }
 
-        else if (RE2::PartialMatch(line,reg_write_pattern,&reg,&data)) {
-            trace.gpr[REG_MAP.at(reg)] = std::stoull(data,nullptr,0x10);
-            trace.curr_instr.destination_registers[0] = remap_regid(REG_MAP.at(reg));
+        else if (RE2::PartialMatch(line, mem_pattern, &mem_op, &mem_addr, &val)) {
+            if (mem_op == "Write")
+                trace.curr_instr.destination_memory[0] = std::stoull(mem_addr,nullptr,0x10);
+
+            else if (mem_op == "Read")
+                trace.curr_instr.source_memory[0] = std::stoull(mem_addr,nullptr,0x10);
         }
     }
-
-
     return true;
-
 }
-
-
 
 
 int main(int argc, char* argv[])
 {
 
     if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace> <start_pc> [-v] \n";
+        std::cerr << "Usage: " << argv[0] << "<trace_file> <output_trace> [-v] \n";
         exit(EXIT_FAILURE);
     }
 
@@ -556,8 +542,6 @@ int main(int argc, char* argv[])
 
     ProgramTrace trace;
     trace.verbose = (argc > 3 && std::string(argv[3]) == "-v");
-    
-    assert(parse_trase(fileName,oFilename, trace));
 
-
+    parse_trace(fileName,oFilename, trace);
 }

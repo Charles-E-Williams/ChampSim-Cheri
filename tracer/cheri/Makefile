@@ -1,7 +1,7 @@
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBU # -g -fsanitize=address,undefined
-LDFLAGS = -llzma -lre2 -pthread  -flto=auto -lre2 -lboost_regex
-LDCHERI = -L/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/build -lcheri_compressed_cap14
+CXXFLAGS = -std=c++17 -Wall -Wextra -O3 -march=native -flto -DNDEBUG #-g -fsanitize=address,undefined
+LDFLAGS = -llzma -pthread -flto=auto -lre2 -lboost_regex
+# LDCHERI = -L/home/charles-williams/Documents/CHERI/CheriTrace/cheri-compressed-cap/build -lcheri_compressed_cap14
 
 SRC ?= cheriQEMU_converter.cc
 TARGET = $(basename $(notdir $(SRC)))
