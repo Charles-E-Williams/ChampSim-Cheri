@@ -18,8 +18,6 @@
 #define TRACE_INSTRUCTION_H
 #include <limits>
 
-// #define CHERI
-
 // special registers that help us identify branches
 namespace champsim
 {
@@ -35,19 +33,12 @@ constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
 
 #ifdef CHERI
-
-constexpr std::size_t CAP_INSTR_MASK = 0x1;
-constexpr std::size_t CAP_SRC_MASK = 0x2;
-constexpr std::size_t CAP_DEST_MASK = 0x4;
-constexpr std::size_t CAP_MEM_MASK = 0x8;
-
 struct cap_metadata
 {
   unsigned long long base, length, offset;
   unsigned short perms;
   unsigned char tag;
 };
-
 #endif
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
@@ -59,26 +50,15 @@ struct input_instr {
   unsigned char is_branch;
   unsigned char branch_taken;
 
-        // input registers
-#ifdef CHERI
-  unsigned char is_cap;
-  // Memory operands with capability metadata (address = cap.base + cap.offset)
-  struct {
-    unsigned long long address;
-    struct cap_metadata cap;
-  } destination_memory[NUM_INSTR_DESTINATIONS], source_memory[NUM_INSTR_SOURCES];
-  
-  struct {
-    unsigned char reg_id;
-    struct cap_metadata cap;
-  } destination_registers[NUM_INSTR_DESTINATIONS], source_registers[NUM_INSTR_SOURCES];
-
-#else
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];   
+  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
+        // input registers
+#ifdef CHERI
+  unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
+  cap_metadata cap;
 #endif
 };
 
@@ -96,7 +76,7 @@ struct cloudsuite_instr {
 
 #ifdef CHERI
 
-  unsigned char is_cap;
+  unsigned char is_cap; //instruction either reads or writes capability data
   // Memory operands with capability metadata (address = cap.base + cap.offset)
   struct {
     unsigned long long address;
