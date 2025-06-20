@@ -32,14 +32,6 @@ constexpr std::size_t NUM_INSTR_DESTINATIONS = 2;
 constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
 
-#ifdef CHERI
-struct cap_metadata
-{
-  unsigned long long base, length, offset;
-  unsigned short perms;
-  unsigned char tag;
-};
-#endif
 
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
 struct input_instr {
@@ -58,7 +50,9 @@ struct input_instr {
         // input registers
 #ifdef CHERI
   unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
-  cap_metadata cap;
+  unsigned long long base, length, offset;
+  unsigned short perms;
+  unsigned char tag;
 #endif
 };
 
@@ -71,29 +65,15 @@ struct cloudsuite_instr {
   unsigned char branch_taken;
   unsigned char asid[2];
 
-
- 
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+  unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
+  unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
 #ifdef CHERI
-
-  unsigned char is_cap; //instruction either reads or writes capability data
-  // Memory operands with capability metadata (address = cap.base + cap.offset)
-  struct {
-    unsigned long long address;
-    struct cap_metadata cap;
-  } destination_memory[NUM_INSTR_DESTINATIONS_SPARC], source_memory[NUM_INSTR_SOURCES];
-  
-  struct {
-    unsigned char reg_id;
-    struct cap_metadata cap;
-  } destination_registers[NUM_INSTR_DESTINATIONS_SPARC], source_registers[NUM_INSTR_SOURCES];
-#else
-  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
-  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
-  unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
-  unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory
-
+  unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
 #endif
+
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 

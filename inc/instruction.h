@@ -119,78 +119,27 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   unsigned completed_mem_ops = 0;
   int num_reg_dependent = 0;
 
-
-
-// #ifdef CHERI
-// struct Register {
-//   PHYSICAL_REGISTER_ID reg_id;
-//   capability_metadata cap;
-// };
-
-// struct Memory {
-//   champsim::address addr;
-//   capability_metadata cap;
-// };
-
-// bool is_cap_instr;
-
-
-// #endif
-
-#ifdef CHERI
-  bool is_cap_instr;
-  std::vector<capability_metadata> destination_memory_caps = {};
-  std::vector<capability_metadata> source_memory_caps = {};
-#endif
   std::vector<PHYSICAL_REGISTER_ID> destination_registers = {}; // output registers
   std::vector<PHYSICAL_REGISTER_ID> source_registers = {};      // input registers
 
   std::vector<champsim::address> destination_memory = {};
   std::vector<champsim::address> source_memory = {};
+
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
-
-
-
- 
 private:
   template <typename T>
   ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
   {
-
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
 
-
-#ifndef CHERI
     auto dmem_end = std::remove(std::begin(instr.destination_memory), std::end(instr.destination_memory), uint64_t{0});
     std::transform(std::begin(instr.destination_memory), dmem_end, std::back_inserter(this->destination_memory), [](auto x) { return champsim::address{x}; });
 
     auto smem_end = std::remove(std::begin(instr.source_memory), std::end(instr.source_memory), uint64_t{0});
     std::transform(std::begin(instr.source_memory), smem_end, std::back_inserter(this->source_memory), [](auto x) { return champsim::address{x}; });
-#else
-    
-
-    is_cap_instr = instr.is_cap == true;
-    // Process destination memory addresses and capabilities
-    
-    for (unsigned int i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
-        if (instr.destination_memory[i].address != 0) {
-          destination_memory.push_back(champsim::address{instr.destination_memory[i].address});
-          destination_memory_caps.push_back(instr.destination_memory[i].cap);
-        }
-    }
-    
-    for (unsigned int i = 0; i < NUM_INSTR_SOURCES; i++) {
-      if (instr.source_memory[i].address!= 0) { // Only non-zero addresses
-        source_memory.push_back(champsim::address{instr.source_memory[i].address});
-        source_memory_caps.push_back(instr.source_memory[i].cap);
-      }
-    }
-#endif
-
-
 
     bool writes_sp = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_STACK_POINTER);
     bool writes_ip = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_INSTRUCTION_POINTER);

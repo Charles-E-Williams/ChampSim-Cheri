@@ -183,12 +183,12 @@ const std::unordered_map<std::string, int> REG_MAP = {
 uint8_t remap_regid(uint8_t reg) {
 
     switch (reg) {
-        case 2: return 64;
-        case 25: return 65;
-        case 26: return 66;
+        case 0: return 67;
+        case champsim::REG_STACK_POINTER: return 64;
+        case champsim::REG_FLAGS: return 65;
+        case champsim::REG_INSTRUCTION_POINTER: return 66;
         default: return reg;
     }
-    return 0;
 }
 
 struct ProgramTrace {

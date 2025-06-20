@@ -13,7 +13,6 @@
 #define CHERI
 #include "../../inc/trace_instruction.h"
 #include "disas.hh"
-using cap_data = cap_metadata;
 using trace_instr_format = input_instr;
 
 
@@ -34,25 +33,18 @@ using trace_instr_format = input_instr;
 #define RISCV_REG_RA 1
 #define RISCV_REG_SP 2
 
-// Constants
-namespace {
-    constexpr char REG_AX = 56;
+
+uint8_t remap_regid(uint8_t reg) {
+    switch (reg) {
+        case 0: return 67;
+        case champsim::REG_STACK_POINTER: return 64;
+        case champsim::REG_FLAGS: return 65;
+        case champsim::REG_INSTRUCTION_POINTER: return 66;
+        default: return reg;
+    }
 }
 
-const std::unordered_map<std::string, int> reg_map = {
-    // Integer registers
-    {"zero",0 },
-    {"ra", 1}, {"sp", 2}, {"gp", 3}, {"tp", 4},
-    {"t0", 5}, {"t1", 6}, {"t2", 7},
-    {"s0", 8}, {"fp", 8}, {"s1", 9},
-    {"a0", 10}, {"a1", 11}, {"a2", 12}, {"a3", 13},
-    {"a4", 14}, {"a5", 15}, {"a6", 16}, {"a7", 17},
-    {"s2", 18}, {"s3", 19}, {"s4", 20}, {"s5", 21},
-    {"s6", 22}, {"s7", 23}, {"s8", 24}, {"s9", 25},
-    {"s10", 26}, {"s11", 27}, {"t3", 28}, {"t4", 29}, {"t5", 30}, {"t6", 31}
-};
-
-uint64_t get_instruction_length(uint32_t inst) {
+uint8_t get_instruction_length(uint32_t inst) {
     // Check if it's a compressed instruction (16-bit)
     if ((inst & 0x3) != 0x3) {
         return 2;  // Compressed instruction
@@ -93,9 +85,10 @@ const char* entry_type_to_string(uint8_t type) {
 struct InstructionTrace {
     BranchType branch_type = NOT_BRANCH;
     trace_instr_format curr_instr;
-    uint64_t branch_target_pc;
     rv_decode decoded_instr;
     inst_type_t type = INST_TYPE_UNKNOWN;
+    bool is_ld;
+    bool is_st;
 
 
     InstructionTrace() {
@@ -133,41 +126,45 @@ struct InstructionTrace {
 
         // // Print destination registers
         for (const auto& regs : curr_instr.destination_registers) {
-            std::cout << "\n Register ID " << std::dec << static_cast<int>(regs) <<  "\n";
+            if (regs)
+                std::cout << "\n Register ID " << std::dec << static_cast<int>(regs) <<  "\n";
             
         }
         
         std::cout << "\nSource Registers: ";
         // Print source registers
         for (const auto& regs : curr_instr.source_registers) {
-            std::cout << "\n Register ID " << std::dec << static_cast<int>(regs) << "\n";
-            
+            if (regs)
+                std::cout << "\n Register ID " << std::dec << static_cast<int>(regs) << "\n";
+                
         }
         
         std::cout << "\n\nMemory Operands:";
         // Print destination memory
         std::cout << "\nDestination Memory:";
         for (const auto& mem : curr_instr.destination_memory) {
-            std::cout << "\n Memory Address: 0x" << std::hex << mem << "\n";
+            if (mem)
+                std::cout << "\n Memory Address: 0x" << std::hex << mem << "\n";
             
         }
         
         // Print source memory
         std::cout << "\nSource Memory:";
         for (const auto& mem : curr_instr.source_memory) {
-            std::cout << "\n Memory Address: 0x" << std::hex << mem << "\n";
+            if (mem)
+                std::cout << "\n Memory Address: 0x" << std::hex << mem << "\n";
             
         }
 
-        std::cout << "\nCapability Metadata: "
-                << " | Base 0x" << std::hex << curr_instr.cap.base
-                << " | Length: 0x" << std::hex << curr_instr.cap.length
-                << " | Offset: 0x" << std::hex << curr_instr.cap.offset
-                << " | Perms: 0x" << std::hex << curr_instr.cap.perms
-                << " | Tag:" << (int)curr_instr.cap.tag;
-            
+        if (curr_instr.is_cap) {
+            std::cout << "\nCapability Metadata: "
+                    << " | Base 0x" << std::hex << curr_instr.base
+                    << " | Length: 0x" << std::hex << curr_instr.length
+                    << " | Offset: 0x" << std::hex << curr_instr.offset
+                    << " | Perms: 0x" << std::hex << curr_instr.perms
+                    << " | Tag:" << (int)curr_instr.tag;
+        }
 
-        
         std::cout << "\n=========================\n" << std::dec << std::endl;
     }
 
@@ -288,12 +285,10 @@ BranchType get_branch_type(const rv_decode& dec)
         case rv_op_c_j:
         case rv_op_jal:
         case rv_op_c_jal:
-           // printf("J or jal instruction\n");
             return (dec.rd == RISCV_REG_ZERO) ? BRANCH_DIRECT_JUMP : BRANCH_DIRECT_CALL;
         
         case rv_op_jalr:
         case rv_op_c_jalr:
-          //  printf("jalr instruction\n");
             if (dec.rd == RISCV_REG_ZERO)   
                 return (dec.rs1 == RISCV_REG_RA) ? BRANCH_RETURN : BRANCH_INDIRECT;
             else return BRANCH_INDIRECT_CALL;
@@ -315,168 +310,139 @@ BranchType get_branch_type(const rv_decode& dec)
 
 }
 
-cap_data set_cap(cheri_trace_entry_t& entry) {
-    cap_data c;
-
-    /*
-        Metadata (tag, perms, seal, flag) is in val2
-        Cursor is stored in val3
-        Base is in val4
-        Length is in val5
-        We can derive the offset from Cursor - Base 
-    */
-
-    c.tag = (entry.val2 >> 63) & 0x1;
-    c.perms = (entry.val2 & 0xFFFF);
-    c.length = entry.val5;
-    c.base = entry.val4;
-    c.offset = entry.val3 - entry.val4;
-    return c;
-}
-
 
 void set_branch_info(InstructionTrace& trace){
+        
     switch (trace.branch_type)
     {
-    case BRANCH_DIRECT_JUMP:
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.branch_taken = true;
-        break;
 
-    case BRANCH_INDIRECT:
-        trace.curr_instr.branch_taken = true;
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.source_registers[0] = ::REG_AX;
-        break;
+        case BRANCH_DIRECT_JUMP: //writes ip only
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.branch_taken = true;
+            break;
 
-    case BRANCH_CONDITIONAL:
-        trace.branch_target_pc = trace.curr_instr.ip + 4;
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.source_registers[1] = ::REG_AX;
-        break;
+        case BRANCH_INDIRECT: //writes ip and reads other
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
+                trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
+                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
+            }
+            else if (get_instruction_length(trace.decoded_instr.inst) == 2)
+                    trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
+            break;
 
-    case BRANCH_DIRECT_CALL:
-        trace.curr_instr.branch_taken = true;
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-        trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
-        break;
+        case BRANCH_CONDITIONAL: //writes ip, reads ip and reads other
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
+                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+                trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
+            }
+            else if (get_instruction_length(trace.decoded_instr.inst) == 2)
+                    trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+            break;
 
-    case BRANCH_INDIRECT_CALL:
-        trace.curr_instr.branch_taken = true;
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-        trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
-        trace.curr_instr.source_registers[2] = ::REG_AX;
-        break;
-    
-    case BRANCH_RETURN:
-        trace.curr_instr.branch_taken = true;
-        trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
-        trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-        trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-        break;
+        case BRANCH_DIRECT_CALL: //writes ip, writes sp, reads ip, reads sp
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
+            break;
 
-    case BRANCH_OTHER:
-    case NOT_BRANCH:
-    default: 
-        assert(false && "Error: Unrecognized branch type\n");
+        case BRANCH_INDIRECT_CALL: //reads sp, reads ip, writes sp, writes ip, reads other 
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
+            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
+                trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
+                trace.curr_instr.source_registers[3] = remap_regid(trace.decoded_instr.rs1);
+            }
+            else if (get_instruction_length(trace.decoded_instr.inst) == 2) 
+                    trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
+            break;
+        
+        case BRANCH_RETURN: //writes sp, writes ip, reads sp
+            trace.curr_instr.branch_taken = true;
+            trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
+            trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            break;
+
+        case BRANCH_OTHER:
+        case NOT_BRANCH:
+        default: 
+            assert(false && "Error: Unrecognized branch type\n");
     }
 }
 
 void set_mem_info(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
 
-    if (entry.entry_type == CTE_LD_CAP || entry.entry_type == CTE_LD_GPR) {
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;
+    if (trace.is_ld) {
+        trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+        trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
         trace.curr_instr.source_memory[0] = entry.val1;
     }
 
-    else if (entry.entry_type == CTE_ST_CAP || entry.entry_type == CTE_ST_GPR) {
-        trace.curr_instr.source_registers[0]= trace.decoded_instr.rs1;
-        trace.curr_instr.source_registers[1] = trace.decoded_instr.rs2;
+    else if (trace.is_st) {
+        trace.curr_instr.source_registers[0]= remap_regid(trace.decoded_instr.rs1);
+        trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
         trace.curr_instr.destination_memory[0] = entry.val1;    
     }
-
-    else assert(false);
 }
 
-void set_cap_info(InstructionTrace& trace, cheri_trace_entry_t& entry) {
-
-    if (entry.entry_type == CTE_CAP) {
-        trace.curr_instr.cap = set_cap(entry);
-    }
-
-    else if (entry.entry_type == CTE_LD_CAP || trace.type == INST_TYPE_CAP_LOAD) {
-        trace.curr_instr.cap = set_cap(entry);
-    }
-
-    else if (entry.entry_type == CTE_ST_CAP || trace.type == INST_TYPE_CAP_STORE) {
-        trace.curr_instr.cap = set_cap(entry);
-    }
-
-    else assert(false && "Invalid entry type\n");
-}
 
 void set_reg_info(InstructionTrace& trace)       
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
-
+    assert(num_regs_used != 0 || num_regs_used != 55);
     switch (num_regs_used)
     {
-    case 0:
-    case 55:
-        assert(false);
-        break;
 
-    case 1:
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        break;
+        case 1:
+            trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+            break;
 
-    case 2:
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;        
-        break;
+        case 2:
+            trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);        
+            break;
 
-    case 3:
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;
-        trace.curr_instr.source_registers[1] = trace.decoded_instr.rs2;
-        break;
+        case 3:
+            trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
+            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
+            break;
 
-    case 4:
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;
-        trace.curr_instr.source_registers[1] = trace.decoded_instr.rs2;
-        trace.curr_instr.source_registers[2] = trace.decoded_instr.rs3;
-        break;
+        case 4:
+            trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
+            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
+            trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs3);
+            break;
     }
-
 }
 
 void set_info_atomic(InstructionTrace& trace, const cheri_trace_entry_t& entry)
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
-
+    assert(num_regs_used != 0 || num_regs_used != 55);
     switch (num_regs_used)
     {
     case 2:
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;
+        trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+        trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
         trace.curr_instr.source_memory[0] = entry.val1;
         break;
 
     case 3: 
-        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
-        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs2;
-        trace.curr_instr.source_registers[1] = trace.decoded_instr.rs1;
+        trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+        trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs2);
+        trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
         trace.curr_instr.destination_memory[0] = entry.val1;
-        break;
-    default:
-        assert(false);
         break;
     }
 }
@@ -489,27 +455,33 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
     trace.curr_instr.is_branch = is_branch_instruction(trace);
     trace.curr_instr.ip = entry.pc;
     trace.type = classify_instruction(trace.decoded_instr);
-    trace.curr_instr.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
+    trace.curr_instr.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_OP) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
 
     if (trace.type == INST_TYPE_UNKNOWN) {
-        printf("Unknown instruction: %08lx\n", trace.decoded_instr.inst);
+        printf("Error: Unknown instruction %08lx detected at ip 0x%08lx\n", trace.decoded_instr.inst, trace.decoded_instr.pc);
         assert(false);
     }
 
+
     switch (trace.type)
     {
+
         case INST_TYPE_BRANCH:
             trace.branch_type = get_branch_type(trace.decoded_instr);
-            assert(trace.branch_type != NOT_BRANCH && trace.branch_type != ERROR);
+            assert(trace.branch_type != ERROR);
             set_branch_info(trace);
             break;
 
         case INST_TYPE_LOAD:
-        case INST_TYPE_STORE:
         case INST_TYPE_CAP_LOAD:
-        case INST_TYPE_CAP_STORE: 
         case INST_TYPE_FP_LOAD:
+            trace.is_ld = true;
+            set_mem_info(trace,entry);
+            break;
+        case INST_TYPE_STORE:
+        case INST_TYPE_CAP_STORE: 
         case INST_TYPE_FP_STORE:
+            trace.is_st = true;
             set_mem_info(trace,entry);
             break;
 
@@ -524,8 +496,9 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
         
         case INST_TYPE_CSR: 
         case INST_TYPE_SYSTEM:
-            if (count_register_operands(trace.decoded_instr.codec) > 0) 
+            if (count_register_operands(trace.decoded_instr.codec) > 0) {
                 set_reg_info(trace);
+            }
             break;
 
         default:
@@ -533,10 +506,22 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
     }
 
 
-    if (trace.curr_instr.is_cap)
-        set_cap_info(trace,entry);
-}
+    if (trace.curr_instr.is_cap) {
+        /*
+            Metadata (tag, perms, seal, flag) is in val2
+            Cursor is stored in val3
+            Base is in val4
+            Length is in val5
+            We can derive the offset from Cursor - Base 
+        */
 
+        trace.curr_instr.tag = (entry.val2 >> 63) & 0x1;
+        trace.curr_instr.perms = (entry.val2 & 0xFFFF);
+        trace.curr_instr.length = entry.val5;
+        trace.curr_instr.base = entry.val4;
+        trace.curr_instr.offset = entry.val3 - entry.val4;
+    }
+}
 
 
 int main(int argc, char** argv) {
@@ -565,12 +550,11 @@ int main(int argc, char** argv) {
     
     // Process trace entries
     cheri_trace_entry_t entry;
-    InstructionTrace trace;
-    InstructionTrace prev_trace;
+    InstructionTrace trace, prev_trace;
     uint64_t instruction_count = 0;
     bool pending_instr = false;
-
     while (input.read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
+
         entry.pc = bswap_64(entry.pc);
         entry.val1 = bswap_64(entry.val1);
         entry.val2 = bswap_64(entry.val2);
@@ -582,6 +566,8 @@ int main(int argc, char** argv) {
         // Process current entry first
         trace = InstructionTrace();
         convert_cheri_trace_entry(entry, trace);
+
+
 
         if (pending_instr) {
             // Check if previous instruction was a conditional branch
@@ -616,12 +602,9 @@ int main(int argc, char** argv) {
         instruction_count++;
     }
     
-    // Don't forget to write the last instruction
-    if (pending_instr) {
-        output.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
-        if (verbose)
-            trace.debug_print_instruction();
-    }
+
+    output.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
+
     
     input.close();
     output.close();
