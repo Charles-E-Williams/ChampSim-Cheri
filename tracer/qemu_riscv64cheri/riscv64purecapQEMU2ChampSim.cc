@@ -33,13 +33,18 @@ using trace_instr_format = input_instr;
 #define RISCV_REG_RA 1
 #define RISCV_REG_SP 2
 
+const char TRANSLATED_REG_IP = 64;
+const char TRANSLATED_REG_SP = 65;
+const char TRANSLATED_REG_FLAGS = 66;
+const char TRANSLATED_REG_ZERO = 67;
+
 
 uint8_t remap_regid(uint8_t reg) {
     switch (reg) {
-        case 0: return 67;
-        case champsim::REG_STACK_POINTER: return 64;
-        case champsim::REG_FLAGS: return 65;
-        case champsim::REG_INSTRUCTION_POINTER: return 66;
+        case 0: return TRANSLATED_REG_ZERO;
+        case champsim::REG_STACK_POINTER: return TRANSLATED_REG_IP;
+        case champsim::REG_FLAGS: return TRANSLATED_REG_SP;
+        case champsim::REG_INSTRUCTION_POINTER: return TRANSLATED_REG_FLAGS;
         default: return reg;
     }
 }
@@ -324,12 +329,8 @@ void set_branch_info(InstructionTrace& trace){
         case BRANCH_INDIRECT: //writes ip and reads other
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
-                trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
-                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
-            }
-            else if (get_instruction_length(trace.decoded_instr.inst) == 2)
-                    trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
             break;
 
         case BRANCH_CONDITIONAL: //writes ip, reads ip and reads other
@@ -340,7 +341,11 @@ void set_branch_info(InstructionTrace& trace){
                 trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
             }
             else if (get_instruction_length(trace.decoded_instr.inst) == 2)
-                    trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+
+            else 
+                trace.curr_instr.source_registers[1] = champsim::REG_FLAGS;
+
             break;
 
         case BRANCH_DIRECT_CALL: //writes ip, writes sp, reads ip, reads sp
@@ -357,12 +362,10 @@ void set_branch_info(InstructionTrace& trace){
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
-            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
-                trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
-                trace.curr_instr.source_registers[3] = remap_regid(trace.decoded_instr.rs1);
-            }
-            else if (get_instruction_length(trace.decoded_instr.inst) == 2) 
-                    trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
+            trace.curr_instr.source_registers[3] = remap_regid(trace.decoded_instr.rs1);
+
+
             break;
         
         case BRANCH_RETURN: //writes sp, writes ip, reads sp
@@ -381,6 +384,8 @@ void set_branch_info(InstructionTrace& trace){
 
 void set_mem_info(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
 
+    assert(entry.val1 != 0);
+    
     if (trace.is_ld) {
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
         trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
