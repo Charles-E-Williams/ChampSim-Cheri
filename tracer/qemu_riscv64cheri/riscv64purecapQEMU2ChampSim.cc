@@ -338,6 +338,7 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
             break;
 
+        //can't add third destination register without modififying champsim
         case BRANCH_DIRECT_CALL: //writes ip, writes sp, reads ip, reads sp
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
@@ -346,6 +347,7 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
             break;
 
+        //can't add third destination register without modififying champsim
         case BRANCH_INDIRECT_CALL: //reads sp, reads ip, writes sp, writes ip, reads other 
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
@@ -360,6 +362,7 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
+            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
             break;
 
         case BRANCH_OTHER:
@@ -391,6 +394,12 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
 void set_mem_info(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
 
     assert(entry.val1 != 0);
+    uint8_t access_size = get_memory_access_size(trace.decoded_instr);
+    uint64_t address = entry.val1;
+
+    if (spans_multiple_cache_lines(address, access_size))
+        printf("true\n");
+    
 
     if (trace.is_ld) {
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
@@ -459,6 +468,11 @@ void set_info_atomic(InstructionTrace& trace, cheri_trace_entry_t& entry)
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
     assert(num_regs_used != 0 && num_regs_used != 55);
+    uint8_t access_size = get_memory_access_size(trace.decoded_instr);
+    uint64_t address = entry.val1;
+
+    if (spans_multiple_cache_lines(address, access_size))
+        printf("true\n");
     switch (num_regs_used)
     {
     case 2:
@@ -635,8 +649,6 @@ int main(int argc, char** argv) {
             return 1;
         }
     }
-
-    std::cout << sizeof(trace.curr_instr) << std::endl;
     
     while (input.read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
         // Byte swap

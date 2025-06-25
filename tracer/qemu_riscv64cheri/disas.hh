@@ -1371,22 +1371,21 @@ typedef enum {
 
 
 
-   uint8_t count_register_operands(uint8_t);
-   void decode_inst_opcode(rv_decode *dec, rv_isa isa, int flags);
-   rv_opcode decode_cheri_inst(rv_inst inst);
-   rv_opcode decode_cheri_two_op(unsigned func);
-   void decode_inst_operands(rv_decode *dec);
-   rv_decode disasm_inst(rv_isa isa, uint64_t pc, rv_inst inst, int flags);
-   void decode_inst_lift_pseudo(rv_decode *dec);
-   bool check_constraints(rv_decode *dec, const rvc_constraint *c);
-   void decode_inst_decompress(rv_decode *dec, rv_isa isa);
-   void decode_inst_decompress_rv128(rv_decode *dec);
-   void decode_inst_decompress_rv64(rv_decode *dec);
-   void decode_inst_decompress_rv32(rv_decode *dec);
-
-   inst_type_t classify_instruction(rv_decode dec); 
-   const char* inst_type_to_str(inst_type_t type);
-
-
+    uint8_t count_register_operands(uint8_t);
+    void decode_inst_opcode(rv_decode *dec, rv_isa isa, int flags);
+    rv_opcode decode_cheri_inst(rv_inst inst);
+    rv_opcode decode_cheri_two_op(unsigned func);
+    void decode_inst_operands(rv_decode *dec);
+    rv_decode disasm_inst(rv_isa isa, uint64_t pc, rv_inst inst, int flags);
+    void decode_inst_lift_pseudo(rv_decode *dec);
+    bool check_constraints(rv_decode *dec, const rvc_constraint *c);
+    void decode_inst_decompress(rv_decode *dec, rv_isa isa);
+    void decode_inst_decompress_rv128(rv_decode *dec);
+    void decode_inst_decompress_rv64(rv_decode *dec);
+    void decode_inst_decompress_rv32(rv_decode *dec);
+    inst_type_t classify_instruction(rv_decode dec); 
+    const char* inst_type_to_str(inst_type_t type);
+    bool spans_multiple_cache_lines(uint64_t addr, uint8_t size);
+    uint8_t get_memory_access_size(rv_decode dec);
 
 #endif

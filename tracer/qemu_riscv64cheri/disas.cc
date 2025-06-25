@@ -2014,3 +2014,128 @@ inst_type_t classify_instruction(rv_decode dec) {
             return INST_TYPE_UNKNOWN;
     }
 }
+
+
+uint8_t get_memory_access_size(rv_decode dec) {
+    switch (dec.op) {
+        // 1-byte accesses
+        case rv_op_lb:
+        case rv_op_lbu:
+        case rv_op_sb:
+        case rv_op_clb:
+        case rv_op_clbu:
+        case rv_op_csb:
+            return 1;
+            
+        // 2-byte accesses
+        case rv_op_lh:
+        case rv_op_lhu:
+        case rv_op_sh:
+        case rv_op_clh:
+        case rv_op_clhu:
+        case rv_op_csh:
+            return 2;
+            
+        // 4-byte accesses
+        case rv_op_lw:
+        case rv_op_lwu:
+        case rv_op_sw:
+        case rv_op_c_lw:
+        case rv_op_c_lwsp:
+        case rv_op_c_sw:
+        case rv_op_c_swsp:
+        case rv_op_clw:
+        case rv_op_clwu:
+        case rv_op_csw:
+        case rv_op_flw:
+        case rv_op_fsw:
+        case rv_op_c_flw:
+        case rv_op_c_flwsp:
+        case rv_op_c_fsw:
+        case rv_op_c_fswsp:
+        case rv_op_cflw:
+        case rv_op_cfsw:
+        // 4-byte atomics
+        case rv_op_lr_w:
+        case rv_op_sc_w:
+        case rv_op_amoswap_w:
+        case rv_op_amoadd_w:
+        case rv_op_amoxor_w:
+        case rv_op_amoor_w:
+        case rv_op_amoand_w:
+        case rv_op_amomin_w:
+        case rv_op_amomax_w:
+        case rv_op_amominu_w:
+        case rv_op_amomaxu_w:
+            return 4;
+            
+        // 8-byte accesses
+        case rv_op_ld:
+        case rv_op_ldu:
+        case rv_op_sd:
+        case rv_op_c_ld:
+        case rv_op_c_ldsp:
+        case rv_op_c_sd:
+        case rv_op_c_sdsp:
+        case rv_op_cld:
+        case rv_op_csd:
+        case rv_op_fld:
+        case rv_op_fsd:
+        case rv_op_c_fld:
+        case rv_op_c_fldsp:
+        case rv_op_c_fsd:
+        case rv_op_c_fsdsp:
+        case rv_op_cfld:
+        case rv_op_cfsd:
+        // 8-byte atomics
+        case rv_op_lr_d:
+        case rv_op_sc_d:
+        case rv_op_amoswap_d:
+        case rv_op_amoadd_d:
+        case rv_op_amoxor_d:
+        case rv_op_amoor_d:
+        case rv_op_amoand_d:
+        case rv_op_amomin_d:
+        case rv_op_amomax_d:
+        case rv_op_amominu_d:
+        case rv_op_amomaxu_d:
+            return 8;
+            
+        // 16-byte accesses (capabilities and quad-word)
+        case rv_op_lc:
+        case rv_op_sc:
+        case rv_op_clc:
+        case rv_op_csc:
+        case rv_op_lq:
+        case rv_op_sq:
+        case rv_op_c_lq:
+        case rv_op_c_lqsp:
+        case rv_op_c_sq:
+        case rv_op_c_sqsp:
+        case rv_op_flq:
+        case rv_op_fsq:
+        // 16-byte atomics
+        case rv_op_lr_q:
+        case rv_op_sc_q:
+        case rv_op_amoswap_q:
+        case rv_op_amoadd_q:
+        case rv_op_amoxor_q:
+        case rv_op_amoor_q:
+        case rv_op_amoand_q:
+        case rv_op_amomin_q:
+        case rv_op_amomax_q:
+        case rv_op_amominu_q:
+        case rv_op_amomaxu_q:
+            return 16;
+            
+        default:
+            return 0; // Not a memory instruction
+    }
+}
+
+bool spans_multiple_cache_lines(uint64_t addr, uint8_t size) {
+    
+    uint64_t start_line = addr & ~63lu;
+    uint64_t end_line = (addr + size - 1) & ~63lu;
+    return start_line != end_line;
+}
