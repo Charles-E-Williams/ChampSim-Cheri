@@ -181,6 +181,23 @@ private:
       is_branch = true;
       branch_taken = true;
       branch = BRANCH_RETURN;
+    } // ===== BEGIN RISC-V ADDITIONS =====    
+      else if (!reads_sp && reads_ip && !writes_sp && writes_ip && !reads_flags && !reads_other) {
+      // RISC-V direct call (jal ra, target) - reads IP to save return address, writes IP
+      is_branch = true;
+      branch_taken = true;
+      branch = BRANCH_DIRECT_CALL;
+    } else if (!reads_sp && reads_ip && !writes_sp && writes_ip && !reads_flags && reads_other) {
+      // RISC-V indirect call (jalr ra, rs, offset) - reads IP + other reg, writes IP
+      is_branch = true;
+      branch_taken = true;
+      branch = BRANCH_INDIRECT_CALL;
+    } else if (!reads_sp && !reads_ip && !writes_sp && writes_ip && !reads_flags && reads_other) {
+      // RISC-V return (jalr x0, ra, 0) - reads ra register, writes IP only
+      is_branch = true;
+      branch_taken = true;
+      branch = BRANCH_RETURN;
+    // ===== END RISC-V ADDITIONS =====    
     } else if (writes_ip) {
       // some other branch type that doesn't fit the above categories
       is_branch = true;

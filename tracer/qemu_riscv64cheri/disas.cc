@@ -2132,10 +2132,3 @@ uint8_t get_memory_access_size(rv_decode dec) {
             return 0; // Not a memory instruction
     }
 }
-
-bool spans_multiple_cache_lines(uint64_t addr, uint8_t size) {
-    
-    uint64_t start_line = addr & ~63lu;
-    uint64_t end_line = (addr + size - 1) & ~63lu;
-    return start_line != end_line;
-}

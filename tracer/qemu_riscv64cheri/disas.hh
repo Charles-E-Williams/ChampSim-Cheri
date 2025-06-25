@@ -1385,7 +1385,6 @@ typedef enum {
     void decode_inst_decompress_rv32(rv_decode *dec);
     inst_type_t classify_instruction(rv_decode dec); 
     const char* inst_type_to_str(inst_type_t type);
-    bool spans_multiple_cache_lines(uint64_t addr, uint8_t size);
     uint8_t get_memory_access_size(rv_decode dec);
 
 #endif
