@@ -40,6 +40,7 @@ const char TRANSLATED_REG_SP = 65;
 const char TRANSLATED_REG_FLAGS = 66;
 const char TRANSLATED_REG_ZERO = 67;
 
+std::vector<uint16_t>  simpoints;
 
 // Print usage and help information
 void print_usage(const char* program_name) {
@@ -142,7 +143,9 @@ struct InstructionTrace {
          << "\nIs Branch: " << std::dec << (int)curr_instr.is_branch
          << "\nBranch Type: " << RiscvBranchType_string()
          << "\nBranch Taken: " << (int)curr_instr.branch_taken
+         #ifdef CHERI
          << "\nIs Capability Instruction: " << (int)curr_instr.is_cap
+         #endif
          << "\nInstruction: 0x" << std::hex << decoded_instr.inst 
          << "\nInstruction Type: " << inst_type_to_str(type)
          << "\n\nDestination Registers ";
@@ -180,6 +183,7 @@ struct InstructionTrace {
             
         }
 
+    #ifdef CHERI
         if (curr_instr.is_cap) {
             std::cerr << "\nCapability Metadata: "
                     << " | Base 0x" << std::hex << curr_instr.base
@@ -190,10 +194,11 @@ struct InstructionTrace {
         }
         std::cerr << "\n=========================\n" << std::dec << std::endl;
     }
+    #endif
 };
 
 
-
+#ifdef CHERI
 bool is_cap_instr(const cheri_trace_entry_t& entry) {
 
     switch(entry.entry_type) {
@@ -205,6 +210,7 @@ bool is_cap_instr(const cheri_trace_entry_t& entry) {
     }
     assert(false);
 }
+#endif
 
 
 bool is_branch_instruction(InstructionTrace& trace) {
@@ -322,23 +328,14 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
         case BRANCH_INDIRECT: //writes ip and reads other
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rd);
-            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
             break;
 
         case BRANCH_CONDITIONAL: //writes ip, reads ip and reads other
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-            if (get_instruction_length(trace.decoded_instr.inst) == 4) {
-                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
-                trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
-            }
-            else if (get_instruction_length(trace.decoded_instr.inst) == 2)
-                trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
-
-            else 
-                trace.curr_instr.source_registers[1] = champsim::REG_FLAGS;
-
+            trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+            trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
             break;
 
         case BRANCH_DIRECT_CALL: //writes ip, writes sp, reads ip, reads sp
@@ -355,10 +352,7 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
-            trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rd);
-            trace.curr_instr.source_registers[3] = remap_regid(trace.decoded_instr.rs1);
-
-
+            trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs1);
             break;
         
         case BRANCH_RETURN: //writes sp, writes ip, reads sp
@@ -374,7 +368,7 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
             assert(false && "Error: Unrecognized branch type\n");
     }
 
-
+#ifdef CHERI
     if (trace.curr_instr.is_cap) {
         if (entry.entry_type == CTE_LD_CAP) {
             trace.curr_instr.source_memory[0] = entry.val1;
@@ -390,9 +384,8 @@ void set_branch_info(InstructionTrace& trace, cheri_trace_entry_t& entry){
         trace.curr_instr.length = entry.val5;
         trace.curr_instr.base = entry.val4;
         trace.curr_instr.offset = entry.val3 - entry.val4;
-    }
-
-    
+    }  
+#endif 
 }
 
 void set_mem_info(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
@@ -409,14 +402,30 @@ void set_mem_info(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
         trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2);
         trace.curr_instr.destination_memory[0] = entry.val1;    
     }
-    
+
+#ifdef CHERI
+    if (trace.curr_instr.is_cap ) {
+        /*
+            Metadata (tag, perms, seal, flag) is in val2
+            Cursor is stored in val3
+            Base is in val4
+            Length is in val5
+            We can derive the offset from Cursor - Base 
+        */
+        trace.curr_instr.tag = (entry.val2 >> 63) & 0x1;
+        trace.curr_instr.perms = (entry.val2 >> 1) & 0x7FFFFFFF;
+        trace.curr_instr.length = entry.val5;
+        trace.curr_instr.base = entry.val4;
+        trace.curr_instr.offset = entry.val3 - entry.val4;
+    } 
+#endif
 }
 
 
 void set_reg_info(InstructionTrace& trace)       
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
-    assert(num_regs_used != 0 || num_regs_used != 55);
+    assert(num_regs_used != 0 &&  num_regs_used != 55);
     switch (num_regs_used)
     {
 
@@ -449,7 +458,7 @@ void set_reg_info(InstructionTrace& trace)
 void set_info_atomic(InstructionTrace& trace, cheri_trace_entry_t& entry)
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
-    assert(num_regs_used != 0 || num_regs_used != 55);
+    assert(num_regs_used != 0 && num_regs_used != 55);
     switch (num_regs_used)
     {
     case 2:
@@ -470,12 +479,16 @@ void set_info_atomic(InstructionTrace& trace, cheri_trace_entry_t& entry)
 void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& trace)
 {
     trace.decoded_instr = disasm_inst(rv64, entry.pc, entry.inst, CHERI_CAP_MODE);
+
     assert(trace.decoded_instr.op != rv_op_illegal); 
 
     trace.curr_instr.is_branch = is_branch_instruction(trace);
     trace.curr_instr.ip = entry.pc;
     trace.type = classify_instruction(trace.decoded_instr);
+
+    #ifdef CHERI
     trace.curr_instr.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
+    #endif
 
     if (trace.type == INST_TYPE_UNKNOWN) {
         printf("Error: Unknown instruction %08lx detected at ip 0x%08lx\n", trace.decoded_instr.inst, trace.decoded_instr.pc);
@@ -524,25 +537,7 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
             assert(false);       
     }
 
-    if (trace.curr_instr.is_cap && (trace.is_ld || trace.is_st)) {
-        /*
-            Metadata (tag, perms, seal, flag) is in val2
-            Cursor is stored in val3
-            Base is in val4
-            Length is in val5
-            We can derive the offset from Cursor - Base 
-        */
-        trace.curr_instr.tag = (entry.val2 >> 63) & 0x1;
-        trace.curr_instr.perms = (entry.val2 >> 1) & 0x7FFFFFFF;
-        trace.curr_instr.length = entry.val5;
-        trace.curr_instr.base = entry.val4;
-        trace.curr_instr.offset = entry.val3 - entry.val4;
-    } else if (trace.curr_instr.is_cap && !(trace.is_ld || trace.is_st)) {
-        trace.debug_print_instruction();
-
-    }
 }
-
 
 int main(int argc, char** argv) {
     if (argc < 3) {
@@ -551,8 +546,51 @@ int main(int argc, char** argv) {
     }
     
     std::string input_file = argv[1];
-    std::string output_file = argv[2];
-    bool verbose = (argc > 3 && std::string(argv[3]) == "-v");
+    std::string base_output_file = argv[2];
+    std::string sp_file;
+    bool verbose = false, simpoint = false;
+    uint64_t interval = 0;
+    std::vector<uint64_t> simpoints;
+    
+    // Parse command line arguments
+    for (int i = 1; i < argc; i++) {
+        if(strcmp(argv[i], "-v") == 0) {
+            verbose = true;
+        } else if (strcmp(argv[i],"-s") == 0) {
+            if (i + 2 < argc) {  // Need both file and interval
+                simpoint = true;
+                sp_file = argv[i+1];
+                interval = std::strtoull(argv[i+2], nullptr, 10);
+                i += 2;  // Skip the next two arguments
+            } else {
+                std::cerr << "Error: -s flag requires file path and interval\n";
+                return 1;
+            }
+        }
+    }
+    
+    // Load simpoints if specified
+    if (simpoint) {
+        std::ifstream sp(sp_file);
+        if (sp) {
+            std::string line;
+            while(std::getline(sp, line)) {
+                simpoints.push_back(std::stoul(line));
+            }
+            sp.close();
+        } else {
+            std::cerr << "Error: cannot open simpoints file at path " << sp_file << std::endl;
+            return 1;
+        }
+        
+        if (verbose) {
+            std::cerr << "Simpoints loaded: ";
+            for (auto v : simpoints) {
+                std::cerr << v << " ";
+            }
+            std::cerr << std::endl;
+        }
+    }
     
     // Open input trace file
     std::ifstream input(input_file, std::ios::binary);
@@ -561,21 +599,47 @@ int main(int argc, char** argv) {
         return 1;
     }
     
-    // Open output trace file
-    std::ofstream output(output_file, std::ios::binary);
-    if (!output) {
-        std::cerr << "Error: Cannot open output file " << output_file << std::endl;
-        return 1;
+    // Extract base name for output files (remove .champsimtrace or similar extension)
+    std::string base_name = base_output_file;
+    size_t dot_pos = base_name.rfind('.');
+    if (dot_pos != std::string::npos) {
+        base_name = base_name.substr(0, dot_pos);
     }
     
-    
-    // Process trace entries
+
     cheri_trace_entry_t entry;
     InstructionTrace trace, prev_trace;
     uint64_t instruction_count = 0;
+    uint64_t current_file_instructions = 0;
     bool pending_instr = false;
-    while (input.read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
+    size_t current_simpoint_idx = 0;
+    
+    // Open first output file
+    std::ofstream output;
+    std::string current_output_file;
+    
+    if (simpoint && !simpoints.empty()) {
+        current_output_file = base_name + "-" + std::to_string(simpoints[0]) + ".champsimtrace";
+        output.open(current_output_file, std::ios::binary);
+        if (!output) {
+            std::cerr << "Error: Cannot open output file " << current_output_file << std::endl;
+            return 1;
+        }
+        if (verbose) {
+            std::cerr << "Starting file: " << current_output_file << std::endl;
+        }
+    } else {
+        output.open(base_output_file, std::ios::binary);
+        if (!output) {
+            std::cerr << "Error: Cannot open output file " << base_output_file << std::endl;
+            return 1;
+        }
+    }
 
+    std::cout << sizeof(trace.curr_instr) << std::endl;
+    
+    while (input.read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
+        // Byte swap
         entry.pc = bswap_64(entry.pc);
         entry.val1 = bswap_64(entry.val1);
         entry.val2 = bswap_64(entry.val2);
@@ -583,49 +647,88 @@ int main(int argc, char** argv) {
         entry.val4 = bswap_64(entry.val4);
         entry.val5 = bswap_64(entry.val5);
         entry.inst = bswap_32(entry.inst);
-
-        // Process current entry first
+        
+        // Process current entry
         trace = InstructionTrace();
         convert_cheri_trace_entry(entry, trace);
-
-
-
+        
         if (pending_instr) {
-            // Check if previous instruction was a conditional branch
+            // Handle conditional branch taken/not taken
             if (prev_trace.branch_type == BRANCH_CONDITIONAL) {
                 uint64_t fall_through_pc = prev_trace.curr_instr.ip + 
                     get_instruction_length(prev_trace.decoded_instr.inst);
+                prev_trace.curr_instr.branch_taken = (entry.pc != fall_through_pc);
+            }
+            
+            // Check if we need to switch files BEFORE writing
+            if (simpoint && current_file_instructions >= interval && current_simpoint_idx < simpoints.size()) {
+                output.close();
                 
-                // If current PC != fall-through PC, branch was taken
-                if (entry.pc != fall_through_pc) {
-                    prev_trace.curr_instr.branch_taken = true;
-                } else {
-                    prev_trace.curr_instr.branch_taken = false;
+                if (verbose) {
+                    std::cerr << "Completed simpoint " << simpoints[current_simpoint_idx] 
+                              << " with " << current_file_instructions << " instructions" << std::endl;
                 }
                 
+                current_simpoint_idx++;
+                
+                if (current_simpoint_idx < simpoints.size()) {
+                    current_output_file = base_name + "-" + std::to_string(simpoints[current_simpoint_idx]) + ".champsimtrace";
+                    output.open(current_output_file, std::ios::binary);
+                    
+                    if (!output) {
+                        std::cerr << "Error: Cannot open output file " << current_output_file << std::endl;
+                        input.close();
+                        return 1;
+                    }
+                    
+                    if (verbose) {
+                        std::cerr << "Starting file: " << current_output_file << std::endl;
+                    }
+                    
+                    current_file_instructions = 0;
+                } else {
+                    // No more simpoints
+                    if (verbose) {
+                        std::cerr << "All simpoints processed" << std::endl;
+                    }
+                    break;
+                }
             }
-
-            output.write(reinterpret_cast<const char*>(&prev_trace.curr_instr), sizeof(trace_instr_format));
-            if (verbose){
-                prev_trace.debug_print_instruction();
+            
+            // Write instruction if we still have an open file
+            if (output.is_open()) {
+                output.write(reinterpret_cast<const char*>(&prev_trace.curr_instr), sizeof(trace_instr_format));
+                current_file_instructions++;
+                
+                if (verbose) {
+                    prev_trace.debug_print_instruction();
+                }
             }
-
         }
-
-        prev_trace = trace; // Save current as previous AFTER processing
+        
+        prev_trace = trace;
         pending_instr = true;
         instruction_count++;
     }
     
-
-    output.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
-
+    // Handle the last pending instruction
+    if (pending_instr && output.is_open() && (!simpoint || current_file_instructions < interval)) {
+        output.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
+        current_file_instructions++;
+    }
     
     input.close();
-    output.close();
+    if (output.is_open()) {
+        output.close();
+        if (verbose && simpoint) {
+            std::cerr << "Final simpoint " << simpoints[current_simpoint_idx] 
+                      << " with " << current_file_instructions << " instructions" << std::endl;
+        }
+    }
     
-    if (verbose) {
-        std::cerr << "Processed " << instruction_count << " instructions." << std::endl;
+    std::cerr << "Processed " << instruction_count << " total instructions." << std::endl;
+    if (simpoint) {
+        std::cerr << "Created " << std::min(current_simpoint_idx + 1, simpoints.size()) << " simpoint trace files." << std::endl;
     }
     
     return 0;
