@@ -512,7 +512,14 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
   for (auto& smem : instr.source_memory) {
     auto q_entry = std::find_if_not(std::begin(LQ), std::end(LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
     assert(q_entry != std::end(LQ));
+    #ifndef CHERI
     q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid); // add it to the load queue
+    #else 
+    if (instr.cap_metadata.is_cap) //detect capability operations
+        q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.cap_metadata); 
+      else q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid);
+    #endif
+
 
     // Check for forwarding
     auto sq_it = std::max_element(std::begin(SQ), std::end(SQ), [smem](const auto& lhs, const auto& rhs) {
@@ -536,13 +543,22 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
 
   // store
   for (auto& dmem : instr.destination_memory) {
+    #ifndef CHERI
     SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid); // add it to the store queue
+    #else
+    if (instr.cap_metadata.is_cap)
+      SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid, instr.cap_metadata); 
+    else SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid);
+    #endif   
   }
 
   if constexpr (champsim::debug_print) {
     fmt::print("[DISPATCH] {} instr_id: {} loads: {} stores: {} cycle: {}\n", __func__, instr.instr_id, std::size(instr.source_memory),
                std::size(instr.destination_memory), current_time.time_since_epoch() / clock_period);
   }
+
+  // if (instr.cap_metadata.is_cap)
+  //   fmt::print("Base {} Length {} Perms{} Offset {} Tag{}\n", instr.cap_metadata.base, instr.cap_metadata.length, instr.cap_metadata.perms, instr.cap_metadata.offset, instr.cap_metadata.tagged);
 }
 
 long O3_CPU::operate_lsq()
@@ -608,6 +624,7 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.v_address = sq_entry.virtual_address;
   data_packet.instr_id = sq_entry.instr_id;
   data_packet.ip = sq_entry.ip;
+  data_packet.cap_metadata = sq_entry.cap_metadata;
 
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {:x}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -622,6 +639,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.v_address = lq_entry.virtual_address;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
+  data_packet.cap_metadata = lq_entry.cap_metadata;
 
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {:#x}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -806,6 +824,12 @@ LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY
     : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip), asid(local_asid)
 {
 }
+
+LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id, champsim::address local_ip, std::array<uint8_t, 2> local_asid, champsim::capability cap)
+    : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip), asid(local_asid), cap_metadata(cap)
+{
+}
+
 
 void LSQ_ENTRY::finish(std::deque<ooo_model_instr>::iterator begin, std::deque<ooo_model_instr>::iterator end) const
 {

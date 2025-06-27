@@ -29,6 +29,8 @@
 #include "champsim.h"
 #include "chrono.h"
 #include "trace_instruction.h"
+#include "cheri.h"
+
 
 // branch types
 enum branch_type {
@@ -128,10 +130,25 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
+  #ifdef CHERI
+  champsim::capability cap_metadata{};
+  #endif
+
 private:
   template <typename T>
   ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
   {
+
+    #ifdef CHERI
+    if (instr.is_cap) {
+      cap_metadata.is_cap = true;
+      cap_metadata.tagged = (instr.tag != 0);
+      cap_metadata.perms  = instr.perms;
+      cap_metadata.base = champsim::address{instr.base};
+      cap_metadata.offset = champsim::address{instr.offset};
+      cap_metadata.length = champsim::address{instr.length};
+    } 
+    #endif
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
 
@@ -181,7 +198,10 @@ private:
       is_branch = true;
       branch_taken = true;
       branch = BRANCH_RETURN;
-    } // ===== BEGIN RISC-V ADDITIONS =====    
+    } // ===== RISC-V BRANCHES =====    
+      // I added these in because risc-v does not directly manipulate the stack pointer in calls and returns.
+      // Without these, the btb will warn that the return address corresponding to a previous call is lower. 
+      // This should allow ChampSim to more faithfully 
       else if (!reads_sp && reads_ip && !writes_sp && writes_ip && !reads_flags && !reads_other) {
       // RISC-V direct call (jal ra, target) - reads IP to save return address, writes IP
       is_branch = true;
@@ -197,7 +217,7 @@ private:
       is_branch = true;
       branch_taken = true;
       branch = BRANCH_RETURN;
-    // ===== END RISC-V ADDITIONS =====    
+    // ===== END RISC-V BRANCHES =====    
     } else if (writes_ip) {
       // some other branch type that doesn't fit the above categories
       is_branch = true;

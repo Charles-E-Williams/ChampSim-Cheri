@@ -72,6 +72,9 @@ struct cloudsuite_instr {
 
 #ifdef CHERI
   unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
+  unsigned long long base, length, offset;
+  unsigned short perms;
+  unsigned char tag;
 #endif
 
 };

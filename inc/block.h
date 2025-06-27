@@ -18,6 +18,7 @@
 #define BLOCK_H
 
 #include "champsim.h"
+#include "cheri.h"
 
 namespace champsim
 {
@@ -31,6 +32,7 @@ struct cache_block {
   champsim::address data{};
 
   uint32_t pf_metadata = 0;
+  champsim::capability cap_metadata{};
 };
 } // namespace champsim
 

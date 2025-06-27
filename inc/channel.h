@@ -27,6 +27,7 @@
 #include "access_type.h"
 #include "address.h"
 #include "champsim.h"
+#include "cheri.h"
 
 namespace champsim
 {
@@ -67,6 +68,8 @@ class channel
     champsim::address ip{};
 
     std::vector<uint64_t> instr_depend_on_me{};
+
+    champsim::capability cap_metadata{};
   };
 
   struct response {
@@ -76,11 +79,24 @@ class channel
     uint32_t pf_metadata = 0;
     std::vector<uint64_t> instr_depend_on_me{};
 
+    champsim::capability cap_metadata{};
+
     response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
         : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
     {
     }
+
+    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps, champsim::capability cap)
+        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps), cap_metadata(cap)
+    {
+    }
+    
+    #ifndef CHERI
     explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me) {}
+    #else
+    explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me, req.cap_metadata) {}
+    #endif
+
   };
 
   template <typename R>

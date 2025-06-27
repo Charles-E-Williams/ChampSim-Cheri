@@ -21,13 +21,15 @@
 
 namespace champsim
 {
-struct cheri_metadata {
+struct capability {
     bool is_cap = false;
-    bool tagged = 0;
-    uint64_t base = 0;
-    uint64_t length = 0;
-    uint64_t offset = 0;
+    bool tagged = false;
     uint32_t perms = 0;
+    champsim::address base{};
+    champsim::address length{};
+    champsim::address offset{};
+
+    bool is_valid() const {return tagged != 0;}
 };
 } // namespace champsim
 #endif

@@ -93,8 +93,10 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 }
 
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
-    : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), instr_depend_on_me(req.instr_depend_on_me)
+    : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), 
+      cap_metadata(req.cap_metadata), cpu(req.cpu), type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated),
+      instr_depend_on_me(req.instr_depend_on_me)
+
 {
 }
 
@@ -148,6 +150,9 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.v_address = mshr.v_address;
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
+  to_fill.cap_metadata = mshr.data_promise->cap_metadata;
+
+
 
   return to_fill;
 }
@@ -200,6 +205,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     writeback_packet.type = access_type::WRITE;
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
+    writeback_packet.cap_metadata = way->cap_metadata;
 
     if constexpr (champsim::debug_print) {
       fmt::print("[{}] {} evict address: {:#x} v_address: {:#x} prefetch_metadata: {}\n", NAME, __func__, writeback_packet.address, writeback_packet.v_address,
@@ -217,8 +223,15 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     evicting_address = module_address(*way);
   }
 
+  #ifndef CHERI
   auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx,
                                                   (fill_mshr.type == access_type::PREFETCH), evicting_address, fill_mshr.data_promise->pf_metadata);
+  #else
+  auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx,
+                                                  (fill_mshr.type == access_type::PREFETCH), evicting_address, fill_mshr.data_promise->pf_metadata,
+                                                  fill_mshr.data_promise->cap_metadata);
+
+  #endif
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
                               fill_mshr.type);
 
@@ -230,7 +243,6 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     if (fill_mshr.type == access_type::PREFETCH) {
       ++sim_stats.pf_fill;
     }
-
     *way = fill_block(fill_mshr, metadata_thru);
   }
 
@@ -265,7 +277,11 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   if (should_activate_prefetcher(handle_pkt)) {
+    #ifndef CHERI
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
+    #else
+    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru, handle_pkt.cap_metadata);
+    #endif
   }
 
   // update replacement policy
@@ -276,7 +292,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me};
+    response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, handle_pkt.instr_depend_on_me, handle_pkt.cap_metadata};
     for (auto* ret : handle_pkt.to_return) {
       ret->push_back(response);
     }
@@ -310,6 +326,7 @@ auto CACHE::mshr_and_forward_packet(const tag_lookup_type& handle_pkt) -> std::p
   fwd_pkt.data = handle_pkt.data;
   fwd_pkt.instr_id = handle_pkt.instr_id;
   fwd_pkt.ip = handle_pkt.ip;
+  fwd_pkt.cap_metadata = handle_pkt.cap_metadata;
 
   fwd_pkt.instr_depend_on_me = handle_pkt.instr_depend_on_me;
   fwd_pkt.response_requested = (!handle_pkt.prefetch_from_this || !handle_pkt.skip_fill);
@@ -607,6 +624,30 @@ bool CACHE::prefetch_line(uint64_t /*deprecated*/, uint64_t /*deprecated*/, uint
 }
 // LCOV_EXCL_STOP
 
+#ifdef CHERI
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::capability cap_metadata)
+{
+  ++sim_stats.pf_requested;
+
+  if (std::size(internal_PQ) >= PQ_SIZE) {
+    return false;
+  }
+
+  request_type pf_packet;
+  pf_packet.type = access_type::PREFETCH;
+  pf_packet.pf_metadata = prefetch_metadata;
+  pf_packet.cpu = cpu;
+  pf_packet.address = pf_addr;
+  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.is_translated = !virtual_prefetch;
+  pf_packet.cap_metadata = cap_metadata;
+
+  internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
+  ++sim_stats.pf_issued;
+
+  return true;
+}
+#endif
 void CACHE::finish_packet(const response_type& packet)
 {
   // check MSHR information
@@ -620,7 +661,7 @@ void CACHE::finish_packet(const response_type& packet)
   }
 
   // MSHR holds the most updated information about this request
-  mshr_type::returned_value finished_value{packet.data, packet.pf_metadata};
+  mshr_type::returned_value finished_value{packet.data, packet.pf_metadata, packet.cap_metadata};
   mshr_entry->data_promise = champsim::waitable{finished_value, current_time + (warmup ? champsim::chrono::clock::duration{} : FILL_LATENCY)};
   if constexpr (champsim::debug_print) {
     fmt::print("[{}_MSHR] finish_packet instr_id: {} address: {} data: {} type: {} current: {}\n", this->NAME, mshr_entry->instr_id, mshr_entry->address,
@@ -805,6 +846,20 @@ uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, lon
 {
   return pref_module_pimpl->impl_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, metadata_in);
 }
+
+#ifdef CHERI
+uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type,
+                                              uint32_t metadata_in,
+                                              champsim::capability cap) const
+{
+  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in, cap);
+}
+uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr,
+                                           uint32_t metadata_in, champsim::capability cap) const
+{
+  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, metadata_in, cap);
+}
+#endif
 
 void CACHE::impl_prefetcher_cycle_operate() const { pref_module_pimpl->impl_prefetcher_cycle_operate(); }
 

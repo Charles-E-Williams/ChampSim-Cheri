@@ -61,9 +61,10 @@ void print_usage(const char* program_name) {
 uint8_t remap_regid(uint8_t reg) {
     switch (reg) {
         case RISCV_REG_ZERO: return TRANSLATED_REG_ZERO;
-        case champsim::REG_STACK_POINTER: return TRANSLATED_REG_IP;
-        case champsim::REG_FLAGS: return TRANSLATED_REG_SP;
-        case champsim::REG_INSTRUCTION_POINTER: return TRANSLATED_REG_FLAGS;
+        case RISCV_REG_SP: return champsim::REG_STACK_POINTER;
+        case champsim::REG_STACK_POINTER: return TRANSLATED_REG_SP;
+        case champsim::REG_FLAGS: return TRANSLATED_REG_FLAGS;
+        case champsim::REG_INSTRUCTION_POINTER: return TRANSLATED_REG_IP;
         default: return reg;
     }
 }
@@ -520,6 +521,10 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
     trace.curr_instr.is_branch = is_branch_instruction(trace);
     trace.curr_instr.ip = entry.pc;
     trace.type = classify_instruction(trace.decoded_instr);
+
+    if (trace.decoded_instr.rd == 2) {
+        printf("Instruction 0x%08lx detected at ip 0x%08lx\n", trace.decoded_instr.inst, trace.decoded_instr.pc);
+    }
 
 
 
