@@ -49,10 +49,11 @@ struct input_instr {
 
         // input registers
 #ifdef CHERI
-  unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
   unsigned long long base, length, offset;
-  unsigned short perms;
-  unsigned char tag;
+  unsigned long long metadata; //includes is_cap, perms and tag;
+  // unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
+  // unsigned short perms;
+  // unsigned char tag;
 #endif
 };
 
@@ -71,12 +72,12 @@ struct cloudsuite_instr {
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
 #ifdef CHERI
-  unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
   unsigned long long base, length, offset;
-  unsigned short perms;
-  unsigned char tag;
+  unsigned long long metadata; //includes is_cap, perms and tag;
+  // unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
+  // unsigned short perms;
+  // unsigned char tag;
 #endif
-
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 

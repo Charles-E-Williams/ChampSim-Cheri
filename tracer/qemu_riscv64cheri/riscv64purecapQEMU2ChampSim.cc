@@ -78,7 +78,6 @@ uint8_t get_instruction_length(uint32_t inst) {
     }
 }
 
-#pragma pack(push, 1)
 typedef struct {
     uint8_t entry_type;
     uint8_t exception;
@@ -92,8 +91,8 @@ typedef struct {
     uint64_t val5;
     uint8_t thread;
     uint8_t asid;
-} cheri_trace_entry_t;
-#pragma pack(pop)
+} __attribute__((packed)) cheri_trace_entry_t;
+
 
 // Helper function for entry type names
 const char* entry_type_to_string(uint8_t type) {
@@ -116,6 +115,7 @@ struct InstructionTrace {
     inst_type_t type = INST_TYPE_UNKNOWN;
     bool is_ld = false;
     bool is_st = false;
+    bool is_cap = false;
 
     InstructionTrace() {
         memset(&curr_instr, 0, sizeof(trace_instr_format));
@@ -145,7 +145,7 @@ struct InstructionTrace {
          << "\nBranch Type: " << RiscvBranchType_string()
          << "\nBranch Taken: " << (int)curr_instr.branch_taken
          #ifdef CHERI
-         << "\nIs Capability Instruction: " << (int)curr_instr.is_cap
+         << "\nIs Capability Instruction: " << (int)((curr_instr.metadata >> 20) & 1)
          #endif
          << "\nInstruction: 0x" << std::hex << decoded_instr.inst 
          << "\nInstruction Type: " << inst_type_to_str(type)
@@ -185,13 +185,14 @@ struct InstructionTrace {
         }
 
     #ifdef CHERI
-        if (curr_instr.is_cap) {
+        if (is_cap) {
             std::cerr << "\nCapability Metadata: "
+                    << " | Cursor 0x" << std::hex << curr_instr.base + curr_instr.offset
                     << " | Base 0x" << std::hex << curr_instr.base
                     << " | Length: 0x" << std::hex << curr_instr.length
                     << " | Offset: 0x" << std::hex << curr_instr.offset
-                    << " | Perms: 0x" << std::hex << curr_instr.perms
-                    << " | Tag:" << (int)curr_instr.tag;
+                    << " | Perms: 0x" << std::hex << ((curr_instr.metadata >> 1) & ((1ULL << 19) -1))
+                    << " | Tag:" << ((int)(curr_instr.metadata >> 63) & 1);
         }
         std::cerr << "\n=========================\n" << std::dec << std::endl;
     }
@@ -374,24 +375,23 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
     }
 
     #ifdef CHERI
-    if (trace.curr_instr.is_cap) {
+    if (trace.is_cap) {
         if (entry.entry_type == CTE_LD_CAP) {
             trace.curr_instr.source_memory[0] = entry.val1;
         }
 
         else if (entry.entry_type == CTE_ST_CAP) {
             trace.curr_instr.destination_memory[0] = entry.val1;
-
         }
 
-
-        trace.curr_instr.tag = (entry.val2 >> 63) & 0x1;
-        trace.curr_instr.perms = (entry.val2 >> 1) & 0x7FFFFFFF;
         trace.curr_instr.length = entry.val5;
         trace.curr_instr.base = entry.val4;
         trace.curr_instr.offset = entry.val3 - entry.val4;
-    }  
+        trace.curr_instr.metadata = entry.val2 | (1ULL << 20);
+    }  else trace.curr_instr.metadata = entry.val2 & ~(1ULL << 20);
     #endif 
+
+
 }
 
 void set_mem_data(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
@@ -404,7 +404,6 @@ void set_mem_data(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
     uint64_t cacheline_access_end = (address + access_size -1) & ~63lu;
     
     
-
     if (trace.is_ld) {
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
         trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
@@ -420,14 +419,14 @@ void set_mem_data(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
     }
 
 #ifdef CHERI
-    if (trace.curr_instr.is_cap ) {
-        trace.curr_instr.tag = (entry.val2 >> 63) & 0x1;
-        trace.curr_instr.perms = (entry.val2 >> 1) & 0x7FFFFFFF;
+    if (trace.is_cap) {
         trace.curr_instr.length = entry.val5;
         trace.curr_instr.base = entry.val4;
         trace.curr_instr.offset = entry.val3 - entry.val4;
-    } 
+        trace.curr_instr.metadata = entry.val2 | (1ULL << 20);
+    }  else trace.curr_instr.metadata = entry.val2 & ~(1ULL << 20);
 #endif
+
 }
 
 
@@ -522,14 +521,8 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
     trace.curr_instr.ip = entry.pc;
     trace.type = classify_instruction(trace.decoded_instr);
 
-    if (trace.decoded_instr.rd == 2) {
-        printf("Instruction 0x%08lx detected at ip 0x%08lx\n", trace.decoded_instr.inst, trace.decoded_instr.pc);
-    }
-
-
-
     #ifdef CHERI
-    trace.curr_instr.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
+    trace.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
     #endif
 
     if (trace.type == INST_TYPE_UNKNOWN) {
@@ -647,7 +640,6 @@ int main(int argc, char** argv) {
         base_name = base_name.substr(0, dot_pos);
     }
     
-
     cheri_trace_entry_t entry;
     InstructionTrace trace, prev_trace;
     uint64_t instruction_count = 0;
@@ -686,7 +678,8 @@ int main(int argc, char** argv) {
         entry.val4 = bswap_64(entry.val4);
         entry.val5 = bswap_64(entry.val5);
         entry.inst = bswap_32(entry.inst);
-        
+
+
         // Process current entry
         trace = InstructionTrace();
         convert_cheri_trace_entry(entry, trace);
@@ -694,8 +687,7 @@ int main(int argc, char** argv) {
         if (pending_instr) {
             // Handle conditional branch taken/not taken
             if (prev_trace.branch_type == BRANCH_CONDITIONAL) {
-                uint64_t fall_through_pc = prev_trace.curr_instr.ip + 
-                    444;
+                uint64_t fall_through_pc = prev_trace.curr_instr.ip + get_instruction_length(prev_trace.decoded_instr.inst);
                 prev_trace.curr_instr.branch_taken = (entry.pc != fall_through_pc);
             }
             
