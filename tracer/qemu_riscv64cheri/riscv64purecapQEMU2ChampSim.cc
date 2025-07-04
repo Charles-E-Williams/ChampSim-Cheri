@@ -416,43 +416,48 @@ void set_reg_data(InstructionTrace& trace)
 }
 
 void set_atomic_data(InstructionTrace& trace, cheri_trace_entry_t& entry)
-{
-    int num_regs_used = count_register_operands(trace.decoded_instr.codec);
-    assert(num_regs_used != 0 && num_regs_used != 55);
-    
-    if (trace.decoded_instr.rd == 0) {
-        std::cerr << "Error: Instruction of type " << inst_type_to_str(trace.type) 
-        << "is using the zero register as a destination\n";
-        assert(false);    
-    }
-    
+{  
     uint8_t access_size = get_memory_access_size(trace.decoded_instr);
     uint64_t address = entry.val1;
 
     uint64_t cacheline_access_ini = address & ~63lu; //0xffffffffffffffc0
     uint64_t cacheline_access_end = (address + access_size -1) & ~63lu;
 
-    switch (num_regs_used)
+
+    switch (trace.type)
     {
-    //atomic loads
-    case 2:
+    //atomic memory operations
+    case INST_TYPE_AMO:
+        trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
+        trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs2);
+        trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
+        trace.curr_instr.destination_memory[0] = address;
+        trace.curr_instr.source_memory[0] = address;
+        if (cacheline_access_end != cacheline_access_ini) {
+            trace.curr_instr.destination_memory[1] = cacheline_access_end;
+            trace.curr_instr.source_memory[1] = cacheline_access_end;
+        }
+        break;
+
+    case INST_TYPE_AMO_LOAD: 
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
         trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
         trace.curr_instr.source_memory[0] = address;
         if (cacheline_access_end != cacheline_access_ini) 
             trace.curr_instr.source_memory[1] = cacheline_access_end;
-        
-        break;
-    //arithmetic and atomic stores
-    case 3: 
-        trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
-        trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs2);
-        trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
-        trace.curr_instr.destination_memory[0] = address;
-        if (cacheline_access_end != cacheline_access_ini)
-            trace.curr_instr.destination_memory[1] = cacheline_access_end;
         break;
 
+    case INST_TYPE_AMO_STORE:
+        trace.curr_instr.destination_registers[0] = trace.decoded_instr.rd;
+        trace.curr_instr.source_registers[0] = trace.decoded_instr.rs1;
+        trace.curr_instr.source_registers[1] = trace.decoded_instr.rs2;
+
+        if (entry.val2 == 0) { //successful write 
+            trace.curr_instr.destination_memory[0] = address;
+             if (cacheline_access_end != cacheline_access_ini) 
+                trace.curr_instr.destination_memory[1] = cacheline_access_end;
+        }
+        break;
     default: 
         assert(false);
     }
@@ -505,7 +510,9 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
             set_reg_data(trace);
             break;
 
-        case INST_TYPE_ATOMIC:
+        case INST_TYPE_AMO:
+        case INST_TYPE_AMO_LOAD:
+        case INST_TYPE_AMO_STORE:
             set_atomic_data(trace,entry);
             break;
 

@@ -1568,7 +1568,9 @@ const char* inst_type_to_str(inst_type_t type) {
         case INST_TYPE_ALU:        return "ALU";
         case INST_TYPE_SYSTEM:     return "SYSTEM";
         case INST_TYPE_CSR:        return "CSR";
-        case INST_TYPE_ATOMIC:     return "ATOMIC";
+        case INST_TYPE_AMO:        return "ATOMIC";
+        case INST_TYPE_AMO_LOAD:   return "ATOMIC LOAD";
+        case INST_TYPE_AMO_STORE:  return "ATOMIC STORE";
         case INST_TYPE_FP:         return "FP";
         case INST_TYPE_FP_LOAD:    return "FP_LOAD";
         case INST_TYPE_FP_STORE:   return "FP_STORE";
@@ -1845,7 +1847,15 @@ inst_type_t classify_instruction(rv_decode dec) {
 
         // Atomic operations
         case rv_op_lr_w:
+        case rv_op_lr_d:
+        case rv_op_lr_q:
+            return INST_TYPE_AMO_LOAD;
+
         case rv_op_sc_w:
+        case rv_op_sc_d:
+        case rv_op_sc_q:
+            return INST_TYPE_AMO_STORE;
+
         case rv_op_amoswap_w:
         case rv_op_amoadd_w:
         case rv_op_amoxor_w:
@@ -1855,8 +1865,6 @@ inst_type_t classify_instruction(rv_decode dec) {
         case rv_op_amomax_w:
         case rv_op_amominu_w:
         case rv_op_amomaxu_w:
-        case rv_op_lr_d:
-        case rv_op_sc_d:
         case rv_op_amoswap_d:
         case rv_op_amoadd_d:
         case rv_op_amoxor_d:
@@ -1866,8 +1874,6 @@ inst_type_t classify_instruction(rv_decode dec) {
         case rv_op_amomax_d:
         case rv_op_amominu_d:
         case rv_op_amomaxu_d:
-        case rv_op_lr_q:
-        case rv_op_sc_q:
         case rv_op_amoswap_q:
         case rv_op_amoadd_q:
         case rv_op_amoxor_q:
@@ -1877,7 +1883,7 @@ inst_type_t classify_instruction(rv_decode dec) {
         case rv_op_amomax_q:
         case rv_op_amominu_q:
         case rv_op_amomaxu_q:
-            return INST_TYPE_ATOMIC;
+            return INST_TYPE_AMO;
 
         // Floating-point loads
         case rv_op_flw:

@@ -1314,7 +1314,9 @@ typedef enum {
     INST_TYPE_ALU,       // Integer ALU operations
     INST_TYPE_SYSTEM,    // System/privileged instructions
     INST_TYPE_CSR,       // Control and Status Register operations
-    INST_TYPE_ATOMIC,    // Atomic memory operations
+    INST_TYPE_AMO,       // Atomic memory operations
+    INST_TYPE_AMO_LOAD,  // Atomic loads
+    INST_TYPE_AMO_STORE, // Atomic stores
     INST_TYPE_FP,        // Floating-point operations
     INST_TYPE_FP_LOAD,   // Floating-point loads
     INST_TYPE_FP_STORE,  // Floating-point stores
