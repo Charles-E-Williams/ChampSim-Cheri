@@ -1,11 +1,8 @@
-#include <fstream>
-#include <iostream>
 #include <cstring>
 #include <vector>
 #include <cassert>
 #include <cstdint>
 #include <unordered_map>
-#include <string>
 #include <set>
 #include <iomanip>
 #include <byteswap.h>
@@ -13,6 +10,7 @@
 #define CHERI
 #include "../../inc/trace_instruction.h"
 #include "disas.hh"
+#include "stream.hh"
 using trace_instr_format = input_instr;
 
 
@@ -28,55 +26,6 @@ using trace_instr_format = input_instr;
 #define CTE_ST_CAP  13  /* Store Cap (val2,val3,val4,val5) to addr (val1) */
 #define CTE_EXCEPTION_NONE 31
 #define CHERI_CAP_MODE (RISCV_DIS_FLAG_CHERI | RISCV_DIS_FLAG_CAPMODE)
-
-
-// RISC-V registers
-#define RISCV_REG_ZERO 0
-#define RISCV_REG_RA 1
-#define RISCV_REG_SP 2
-
-const char TRANSLATED_REG_IP = 64;
-const char TRANSLATED_REG_SP = 65;
-const char TRANSLATED_REG_FLAGS = 66;
-const char TRANSLATED_REG_ZERO = 67;
-
-std::vector<uint16_t>  simpoints;
-
-// Print usage and help datarmation
-void print_usage(const char* program_name) {
-    std::cerr << "CHERI-RISC-V 64 Trace to ChampSim Converter\n";
-    std::cerr << "===========================================\n";
-    std::cerr << "Usage: " << program_name << " <input_trace> <output_trace> [-v]\n\n";
-    std::cerr << "Arguments:\n";
-    std::cerr << "  <input_trace>    Path to the binary CHERI-QEMU trace file\n";
-    std::cerr << "  <output_trace>   Path for the output ChampSim-compatible trace file\n";
-    std::cerr << "  -v               Enable verbose output during conversion\n\n";
-    std::cerr << "Example:\n";
-    std::cerr << "  " << program_name << " cheri_trace.bin output.champsim.trace -v\n\n";
-    std::cerr << "Note: This converter is specifically designed for CHERI-RISC-V traces\n";
-    std::cerr << "      produced by CHERI-QEMU with capability tracing enabled.\n";
-    std::cerr << "This program comes as is with no guarantee of covering every conversion case.\n";
-}
-
-uint8_t remap_regid(uint8_t reg) {
-    switch (reg) {
-        case RISCV_REG_ZERO: return TRANSLATED_REG_ZERO;
-        case RISCV_REG_SP: return champsim::REG_STACK_POINTER;
-        case champsim::REG_STACK_POINTER: return TRANSLATED_REG_SP;
-        case champsim::REG_FLAGS: return TRANSLATED_REG_FLAGS;
-        case champsim::REG_INSTRUCTION_POINTER: return TRANSLATED_REG_IP;
-        default: return reg;
-    }
-}
-
-uint8_t get_instruction_length(uint32_t inst) {
-    // Check if it's a compressed instruction (16-bit)
-    if ((inst & 0x3) != 0x3) {
-        return 2;  // Compressed instruction
-    } else {
-        return 4;  // Standard 32-bit instruction
-    }
-}
 
 typedef struct {
     uint8_t entry_type;
@@ -94,17 +43,47 @@ typedef struct {
 } __attribute__((packed)) cheri_trace_entry_t;
 
 
-// Helper function for entry type names
-const char* entry_type_to_string(uint8_t type) {
-    switch(type) {
-        case CTE_NO_REG:  return "CTE_NO_REG";
-        case CTE_GPR:     return "CTE_GPR";
-        case CTE_LD_GPR:  return "CTE_LD_GPR";
-        case CTE_ST_GPR:  return "CTE_ST_GPR";
-        case CTE_CAP:     return "CTE_CAP";
-        case CTE_LD_CAP:  return "CTE_LD_CAP";
-        case CTE_ST_CAP:  return "CTE_ST_CAP";
-        default:          return "UNKNOWN";
+
+
+void print_usage(const char* program_name) {
+    std::cerr << "CHERI-RISC-V 64 Trace to ChampSim Converter\n";
+    std::cerr << "===========================================\n";
+    std::cerr << "Usage: " << program_name << " <input_trace> <output_trace> [-v] [-s <sorted_simpoints_file, interval_size>]\n\n";
+    std::cerr << "Arguments:\n";
+    std::cerr << "  <input_trace>                               Path to the binary CHERI-QEMU trace file\n";
+    std::cerr << "  <output_trace>                              Path for the output ChampSim-compatible trace file\n";
+    std::cerr << "  -v                                          Enable verbose output during conversion\n";
+    std::cerr << "  -s <sorted_simpoints_file> <interval size>  Outputs separate trace files per simpoint/interval\n\n";
+    std::cerr << "Example:\n";
+    std::cerr << "  " << program_name << " cheri_trace.bin output.champsim.trace -v\n\n";
+    std::cerr << "Note: This converter is specifically designed for CHERI-RISC-V traces\n";
+    std::cerr << "      produced by CHERI-QEMU with capability tracing enabled.\n";
+    std::cerr << "This program comes as is with no guarantee of covering every conversion case.\n";
+}
+
+
+uint8_t remap_regid(uint8_t reg) {
+    //mapping to new register IDs
+    const char TRANSLATED_REG_IP = 64;
+    const char TRANSLATED_REG_SP = 65;
+    const char TRANSLATED_REG_FLAGS = 66;
+    const char TRANSLATED_REG_ZERO = 67;
+
+    switch (reg) {
+        case rv_ireg_zero: return TRANSLATED_REG_ZERO;
+        case rv_ireg_sp: return champsim::REG_STACK_POINTER;
+        case champsim::REG_STACK_POINTER: return TRANSLATED_REG_SP;
+        case champsim::REG_FLAGS: return TRANSLATED_REG_FLAGS;
+        case champsim::REG_INSTRUCTION_POINTER: return TRANSLATED_REG_IP;
+        default: return reg;
+    }
+}
+
+uint8_t get_instruction_length(uint32_t inst) {
+    if ((inst & 0x3) != 0x3) {
+        return 2;  // Compressed instruction
+    } else {
+        return 4;  // Standard 32-bit instruction
     }
 }
 
@@ -116,6 +95,7 @@ struct InstructionTrace {
     bool is_ld = false;
     bool is_st = false;
     bool is_cap = false;
+    uint64_t cursor = 0;
 
     InstructionTrace() {
         memset(&curr_instr, 0, sizeof(trace_instr_format));
@@ -127,7 +107,7 @@ struct InstructionTrace {
             case BRANCH_DIRECT_JUMP : return "Branch Direct Jump"; //gg
             case BRANCH_INDIRECT : return "Branch Indirect"; //gg 
             case BRANCH_CONDITIONAL : return "Branch Conditional"; //gg
-            case BRANCH_DIRECT_CALL : return "Branch Direct Call"; //??
+            case BRANCH_DIRECT_CALL : return "Branch Direct Call"; //gg
             case BRANCH_INDIRECT_CALL : return "Branch Indirect Call"; //gg
             case BRANCH_RETURN : return "Branch Return"; //gg
             case BRANCH_OTHER : return "Branch Other";
@@ -135,6 +115,20 @@ struct InstructionTrace {
             case ERROR : assert(false); //shouldn't end up here...
         }
         return "";
+    }
+
+    // Helper function for entry type names
+    const char* entry_type_to_string(uint8_t type) const {
+        switch(type) {
+            case CTE_NO_REG:  return "CTE_NO_REG";
+            case CTE_GPR:     return "CTE_GPR";
+            case CTE_LD_GPR:  return "CTE_LD_GPR";
+            case CTE_ST_GPR:  return "CTE_ST_GPR";
+            case CTE_CAP:     return "CTE_CAP";
+            case CTE_LD_CAP:  return "CTE_LD_CAP";
+            case CTE_ST_CAP:  return "CTE_ST_CAP";
+            default:          return "UNKNOWN";
+        }
     }
 
     void debug_print_instruction() const {
@@ -187,7 +181,7 @@ struct InstructionTrace {
     #ifdef CHERI
         if (is_cap) {
             std::cerr << "\nCapability Metadata: "
-                    << " | Cursor 0x" << std::hex << curr_instr.base + curr_instr.offset
+                    << " | Cursor 0x" << std::hex << cursor
                     << " | Base 0x" << std::hex << curr_instr.base
                     << " | Length: 0x" << std::hex << curr_instr.length
                     << " | Offset: 0x" << std::hex << curr_instr.offset
@@ -202,64 +196,15 @@ struct InstructionTrace {
 
 #ifdef CHERI
 bool is_cap_instr(const cheri_trace_entry_t& entry) {
-
     switch(entry.entry_type) {
         // case CTE_CAP:
         case CTE_LD_CAP:
         case CTE_ST_CAP:
             return true;
         default: return false;
-    }
-    assert(false);
+    } assert(false);
 }
 #endif
-
-
-bool is_branch_instruction(InstructionTrace& trace) {
-
-
-    switch (trace.decoded_instr.op) {
-        // Standard branch instructions
-        case rv_op_beq:
-        case rv_op_bne:
-        case rv_op_blt:
-        case rv_op_bge:
-        case rv_op_bltu:
-        case rv_op_bgeu:
-        // Pseudo branch instructions
-        case rv_op_beqz:
-        case rv_op_bnez:
-        case rv_op_blez:
-        case rv_op_bgez:
-        case rv_op_bltz:
-        case rv_op_bgtz:
-        case rv_op_ble:
-        case rv_op_bleu:
-        case rv_op_bgt:
-        case rv_op_bgtu:
-        // Compressed branches
-        case rv_op_c_beqz:
-        case rv_op_c_bnez:
-        // Jump and link instructions
-        case rv_op_jal:
-        case rv_op_jalr:
-        case rv_op_c_jal:
-        case rv_op_c_jalr:
-        // Pseudo jump instructions
-        case rv_op_j:
-        case rv_op_ret:
-        case rv_op_jr:
-        case rv_op_c_j:
-        case rv_op_c_jr:
-        case rv_op_cjalr:
-            trace.type = INST_TYPE_BRANCH;
-            return true;
-
-        default: return false;
-    }
-    return false;
-}
-
 
 BranchType get_branch_type(const rv_decode& dec)
 {
@@ -291,29 +236,27 @@ BranchType get_branch_type(const rv_decode& dec)
         case rv_op_c_j:
         case rv_op_jal:
         case rv_op_c_jal:
-            return (dec.rd == RISCV_REG_ZERO) ? BRANCH_DIRECT_JUMP : BRANCH_DIRECT_CALL;
+            return (dec.rd == rv_ireg_zero) ? BRANCH_DIRECT_JUMP : BRANCH_DIRECT_CALL;
         
         case rv_op_jalr:
         case rv_op_c_jalr:
-            if (dec.rd == RISCV_REG_ZERO)   
-                return (dec.rs1 == RISCV_REG_RA) ? BRANCH_RETURN : BRANCH_INDIRECT;
+            if (dec.rd == rv_ireg_zero)   
+                return (dec.rs1 == rv_ireg_ra) ? BRANCH_RETURN : BRANCH_INDIRECT;
             else return BRANCH_INDIRECT_CALL;
 
         // Pseudo jump instructions
         case rv_op_jr:
         case rv_op_c_jr:
-            return (dec.rs1 == RISCV_REG_RA) ? BRANCH_RETURN : BRANCH_INDIRECT;
+            return (dec.rs1 == rv_ireg_ra) ? BRANCH_RETURN : BRANCH_INDIRECT;
         case rv_op_ret:
             return BRANCH_RETURN;
 
         case rv_op_cjalr:
-            return (dec.rd == RISCV_REG_ZERO) ? BRANCH_INDIRECT : BRANCH_INDIRECT_CALL;
+            return (dec.rd == rv_ireg_zero) ? BRANCH_INDIRECT : BRANCH_INDIRECT_CALL;
 
         default: return ERROR;
     }
-    
     assert(false); //shouldn't end up here.
-
 }
 
 
@@ -321,7 +264,6 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
 
     switch (trace.branch_type)
     {
-
         case BRANCH_DIRECT_JUMP: //writes ip only
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.branch_taken = true;
@@ -337,7 +279,7 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
-            if (trace.decoded_instr.rs2 != RISCV_REG_ZERO)
+            if (trace.decoded_instr.rs2 != rv_ireg_zero)
                 trace.curr_instr.source_registers[2] = remap_regid(trace.decoded_instr.rs2);
             break;
 
@@ -388,6 +330,8 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
         trace.curr_instr.base = entry.val4;
         trace.curr_instr.offset = entry.val3 - entry.val4;
         trace.curr_instr.metadata = entry.val2 | (1ULL << 20);
+        trace.cursor = entry.val3;
+
     }  else trace.curr_instr.metadata = entry.val2 & ~(1ULL << 20);
     #endif 
 
@@ -424,6 +368,8 @@ void set_mem_data(InstructionTrace& trace, const cheri_trace_entry_t& entry) {
         trace.curr_instr.base = entry.val4;
         trace.curr_instr.offset = entry.val3 - entry.val4;
         trace.curr_instr.metadata = entry.val2 | (1ULL << 20);
+        trace.cursor = entry.val3;
+
     }  else trace.curr_instr.metadata = entry.val2 & ~(1ULL << 20);
 #endif
 
@@ -434,7 +380,7 @@ void set_reg_data(InstructionTrace& trace)
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
     assert(num_regs_used != 0 &&  num_regs_used != 55);
-    if (trace.decoded_instr.rd == RISCV_REG_ZERO && trace.type != INST_TYPE_FP) {
+    if (trace.decoded_instr.rd == rv_ireg_zero && trace.type != INST_TYPE_FP) {
         std::cerr << "Error: Instruction of type " << inst_type_to_str(trace.type) 
         << "is using the zero register as a destination\n";
         assert(false);
@@ -442,7 +388,6 @@ void set_reg_data(InstructionTrace& trace)
 
     switch (num_regs_used)
     {
-
         case 1:
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
             break;
@@ -489,14 +434,16 @@ void set_atomic_data(InstructionTrace& trace, cheri_trace_entry_t& entry)
 
     switch (num_regs_used)
     {
+    //atomic loads
     case 2:
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
         trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
         trace.curr_instr.source_memory[0] = address;
-        if (cacheline_access_end != cacheline_access_ini)
+        if (cacheline_access_end != cacheline_access_ini) 
             trace.curr_instr.source_memory[1] = cacheline_access_end;
+        
         break;
-
+    //arithmetic and atomic stores
     case 3: 
         trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd);
         trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs2);
@@ -514,13 +461,11 @@ void set_atomic_data(InstructionTrace& trace, cheri_trace_entry_t& entry)
 void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& trace)
 {
     trace.decoded_instr = disasm_inst(rv64, entry.pc, entry.inst, CHERI_CAP_MODE);
-
     assert(trace.decoded_instr.op != rv_op_illegal); 
 
-    trace.curr_instr.is_branch = is_branch_instruction(trace);
     trace.curr_instr.ip = entry.pc;
     trace.type = classify_instruction(trace.decoded_instr);
-
+    trace.curr_instr.is_branch = trace.type == INST_TYPE_BRANCH;
     #ifdef CHERI
     trace.is_cap = is_cap_instr(entry) || (trace.type == INST_TYPE_CAP_LOAD ) || (trace.type == INST_TYPE_CAP_STORE);
     #endif
@@ -603,63 +548,37 @@ int main(int argc, char** argv) {
         }
     }
     
-    // Load simpoints if specified
     if (simpoint) {
         std::ifstream sp(sp_file);
         if (sp) {
             std::string line;
-            while(std::getline(sp, line)) {
-                simpoints.push_back(std::stoul(line));
-            }
+            while(std::getline(sp, line)) simpoints.push_back(std::stoul(line));
+            
             sp.close();
         } else {
             std::cerr << "Error: cannot open simpoints file at path " << sp_file << std::endl;
             return 1;
         }
         
-        if (verbose) {
-            std::cerr << "Simpoints loaded: ";
-            for (auto v : simpoints) {
-                std::cerr << v << " ";
-            }
-            std::cerr << std::endl;
-        }
     }
-    
-    // Open input trace file
-    std::ifstream input(input_file, std::ios::binary);
-    if (!input) {
-        std::cerr << "Error: Cannot open input file " << input_file << std::endl;
-        return 1;
-    }
-    
+
     // Extract base name for output files (remove .champsimtrace or similar extension)
     std::string base_name = base_output_file;
     size_t dot_pos = base_name.rfind('.');
     if (dot_pos != std::string::npos) {
         base_name = base_name.substr(0, dot_pos);
     }
-    
-    cheri_trace_entry_t entry;
-    InstructionTrace trace, prev_trace;
-    uint64_t instruction_count = 0;
-    uint64_t current_file_instructions = 0;
-    bool pending_instr = false;
-    size_t current_simpoint_idx = 0;
-    
+
     // Open first output file
     std::ofstream output;
     std::string current_output_file;
-    
+
     if (simpoint && !simpoints.empty()) {
         current_output_file = base_name + "-" + std::to_string(simpoints[0]) + ".champsimtrace";
         output.open(current_output_file, std::ios::binary);
         if (!output) {
             std::cerr << "Error: Cannot open output file " << current_output_file << std::endl;
             return 1;
-        }
-        if (verbose) {
-            std::cerr << "Starting file: " << current_output_file << std::endl;
         }
     } else {
         output.open(base_output_file, std::ios::binary);
@@ -669,8 +588,21 @@ int main(int argc, char** argv) {
         }
     }
     
-    while (input.read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
-        // Byte swap
+    auto input = create_input_stream(input_file);
+    if (!input || !input->is_open()) {
+        std::cerr << "Error: Cannot open input file " << input_file << std::endl;
+        return 1;
+    }
+
+    
+    cheri_trace_entry_t entry;
+    InstructionTrace trace, prev_trace;
+    uint64_t instruction_count = 0;
+    uint64_t current_file_instructions = 0;
+    bool pending_instr = false;
+    size_t current_simpoint_idx = 0;
+    
+    while (input->read(reinterpret_cast<char*>(&entry), sizeof(cheri_trace_entry_t))) {
         entry.pc = bswap_64(entry.pc);
         entry.val1 = bswap_64(entry.val1);
         entry.val2 = bswap_64(entry.val2);
@@ -708,7 +640,7 @@ int main(int argc, char** argv) {
                     
                     if (!output) {
                         std::cerr << "Error: Cannot open output file " << current_output_file << std::endl;
-                        input.close();
+                        input->close();
                         return 1;
                     }
                     
@@ -748,7 +680,7 @@ int main(int argc, char** argv) {
         current_file_instructions++;
     }
     
-    input.close();
+    input->close();
     if (output.is_open()) {
         output.close();
         if (verbose && simpoint) {

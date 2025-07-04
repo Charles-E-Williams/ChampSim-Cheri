@@ -1614,8 +1614,6 @@ inst_type_t classify_instruction(rv_decode dec) {
         case rv_op_cjalr:
             return INST_TYPE_BRANCH;
 
- 
-
         // Regular load instructions
         case rv_op_lb:
         case rv_op_lh:
