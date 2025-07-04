@@ -318,12 +318,21 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
 
     #ifdef CHERI
     if (trace.is_cap) {
+        uint8_t access_size = get_memory_access_size(trace.decoded_instr);
+        uint64_t address = entry.val1;
+        uint64_t cacheline_access_ini = address & ~63lu; //0xffffffffffffffc0
+        uint64_t cacheline_access_end = (address + access_size -1) & ~63lu;
+
         if (entry.entry_type == CTE_LD_CAP) {
             trace.curr_instr.source_memory[0] = entry.val1;
+            if (cacheline_access_end != cacheline_access_ini)
+                trace.curr_instr.source_memory[1] = cacheline_access_end;
         }
 
         else if (entry.entry_type == CTE_ST_CAP) {
             trace.curr_instr.destination_memory[0] = entry.val1;
+            if (cacheline_access_end != cacheline_access_ini)
+                trace.curr_instr.destination_memory[1] = cacheline_access_end;
         }
 
         trace.curr_instr.length = entry.val5;
