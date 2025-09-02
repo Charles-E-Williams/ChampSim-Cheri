@@ -32,7 +32,9 @@ struct cache_block {
   champsim::address data{};
 
   uint32_t pf_metadata = 0;
-  champsim::capability cap_metadata{};
+  
+  champsim::capability cap{};
+  bool has_capability = false;
 };
 } // namespace champsim
 

@@ -24,13 +24,13 @@
 #include <limits>
 #include <string_view>
 #include <vector>
+#include <iostream>
 
 #include "address.h"
 #include "champsim.h"
 #include "chrono.h"
 #include "trace_instruction.h"
 #include "cheri.h"
-
 
 // branch types
 enum branch_type {
@@ -107,6 +107,9 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
+  champsim::capability cap{};
+  bool is_cap_instr = false;
+
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};
 
@@ -130,25 +133,10 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   // these are indices of instructions in the ROB that depend on me
   std::vector<std::reference_wrapper<ooo_model_instr>> registers_instrs_depend_on_me;
 
-  #ifdef CHERI
-  champsim::capability cap_metadata{};
-  #endif
-
 private:
   template <typename T>
-  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
+  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid, champsim::capability capability) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid), cap(capability)
   {
-
-    #ifdef CHERI
-    if (instr.is_cap) {
-      cap_metadata.is_cap = true;
-      cap_metadata.tagged = (instr.tag != 0);
-      cap_metadata.perms  = instr.perms;
-      cap_metadata.base = champsim::address{instr.base};
-      cap_metadata.offset = champsim::address{instr.offset};
-      cap_metadata.length = champsim::address{instr.length};
-    } 
-    #endif
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
 
@@ -166,6 +154,8 @@ private:
     bool reads_other = std::count_if(std::begin(source_registers), std::end(source_registers), [](uint8_t r) {
       return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER;
     });
+
+
 
     // determine what kind of branch this is, if any
     if (!reads_sp && !reads_flags && writes_ip && !reads_other) {
@@ -198,6 +188,11 @@ private:
       is_branch = true;
       branch_taken = true;
       branch = BRANCH_RETURN;
+    } else if (writes_ip) {
+      // some other branch type that doesn't fit the above categories
+      is_branch = true;
+      branch_taken = instr.branch_taken; // don't change this
+      branch = BRANCH_OTHER;
     } // ===== RISC-V BRANCHES =====    
       // I added these in because risc-v does not directly manipulate the stack pointer in calls and returns.
       // Without these, the btb will warn that the return address corresponding to a previous call is lower. 
@@ -218,19 +213,22 @@ private:
       branch_taken = true;
       branch = BRANCH_RETURN;
     // ===== END RISC-V BRANCHES =====    
-    } else if (writes_ip) {
-      // some other branch type that doesn't fit the above categories
-      is_branch = true;
-      branch_taken = instr.branch_taken; // don't change this
-      branch = BRANCH_OTHER;
     } else {
       branch_taken = false;
     }
   }
 
 public:
-  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}) {}
-  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}) {}
+  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}, champsim::capability{}) {}
+  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}, champsim::capability{}) {}
+  ooo_model_instr(uint8_t cpu, cheri_instr instr) : ooo_model_instr(instr, {cpu,cpu}, champsim::capability{
+    champsim::address{instr.offset},
+    champsim::address{instr.base},
+    champsim::address{instr.length},
+    instr.permissions,
+    (bool)instr.tag,
+    (bool)instr.is_cap_instr
+  }) {}
 
   [[nodiscard]] std::size_t num_mem_ops() const { return std::size(destination_memory) + std::size(source_memory); }
 };

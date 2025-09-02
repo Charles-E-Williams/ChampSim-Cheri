@@ -104,14 +104,6 @@ struct prefetcher : public bound_to<CACHE> {
   bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
   [[deprecated]] bool prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata) const;
 
-  #ifdef CHERI
-  bool prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::capability cap) const;
-  #endif
-
-
-  // Template variables for detection
-
-   
   template <typename T, typename... Args>
   static auto initiailize_memory_impl(int) -> decltype(std::declval<T>().prefetcher_initialize(std::declval<Args>()...), std::true_type{});
   template <typename, typename...>

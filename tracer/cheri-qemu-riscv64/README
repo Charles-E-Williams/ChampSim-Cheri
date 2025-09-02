@@ -1,0 +1,14 @@
+The qemu2champsim tracer comes as is with no guarantee that it covers every conversion case.
+
+The tracer leverages the RISC-V instruction decoder in CHERI-QEMU to reconstruct each instruction. 
+https://github.com/CTSRD-CHERI/qemu
+
+To use the tracer, compile by running make. To convert a trace, use 
+
+./riscv64purecapQEMU2ChamSim TRACE OUTPUT TRACE
+
+Adding the -v flag will print each instruction written to the ChampSim trace file to stdout. 
+
+
+The text-parser version of this tool has not been updated in months and I don't plan to implement full support for a cheri text trace converter in the meantime
+since parsing the binary trace output is much faster than going through billions of lines of text. 

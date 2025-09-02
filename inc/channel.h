@@ -56,6 +56,9 @@ class channel
     bool response_requested = true;
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
+    champsim::capability cap{};
+
+
     access_type type{access_type::LOAD};
 
     uint32_t pf_metadata = 0;
@@ -68,35 +71,34 @@ class channel
     champsim::address ip{};
 
     std::vector<uint64_t> instr_depend_on_me{};
-
-    champsim::capability cap_metadata{};
   };
 
   struct response {
     champsim::address address{};
     champsim::address v_address{};
     champsim::address data{};
+
     uint32_t pf_metadata = 0;
+    champsim::capability cap{};
     std::vector<uint64_t> instr_depend_on_me{};
 
-    champsim::capability cap_metadata{};
 
-    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
-        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
+    // response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps)
+    //     : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps)
+    // {
+    // }
+
+    // explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me) {cap = req.cap;}
+
+    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, champsim::capability cap_, std::vector<uint64_t> deps)
+        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), cap(cap_), instr_depend_on_me(deps)
     {
     }
 
-    response(champsim::address addr, champsim::address v_addr, champsim::address data_, uint32_t pf_meta, std::vector<uint64_t> deps, champsim::capability cap)
-        : address(addr), v_address(v_addr), data(data_), pf_metadata(pf_meta), instr_depend_on_me(deps), cap_metadata(cap)
-    {
-    }
+    explicit response(const request& req)
+    : response(req.address, req.v_address, req.data, req.pf_metadata, req.cap, req.instr_depend_on_me) {}
+
     
-    #ifndef CHERI
-    explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me) {}
-    #else
-    explicit response(request req) : response(req.address, req.v_address, req.data, req.pf_metadata, req.instr_depend_on_me, req.cap_metadata) {}
-    #endif
-
   };
 
   template <typename R>

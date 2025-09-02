@@ -227,7 +227,7 @@ void O3_CPU::do_check_dib(ooo_model_instr& instr)
   instr.dib_checked = true;
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[DIB] {} instr_id: {} ip: {:#x} hit: {} cycle: {}\n", __func__, instr.instr_id, instr.ip, dib_result.has_value(),
+    fmt::print("[DIB] {} instr_id: {} ip: {} hit: {} cycle: {}\n", __func__, instr.instr_id, instr.ip, dib_result.has_value(),
                current_time.time_since_epoch() / clock_period);
   }
 }
@@ -247,7 +247,7 @@ long O3_CPU::fetch_instruction()
   };
 
   auto l1i_req_begin = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), fetch_ready);
-  for (champsim::bandwidth to_read{L1I_BANDWIDTH}; to_read.has_remaining() && l1i_req_begin != std::end(IFETCH_BUFFER); to_read.consume()) {
+  for (champsim::bandwidth l1i_bw{L1I_BANDWIDTH}; l1i_bw.has_remaining() && l1i_req_begin != std::end(IFETCH_BUFFER); l1i_bw.consume()) {
     auto l1i_req_end = std::adjacent_find(l1i_req_begin, std::end(IFETCH_BUFFER), no_match_ip);
     if (l1i_req_end != std::end(IFETCH_BUFFER)) {
       l1i_req_end = std::next(l1i_req_end); // adjacent_find returns the first of the non-equal elements
@@ -512,13 +512,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
   for (auto& smem : instr.source_memory) {
     auto q_entry = std::find_if_not(std::begin(LQ), std::end(LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
     assert(q_entry != std::end(LQ));
-    #ifndef CHERI
-    q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid); // add it to the load queue
-    #else 
-    if (instr.cap_metadata.is_cap) //detect capability operations
-        q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.cap_metadata); 
-      else q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid);
-    #endif
+    q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.cap); // add it to the load queue
 
 
     // Check for forwarding
@@ -543,22 +537,13 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
 
   // store
   for (auto& dmem : instr.destination_memory) {
-    #ifndef CHERI
-    SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid); // add it to the store queue
-    #else
-    if (instr.cap_metadata.is_cap)
-      SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid, instr.cap_metadata); 
-    else SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid);
-    #endif   
+    SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid, instr.cap); // add it to the store queue
   }
 
   if constexpr (champsim::debug_print) {
     fmt::print("[DISPATCH] {} instr_id: {} loads: {} stores: {} cycle: {}\n", __func__, instr.instr_id, std::size(instr.source_memory),
                std::size(instr.destination_memory), current_time.time_since_epoch() / clock_period);
   }
-
-  // if (instr.cap_metadata.is_cap)
-  //   fmt::print("Base {} Length {} Perms{} Offset {} Tag{}\n", instr.cap_metadata.base, instr.cap_metadata.length, instr.cap_metadata.perms, instr.cap_metadata.offset, instr.cap_metadata.tagged);
 }
 
 long O3_CPU::operate_lsq()
@@ -603,7 +588,7 @@ long O3_CPU::operate_lsq()
 void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry)
 {
   if constexpr (champsim::debug_print) {
-    fmt::print("[SQ] {} instr_id: {} vaddr: {:x}\n", __func__, sq_entry.instr_id, sq_entry.virtual_address);
+    fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, sq_entry.instr_id, sq_entry.virtual_address);
   }
 
   sq_entry.finish(std::begin(ROB), std::end(ROB));
@@ -624,10 +609,10 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.v_address = sq_entry.virtual_address;
   data_packet.instr_id = sq_entry.instr_id;
   data_packet.ip = sq_entry.ip;
-  data_packet.cap_metadata = sq_entry.cap_metadata;
+  data_packet.cap = sq_entry.cap;
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[SQ] {} instr_id: {} vaddr: {:x}\n", __func__, data_packet.instr_id, data_packet.v_address);
+    fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
 
   return L1D_bus.issue_write(data_packet);
@@ -639,10 +624,11 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.v_address = lq_entry.virtual_address;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
-  data_packet.cap_metadata = lq_entry.cap_metadata;
+  data_packet.cap = lq_entry.cap;
+    
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[LQ] {} instr_id: {} vaddr: {:#x}\n", __func__, data_packet.instr_id, data_packet.v_address);
+    fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
 
   return L1D_bus.issue_read(data_packet);
@@ -680,15 +666,15 @@ long O3_CPU::handle_memory_return()
 {
   long progress{0};
 
-  for (champsim::bandwidth l1i_bw{FETCH_WIDTH}, to_read{L1I_BANDWIDTH};
-       l1i_bw.has_remaining() && to_read.has_remaining() && !L1I_bus.lower_level->returned.empty(); to_read.consume()) {
+  for (champsim::bandwidth fetch_bw{FETCH_WIDTH}, l1i_bw{L1I_BANDWIDTH};
+       fetch_bw.has_remaining() && l1i_bw.has_remaining() && !L1I_bus.lower_level->returned.empty(); l1i_bw.consume()) {
     auto& l1i_entry = L1I_bus.lower_level->returned.front();
 
-    while (l1i_bw.has_remaining() && !l1i_entry.instr_depend_on_me.empty()) {
+    while (fetch_bw.has_remaining() && !l1i_entry.instr_depend_on_me.empty()) {
       auto fetched = std::find_if(std::begin(IFETCH_BUFFER), std::end(IFETCH_BUFFER), ooo_model_instr::matches_id(l1i_entry.instr_depend_on_me.front()));
       if (fetched != std::end(IFETCH_BUFFER) && champsim::block_number{fetched->ip} == champsim::block_number{l1i_entry.v_address} && fetched->fetch_issued) {
         fetched->fetch_completed = true;
-        l1i_bw.consume();
+        fetch_bw.consume();
         ++progress;
 
         if constexpr (champsim::debug_print) {
@@ -825,8 +811,8 @@ LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY
 {
 }
 
-LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id, champsim::address local_ip, std::array<uint8_t, 2> local_asid, champsim::capability cap)
-    : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip), asid(local_asid), cap_metadata(cap)
+LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id, champsim::address local_ip, std::array<uint8_t, 2> local_asid, champsim::capability cap_)
+    : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip), asid(local_asid), cap(cap_)
 {
 }
 
@@ -846,7 +832,7 @@ void LSQ_ENTRY::finish(ooo_model_instr& rob_entry) const
   assert(rob_entry.completed_mem_ops <= rob_entry.num_mem_ops());
 
   if constexpr (champsim::debug_print) {
-    fmt::print("[LSQ] {} instr_id: {} full_address: {:#x} remain_mem_ops: {}\n", __func__, instr_id, virtual_address,
+    fmt::print("[LSQ] {} instr_id: {} full_address: {} remain_mem_ops: {}\n", __func__, instr_id, virtual_address,
                rob_entry.num_mem_ops() - rob_entry.completed_mem_ops);
   }
 }

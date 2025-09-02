@@ -170,7 +170,7 @@ struct InstructionTrace {
         }
 
     #ifdef CHERI
-        if (is_cap) {
+        if (is_cap || (is_ld || is_st)) {
             std::cerr << "\nCapability Metadata: "
                     << " | Cursor 0x" << std::hex << cursor
                     << " | Base 0x" << std::hex << curr_instr.base
@@ -188,6 +188,7 @@ struct InstructionTrace {
 #ifdef CHERI
 bool is_cap_instr(const cheri_trace_entry_t& entry) {
     switch(entry.entry_type) {
+        //case CTE_CAP;
         case CTE_LD_CAP:
         case CTE_ST_CAP:
             return true;
@@ -200,15 +201,13 @@ void set_cap_data(InstructionTrace& trace, cheri_trace_entry_t& entry)
 {
     trace.cursor = entry.val3;
     trace.curr_instr.metadata = entry.val2 | (1ULL << 20);
-    trace.tagged = (trace.curr_instr.metadata & (1ULL << 63)) == 0;
+    trace.tagged = (trace.curr_instr.metadata & (1ULL << 63)) != 0;
     trace.curr_instr.base = entry.val4;
     trace.curr_instr.length = entry.val5;
     trace.curr_instr.offset = trace.cursor - trace.curr_instr.base;
 
-    if (trace.curr_instr.length == ULLONG_MAX) {
-        assert(!trace.tagged);
-    }
- 
+    if (trace.curr_instr.base == 0 && trace.cursor == 0 && trace.curr_instr.length == ULONG_MAX)
+        trace.tagged = false;
 }
 
 
@@ -294,8 +293,6 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.destination_registers[1] = remap_regid(trace.decoded_instr.rd);
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
-            // trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-            // trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
             break;
 
         case BRANCH_INDIRECT_CALL: //reads ip, writes ip and reads other jalr ra, rs1, imm
@@ -304,16 +301,12 @@ void set_branch_data(InstructionTrace& trace, cheri_trace_entry_t& entry){
             trace.curr_instr.destination_registers[1] = remap_regid(trace.decoded_instr.rd);
             trace.curr_instr.source_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1);
-            // trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
-            // trace.curr_instr.source_registers[1] = champsim::REG_STACK_POINTER;
             break;
         
         case BRANCH_RETURN: // writes ip, reads other
             trace.curr_instr.branch_taken = true;
             trace.curr_instr.destination_registers[0] = champsim::REG_INSTRUCTION_POINTER;
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1);
-            // trace.curr_instr.source_registers[0] = champsim::REG_STACK_POINTER;
-            // trace.curr_instr.destination_registers[1] = champsim::REG_STACK_POINTER;
             break;
 
         case BRANCH_OTHER:
@@ -385,13 +378,13 @@ void set_mem_data(InstructionTrace& trace, cheri_trace_entry_t& entry) {
 }
 
 
-void set_reg_data(InstructionTrace& trace)       
+void set_reg_data(InstructionTrace& trace, cheri_trace_entry_t& entry)       
 {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
     assert(num_regs_used != 0 &&  num_regs_used != 55);
     if (trace.decoded_instr.rd == rv_ireg_zero && trace.type != INST_TYPE_FP) {
         std::cerr << "Error: Instruction of type " << inst_type_to_str(trace.type) 
-        << "is using the zero register as a destination\n";
+        << " is using the zero register as a destination\n";
         assert(false);
     }
 
@@ -475,6 +468,7 @@ void set_atomic_data(InstructionTrace& trace, cheri_trace_entry_t& entry)
 void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& trace)
 {
     trace.decoded_instr = disasm_inst(rv64, entry.pc, entry.inst, CHERI_CAP_MODE);
+
     assert(trace.decoded_instr.op != rv_op_illegal); 
 
     trace.curr_instr.ip = entry.pc;
@@ -491,7 +485,6 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
 
     switch (trace.type)
     {
-
         case INST_TYPE_BRANCH:
             trace.branch_type = get_branch_type(trace.decoded_instr);
             assert(trace.branch_type != ERROR);
@@ -516,7 +509,7 @@ void convert_cheri_trace_entry(cheri_trace_entry_t& entry, InstructionTrace& tra
         case INST_TYPE_ALU:        
         case INST_TYPE_CSR:
         case INST_TYPE_FP:
-            set_reg_data(trace);
+            set_reg_data(trace, entry);
             break;
 
         case INST_TYPE_AMO:

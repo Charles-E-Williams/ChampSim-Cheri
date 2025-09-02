@@ -103,14 +103,14 @@ struct DRAM_CHANNEL final : public champsim::operable {
 
     uint32_t pf_metadata = 0;
 
+    champsim::capability cap{};
+    
     champsim::address address{};
     champsim::address v_address{};
     champsim::address data{};
     champsim::chrono::clock::time_point ready_time = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
-    champsim::capability cap_metadata{};
-
     std::vector<std::deque<response_type>*> to_return{};
 
     explicit request_type(const typename champsim::channel::request_type& req);

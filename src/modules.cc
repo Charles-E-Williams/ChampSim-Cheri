@@ -29,11 +29,3 @@ bool champsim::modules::prefetcher::prefetch_line(uint64_t pf_addr, bool fill_th
   return prefetch_line(champsim::address{pf_addr}, fill_this_level, prefetch_metadata);
 }
 // LCOV_EXCL_STOP
-
-#ifdef CHERI
-bool champsim::modules::prefetcher::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::capability cap_metadata) const
-{
-  return intern_->prefetch_line(pf_addr, fill_this_level, prefetch_metadata, cap_metadata);
-}
-
-#endif

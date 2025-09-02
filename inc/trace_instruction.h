@@ -16,6 +16,7 @@
 
 #ifndef TRACE_INSTRUCTION_H
 #define TRACE_INSTRUCTION_H
+
 #include <limits>
 
 // special registers that help us identify branches
@@ -31,8 +32,6 @@ constexpr std::size_t NUM_INSTR_DESTINATIONS_SPARC = 4;
 constexpr std::size_t NUM_INSTR_DESTINATIONS = 2;
 constexpr std::size_t NUM_INSTR_SOURCES = 4;
 
-
-
 // NOLINTBEGIN(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays): These classes are deliberately trivial
 struct input_instr {
   // instruction pointer or PC (Program Counter)
@@ -44,17 +43,9 @@ struct input_instr {
 
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
-
-        // input registers
-#ifdef CHERI
-  unsigned long long base, length, offset;
-  unsigned long long metadata; //includes is_cap, perms and tag;
-  // unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
-  // unsigned short perms;
-  // unsigned char tag;
-#endif
 };
 
 struct cloudsuite_instr {
@@ -64,21 +55,38 @@ struct cloudsuite_instr {
   // branch info
   unsigned char is_branch;
   unsigned char branch_taken;
+
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS_SPARC]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];                 // input registers
+
+  unsigned long long destination_memory[NUM_INSTR_DESTINATIONS_SPARC]; // output memory
+  unsigned long long source_memory[NUM_INSTR_SOURCES];                 // input memory
+
   unsigned char asid[2];
+};
+// NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+
+struct cheri_instr { // 94 bytes
+  // instruction pointer or PC (Program Counter)
+  unsigned long long ip;
+
+  // branch info
+  unsigned char is_branch;
+  unsigned char branch_taken;
 
   unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
   unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
-#ifdef CHERI
-  unsigned long long base, length, offset;
-  unsigned long long metadata; //includes is_cap, perms and tag;
-  // unsigned char is_cap; // does instruction involve capabilities / modify capabilities?
-  // unsigned short perms;
-  // unsigned char tag;
-#endif
+  // cheri capability metadata
+  unsigned long long base; 
+  unsigned long long length;
+  unsigned long long offset;
+  unsigned int permissions;
+  unsigned char tag;
+  unsigned char is_cap_instr;
 };
-// NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 
 #endif

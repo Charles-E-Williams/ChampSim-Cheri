@@ -74,7 +74,6 @@ using block_offset = address_slice<block_offset_extent>;
 using page_number = address_slice<page_number_extent>;
 using page_offset = address_slice<page_offset_extent>;
 
-
 /**
  * Get the lowest possible address for which the space between it and zero is the given size.
  */

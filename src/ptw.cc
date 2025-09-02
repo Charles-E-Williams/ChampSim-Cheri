@@ -46,11 +46,12 @@ PageTableWalker::PageTableWalker(champsim::ptw_builder b)
 }
 
 PageTableWalker::mshr_type::mshr_type(const request_type& req, std::size_t level)
-    : address(req.address), v_address(req.v_address), instr_depend_on_me(req.instr_depend_on_me), pf_metadata(req.pf_metadata),
-     cap_metadata(req.cap_metadata), cpu(req.cpu), translation_level(level)
+    : address(req.address), v_address(req.v_address), instr_depend_on_me(req.instr_depend_on_me), pf_metadata(req.pf_metadata), cpu(req.cpu),
+      translation_level(level)
 {
   asid[0] = req.asid[0];
   asid[1] = req.asid[1];
+  cap = req.cap;
 }
 
 auto PageTableWalker::handle_read(const request_type& handle_pkt, channel_type* ul) -> std::optional<mshr_type>
@@ -90,7 +91,7 @@ auto PageTableWalker::handle_fill(const mshr_type& fill_mshr) -> std::optional<m
   }
 
   const auto pscl_idx = std::size(pscl) - fill_mshr.translation_level;
-  pscl.at(pscl_idx).fill({fill_mshr.v_address, *fill_mshr.data, fill_mshr.translation_level - 1});
+  pscl.at(pscl_idx).fill({fill_mshr.v_address, *fill_mshr.data, fill_mshr.translation_level});
 
   mshr_type fwd_mshr = fill_mshr;
   fwd_mshr.address = *fill_mshr.data;
@@ -110,7 +111,6 @@ auto PageTableWalker::step_translation(const mshr_type& source) -> std::optional
   packet.asid[1] = source.asid[1];
   packet.is_translated = true;
   packet.type = access_type::TRANSLATION;
-  packet.cap_metadata = source.cap_metadata;
 
   bool success = lower_level->add_rq(packet);
   if (success) {
@@ -137,12 +137,7 @@ long PageTableWalker::operate()
   auto [complete_begin, complete_end] = champsim::get_span_p(std::cbegin(completed), std::cend(completed), fill_bw, is_ready);
   std::for_each(complete_begin, complete_end, [](auto& mshr_entry) {
     for (auto ret : mshr_entry.to_return) {
-      #ifndef CHERI
-      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.instr_depend_on_me);
-      #else
-      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, 
-            mshr_entry.instr_depend_on_me, mshr_entry.cap_metadata);
-      #endif
+      ret->emplace_back(mshr_entry.v_address, mshr_entry.v_address, *mshr_entry.data, mshr_entry.pf_metadata, mshr_entry.cap, mshr_entry.instr_depend_on_me);
     }
   });
   fill_bw.consume(std::distance(complete_begin, complete_end));
@@ -216,15 +211,15 @@ void PageTableWalker::finish_packet(const response_type& packet)
     return champsim::block_number{x.address} == block;
   };
   auto is_last_step = [](auto x) {
-    return x.translation_level > 0;
+    return x.translation_level <= 0;
   };
   auto last_finished = std::partition(std::begin(MSHR), std::end(MSHR), matches_addr);
 
   std::for_each(std::begin(MSHR), last_finished, [is_last_step, finish_step, finish_last_step](auto& mshr_entry) {
-    mshr_entry.data = is_last_step(mshr_entry) ? finish_step(mshr_entry) : finish_last_step(mshr_entry);
+    mshr_entry.data = is_last_step(mshr_entry) ? finish_last_step(mshr_entry) : finish_step(mshr_entry);
   });
 
-  std::partition_copy(std::begin(MSHR), last_finished, std::back_inserter(finished), std::back_inserter(completed), is_last_step);
+  std::partition_copy(std::begin(MSHR), last_finished, std::back_inserter(completed), std::back_inserter(finished), is_last_step);
   MSHR.erase(std::begin(MSHR), last_finished);
 }
 
