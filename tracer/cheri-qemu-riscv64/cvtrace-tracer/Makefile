@@ -3,12 +3,12 @@ CXXFLAGS = -std=c++20 -O3 \
            -Wall -Wextra -Werror=format \
            -Wno-c99-extensions -Wno-sign-compare \
            -Wno-initializer-overrides -Wno-missing-field-initializers \
-           -Wno-unused-parameter -Wno-unused-function -DNDEBUG
+           -Wno-unused-parameter -Wno-unused-function
 
 LDFLAGS = -flto 
 
-SRC = riscv64purecapQEMU2ChampSim.cc disas.cc stream.cc
-TARGET = riscv64purecapQEMU2ChampSim  
+SRC = qemu2ChampSim.cc disas.cc stream.cc
+TARGET = qemu2ChampSim
 
 all: $(TARGET)
 
