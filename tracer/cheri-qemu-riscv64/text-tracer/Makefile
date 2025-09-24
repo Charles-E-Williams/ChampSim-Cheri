@@ -1,9 +1,13 @@
 CXX = clang++
-CXXFLAGS = -std=c++20 -Wall -Wextra -Werror=format -Wno-sign-compare -Wno-initializer-overrides -Wno-missing-field-initializers -Wno-unused-parameter -Wno-unused-function -O3 -g3 -march=native  -fsanitize=undefined
-LDFLAGS = -flto=auto -lre2 -lboost_regex
+CXXFLAGS = -std=c++20 -O3 \
+           -Wall -Wextra -Werror=format \
+           -Wno-c99-extensions -Wno-sign-compare \
+           -Wno-initializer-overrides -Wno-missing-field-initializers \
+           -Wno-unused-parameter -Wno-unused-function -DNDEBUG
+LDFLAGS = -flto -lre2
 
-SRC = riscv64qemu2champsim.cc 
-TARGET = riscv64qemu2champsim  
+SRC = qemu2ChampSim.cc disas.cc stream.cc
+TARGET = qemu2ChampSim
 
 all: $(TARGET)
 

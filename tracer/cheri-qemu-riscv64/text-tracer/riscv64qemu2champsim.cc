@@ -18,7 +18,10 @@ namespace
 {
   constexpr char REG_AX = 56;  
 } 
-
+#include "../../../inc/trace_instruction.h"
+#include "disas.hh"
+#include "stream.hh"
+#include "/home/grads/c/charlesw2000/cheri-compressed-cap/cheri_compressed_cap.h"
 // Regex patterns 
 // const re2::RE2 instr_pattern(R"(\[\d+:\d+\]\s+(0x[0-9a-fA-F]+):\s+([0-9a-fA-F]+)\s+([\w\.]+)\s*(.*))");
 const re2::RE2 instr_pattern("\\[(\\d+:\\d+)\\]\\s+(0x[0-9a-fA-F]+):\\s+([0-9a-fA-F]+)\\s+([\\w\\.]+)\\s+(.*?)(?:\\s+#(0x[0-9a-fA-F]+))?$");
