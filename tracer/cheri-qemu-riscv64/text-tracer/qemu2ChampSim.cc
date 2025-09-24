@@ -1,5 +1,5 @@
 /*
- *    Copyright 2023 The ChampSim Contributors
+ * Copyright 2023 The ChampSim Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -65,8 +65,6 @@ struct InstructionTrace {
     uint32_t opcode;
     bool is_ld = false;
     bool is_st = false;
-    bool is_cap = false;
-    bool tagged = false;
 
     InstructionTrace() {
         memset(&curr_instr, 0, sizeof(trace_instr_format));
@@ -95,7 +93,7 @@ struct InstructionTrace {
 
         if (curr_instr.is_branch) {
             std::cerr << "\nBranch Type: " << RiscvBranchType_to_str()
-            << "\nBranch Taken: " << (int)curr_instr.branch_taken;
+             << "\nBranch Taken: " << (int)curr_instr.branch_taken;
         }
 
         std::cerr << "\n\nDestination Registers\n";
@@ -125,11 +123,11 @@ struct InstructionTrace {
 
         if (curr_instr.is_cap_instr) {
             std::cerr << "\nCapability Metadata: "
-                    << " | Base 0x" << std::hex << curr_instr.base
-                    << " | Length: 0x" << std::hex << curr_instr.length
-                    << " | Offset: 0x" << std::hex << curr_instr.offset
-                    << " | Perms: 0x" << std::hex << curr_instr.permissions
-                    << " | Tag:" << (int)curr_instr.tag;
+                      << " | Base 0x" << std::hex << curr_instr.base
+                      << " | Length: 0x" << std::hex << curr_instr.length
+                      << " | Offset: 0x" << std::hex << curr_instr.offset
+                      << " | Perms: 0x" << std::hex << curr_instr.permissions
+                      << " | Tag:" << (int)curr_instr.tag;
         }
         std::cerr << "\n=========================\n\n";
     }
@@ -167,13 +165,13 @@ bool extract_pc_and_opcode(const std::string& line, unsigned long long& pc, uint
         opcode = std::stoul(opcode_str, nullptr, 16);
         return true;
     }
-    return false;    
+    return false;   
 }
 
 void parse_memory_operation(const std::string& line, InstructionTrace& trace) {
     std::string op_type, address, value;
     
-    if (RE2::FullMatch(line, mem_pattern, &op_type, &address, &value)) {
+    if (RE2::PartialMatch(line, mem_pattern, &op_type, &address, &value)) {
         uint64_t addr = std::stoull(address, nullptr, 16);
         uint8_t access_size = get_memory_access_size(trace.decoded_instr);
         
@@ -198,13 +196,25 @@ void parse_memory_operation(const std::string& line, InstructionTrace& trace) {
 void parse_cap_memory_operation(const std::string& line, InstructionTrace& trace) {
     std::string op_type, address, valid, pesbt, cursor;
     
-    if (RE2::FullMatch(line, cap_mem_pattern, &op_type, &address, &valid, &pesbt, &cursor)) {
+    if (RE2::PartialMatch(line, cap_mem_pattern, &op_type, &address, &valid, &pesbt, &cursor)) {
         uint64_t addr = std::stoull(address, nullptr, 16);
+        uint64_t PESBT = std::stoull(pesbt, nullptr, 16);
+        uint64_t CURSOR = std::stoull(cursor, nullptr, 16);
+        uint8_t tag = std::stoi(valid, nullptr, 16);
+        cc128_cap_t result;
+
+        cc128_decompress_mem(PESBT, CURSOR, (bool)tag, &result);
+
+        trace.curr_instr.base = result.base();
+        trace.curr_instr.length = result.length();
+        trace.curr_instr.offset = result.offset();
+        trace.curr_instr.permissions = result.all_permissions();
+        trace.curr_instr.tag = (unsigned char)result.cr_tag;
         
         // Calculate cache line boundaries for capability (16 bytes)
         uint64_t cacheline_start = addr & ~63ULL;
         uint64_t cacheline_end = (addr + 15) & ~63ULL;
-        
+
         if (op_type == "Write") {
             trace.curr_instr.destination_memory[0] = addr;
             if (cacheline_end != cacheline_start) {
@@ -218,16 +228,15 @@ void parse_cap_memory_operation(const std::string& line, InstructionTrace& trace
         }
         
         trace.curr_instr.is_cap_instr = 1;
-        trace.curr_instr.tag = std::stoi(valid);
     }
 }
 
 void parse_cap_register_write(const std::string& line, InstructionTrace& trace) {
     std::string reg_num, reg_name, valid, sealed, perms, flags, base, length, offset, tag;
     
-    if (RE2::FullMatch(line, cap_reg_pattern, 
-                       &reg_num, &reg_name, &valid, &sealed, 
-                       &perms, &flags, &base, &length, &offset, &tag)) {
+    if (RE2::PartialMatch(line, cap_reg_pattern, 
+                          &reg_num, &reg_name, &valid, &sealed, 
+                          &perms, &flags, &base, &length, &offset, &tag)) {
         
         trace.curr_instr.is_cap_instr = 1;
         trace.curr_instr.base = std::stoull(base, nullptr, 16);
@@ -396,7 +405,7 @@ void set_reg_data(InstructionTrace& trace) {
 
         case 2:
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
-            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);        
+            trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);       
             break;
 
         case 3:
@@ -451,7 +460,7 @@ void convert_cheri_trace_entry(InstructionTrace& trace) {
             set_reg_data(trace);
             break;
 
-        case INST_TYPE_ALU:        
+        case INST_TYPE_ALU:       
         case INST_TYPE_CSR:
         case INST_TYPE_FP:
             set_reg_data(trace);
@@ -467,7 +476,7 @@ void convert_cheri_trace_entry(InstructionTrace& trace) {
             break;
 
         default:
-            assert(false);       
+            assert(false);      
     }  
 }
 
@@ -519,30 +528,32 @@ int main(int argc, char** argv) {
             }
             
             // Setup new instruction
-            memset(&trace.curr_instr, 0, sizeof(trace_instr_format));
-            trace.is_ld = false;
-            trace.is_st = false;
-            trace.is_cap = false;
-            trace.tagged = false;
+            InstructionTrace new_trace; // Use a temporary new trace object
+            new_trace.curr_instr.ip = trace.curr_instr.ip;
+            new_trace.opcode = trace.opcode;
             
             // Process the current instruction
-            convert_cheri_trace_entry(trace);
+            convert_cheri_trace_entry(new_trace);
             
-            prev_trace = trace;
+            prev_trace = new_trace;
             pending_instr = true;
             instruction_count++;
             
         } else if (pending_instr) {
 
-            parse_memory_operation(line, trace);
-            parse_cap_memory_operation(line, trace);
-            parse_cap_register_write(line, trace);
+            parse_memory_operation(line, prev_trace);
+            parse_cap_memory_operation(line, prev_trace);
+            parse_cap_register_write(line, prev_trace);
         }
     }
     
     // Handle the last pending instruction
-    if (pending_instr && !verbose) {
-        std::cout.write(reinterpret_cast<const char*>(&trace.curr_instr), sizeof(trace_instr_format));
+    if (pending_instr) {
+        if (verbose) {
+             prev_trace.debug_print_instruction();
+        } else {
+             std::cout.write(reinterpret_cast<const char*>(&prev_trace.curr_instr), sizeof(trace_instr_format));
+        }
     }
     
     input->close();
