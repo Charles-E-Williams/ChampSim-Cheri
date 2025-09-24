@@ -62,44 +62,14 @@ struct InstructionTrace {
     rv_decode decoded_instr;
     inst_type_t type = INST_TYPE_UNKNOWN;
     BranchType branch_type = NOT_BRANCH;
-
     uint32_t opcode;
-    std::string line;
-    InputStreamWrapper* input;
-
     bool is_ld = false;
     bool is_st = false;
     bool is_cap = false;
     bool tagged = false;
 
-    InstructionTrace(InputStreamWrapper* input_stream = nullptr) : input(input_stream) {
+    InstructionTrace() {
         memset(&curr_instr, 0, sizeof(trace_instr_format));
-    }
-
-    bool read_next_line() {
-        if (!input) return false;
-        return input->getline(line);
-    }
-
-    bool read_next_if_matches_pattern() {
-        if (!input) return false;
-        
-        std::string next_line;
-        if (input->getline(next_line)) {
-            if (next_line.find("Cap Memory Read") != std::string::npos ||
-                next_line.find("Cap Memory Write") != std::string::npos ||
-                next_line.find("Memory Read") != std::string::npos ||
-                next_line.find("Memory Write") != std::string::npos ||
-                next_line.find("Write c") != std::string::npos ||
-                next_line.find("Cap Tag Write") != std::string::npos) {
-                line = next_line;
-                return true;
-            } else {
-                line = next_line;
-                return false;
-            }
-        }
-        return false;
     }
 
     const char* RiscvBranchType_to_str() const {
@@ -200,52 +170,35 @@ bool extract_pc_and_opcode(const std::string& line, unsigned long long& pc, uint
     return false;    
 }
 
-bool parse_memory_operation(InstructionTrace& trace) {
+void parse_memory_operation(const std::string& line, InstructionTrace& trace) {
     std::string op_type, address, value;
-    printf("PARSE MEMORY OPERATION\n");
-
-    if (RE2::PartialMatch(trace.line, mem_pattern, &op_type, &address, &value)) {
+    
+    if (RE2::FullMatch(line, mem_pattern, &op_type, &address, &value)) {
         uint64_t addr = std::stoull(address, nullptr, 16);
         uint8_t access_size = get_memory_access_size(trace.decoded_instr);
-        printf("I AM INSIDE HERERERERERRE\n");
-
+        
         // Calculate cache line boundaries
         uint64_t cacheline_start = addr & ~63ULL;
         uint64_t cacheline_end = (addr + access_size - 1) & ~63ULL;
         
         if (op_type == "Write") {
-            // For atomic operations, we might have both read and write to same address
-            if (trace.type == INST_TYPE_AMO) {
-                // AMO operations read and write the same address
-                trace.curr_instr.destination_memory[0] = addr;
-                trace.curr_instr.source_memory[0] = addr;
-                if (cacheline_end != cacheline_start) {
-                    trace.curr_instr.destination_memory[1] = cacheline_end;
-                    trace.curr_instr.source_memory[1] = cacheline_end;
-                }
-            } else {
-                // Regular store or AMO_STORE
-                trace.curr_instr.destination_memory[0] = addr;
-                if (cacheline_end != cacheline_start) {
-                    trace.curr_instr.destination_memory[1] = cacheline_end;
-                }
+            trace.curr_instr.destination_memory[0] = addr;
+            if (cacheline_end != cacheline_start) {
+                trace.curr_instr.destination_memory[1] = cacheline_end;
             }
         } else {
-            // Memory Read
             trace.curr_instr.source_memory[0] = addr;
             if (cacheline_end != cacheline_start) {
                 trace.curr_instr.source_memory[1] = cacheline_end;
             }
         }
-        return true;
     }
-    return false;
 }
 
-bool parse_cap_memory_operation(InstructionTrace& trace) {
+void parse_cap_memory_operation(const std::string& line, InstructionTrace& trace) {
     std::string op_type, address, valid, pesbt, cursor;
     
-    if (RE2::PartialMatch(trace.line, cap_mem_pattern, &op_type, &address, &valid, &pesbt, &cursor)) {
+    if (RE2::FullMatch(line, cap_mem_pattern, &op_type, &address, &valid, &pesbt, &cursor)) {
         uint64_t addr = std::stoull(address, nullptr, 16);
         
         // Calculate cache line boundaries for capability (16 bytes)
@@ -264,32 +217,25 @@ bool parse_cap_memory_operation(InstructionTrace& trace) {
             }
         }
         
-        // Set capability information
         trace.curr_instr.is_cap_instr = 1;
         trace.curr_instr.tag = std::stoi(valid);
-        
-        return true;
     }
-    return false;
 }
 
-bool parse_cap_register_write(InstructionTrace& trace) {
+void parse_cap_register_write(const std::string& line, InstructionTrace& trace) {
     std::string reg_num, reg_name, valid, sealed, perms, flags, base, length, offset, tag;
     
-    if (RE2::PartialMatch(trace.line, cap_reg_pattern, 
-                          &reg_num, &reg_name, &valid, &sealed, 
-                          &perms, &flags, &base, &length, &offset, &tag)) {
+    if (RE2::FullMatch(line, cap_reg_pattern, 
+                       &reg_num, &reg_name, &valid, &sealed, 
+                       &perms, &flags, &base, &length, &offset, &tag)) {
         
         trace.curr_instr.is_cap_instr = 1;
         trace.curr_instr.base = std::stoull(base, nullptr, 16);
         trace.curr_instr.length = std::stoull(length, nullptr, 16);
         trace.curr_instr.offset = std::stoull(offset, nullptr, 16);
         trace.curr_instr.permissions = std::stoul(perms, nullptr, 16);
-        trace.curr_instr.tag = std::stoi(valid);  // Use the 'v:' field, not 't:' field
-        
-        return true;
+        trace.curr_instr.tag = std::stoi(valid);
     }
-    return false;
 }
 
 BranchType get_branch_type(const rv_decode& dec) {
@@ -371,21 +317,17 @@ void set_branch_info(InstructionTrace& trace) {
 }
 
 void set_load_store_info(InstructionTrace& trace) {
-    uint8_t access_size = get_memory_access_size(trace.decoded_instr);
-    
     switch (trace.type) {
         case INST_TYPE_LOAD:
             trace.is_ld = true;
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
-            // Memory operands will be set by parse_memory_operation() when we read the trace lines
             break;
 
         case INST_TYPE_STORE:
             trace.is_st = true;
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2, trace);
-            // Memory operands will be set by parse_memory_operation() when we read the trace lines
             break;
 
         case INST_TYPE_CAP_LOAD:
@@ -393,7 +335,6 @@ void set_load_store_info(InstructionTrace& trace) {
             trace.curr_instr.is_cap_instr = 1;
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
-            // Memory operands will be set by parse_cap_memory_operation() when we read the trace lines
             break;
 
         case INST_TYPE_CAP_STORE:
@@ -401,21 +342,18 @@ void set_load_store_info(InstructionTrace& trace) {
             trace.curr_instr.is_cap_instr = 1;
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2, trace);
-            // Memory operands will be set by parse_cap_memory_operation() when we read the trace lines
             break;
 
         case INST_TYPE_FP_LOAD:
             trace.is_ld = true;
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
-            // Memory operands will be set by parse_memory_operation() when we read the trace lines
             break;
 
         case INST_TYPE_FP_STORE:
             trace.is_st = true;
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2, trace);
-            // Memory operands will be set by parse_memory_operation() when we read the trace lines
             break;
 
         default:
@@ -423,37 +361,30 @@ void set_load_store_info(InstructionTrace& trace) {
     }
 }
 
-void set_atomic_info(InstructionTrace& trace) {
-    // This function will be called after we read memory operation lines
-    // The memory addresses will be set by parse_memory_operation()
-    uint8_t access_size = get_memory_access_size(trace.decoded_instr);
-    
+void set_atomic_reg_info(InstructionTrace& trace) {
     switch (trace.type) {
         case INST_TYPE_AMO:
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs2, trace);
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs1, trace);
-            // Both source and destination memory will be set by parse_memory_operation
-            // for read-modify-write atomic operations
             break;
 
         case INST_TYPE_AMO_LOAD: 
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
-            // Source memory will be set by parse_memory_operation
             break;
 
         case INST_TYPE_AMO_STORE:
             trace.curr_instr.destination_registers[0] = remap_regid(trace.decoded_instr.rd, trace);
             trace.curr_instr.source_registers[0] = remap_regid(trace.decoded_instr.rs1, trace);
             trace.curr_instr.source_registers[1] = remap_regid(trace.decoded_instr.rs2, trace);
-            // Destination memory will be set by parse_memory_operation if write succeeds
             break;
 
         default: 
             assert(false);
     }
 }
+
 void set_reg_data(InstructionTrace& trace) {
     int num_regs_used = count_register_operands(trace.decoded_instr.codec);
     assert(num_regs_used != 0 && num_regs_used != 55);
@@ -485,7 +416,6 @@ void set_reg_data(InstructionTrace& trace) {
             assert(false);
     }
 }
-
 
 void convert_cheri_trace_entry(InstructionTrace& trace) {
     trace.decoded_instr = disasm_inst(rv64, trace.curr_instr.ip, trace.opcode, CHERI_CAP_MODE);
@@ -530,10 +460,10 @@ void convert_cheri_trace_entry(InstructionTrace& trace) {
         case INST_TYPE_AMO:
         case INST_TYPE_AMO_LOAD:
         case INST_TYPE_AMO_STORE:
-            set_atomic_info(trace);
+            set_atomic_reg_info(trace);
             break;
 
-        case INST_TYPE_SYSTEM: 
+        case INST_TYPE_SYSTEM:
             break;
 
         default:
@@ -550,7 +480,6 @@ int main(int argc, char** argv) {
     std::string input_file = argv[1];
     bool verbose = false;
     
-    // Parse command line arguments
     for (int i = 2; i < argc; i++) {
         if(strcmp(argv[i], "-v") == 0) {
             verbose = true;
@@ -563,71 +492,52 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    InstructionTrace trace(input.get()), prev_trace;
+    InstructionTrace trace, prev_trace;
     uint64_t instruction_count = 0;
     bool pending_instr = false;
-    bool line_already_read = false;
+    std::string line;
     
-    while (line_already_read || trace.read_next_line()) {
-        line_already_read = false;
-
-        if (extract_pc_and_opcode(trace.line, trace.curr_instr.ip, trace.opcode)) {
+    while (input->getline(line)) {
+        // Check if this line contains an instruction
+        if (extract_pc_and_opcode(line, trace.curr_instr.ip, trace.opcode)) {
+            // Process previous instruction if we have one
+            if (pending_instr) {
+                // Handle conditional branch taken/not taken
+                if (prev_trace.branch_type == BRANCH_CONDITIONAL) {
+                    uint64_t fall_through_pc = prev_trace.curr_instr.ip + get_instruction_length(prev_trace.decoded_instr.inst);
+                    prev_trace.curr_instr.branch_taken = (trace.curr_instr.ip != fall_through_pc);
+                }
+                
+                // Write previous instruction to stdout (unless verbose mode is enabled)
+                if (!verbose) {
+                    std::cout.write(reinterpret_cast<const char*>(&prev_trace.curr_instr), sizeof(trace_instr_format));
+                }
+                
+                if (verbose) {
+                    prev_trace.debug_print_instruction();
+                }
+            }
+            
+            // Setup new instruction
+            memset(&trace.curr_instr, 0, sizeof(trace_instr_format));
+            trace.is_ld = false;
+            trace.is_st = false;
+            trace.is_cap = false;
+            trace.tagged = false;
+            
+            // Process the current instruction
             convert_cheri_trace_entry(trace);
             
-            // Read related lines (memory operations, capability info)
-            while (trace.read_next_if_matches_pattern()) {
-                if (trace.line.find("Memory Write") != std::string::npos ||
-                    trace.line.find("Memory Read") != std::string::npos) {
-                    parse_memory_operation(trace);
-                                        printf(" REGULAR HERERERERERRE\n");
+            prev_trace = trace;
+            pending_instr = true;
+            instruction_count++;
+            
+        } else if (pending_instr) {
 
-                } else if (trace.line.find("Cap Memory Write") != std::string::npos ||
-                          trace.line.find("Cap Memory Read") != std::string::npos) {
-                    parse_cap_memory_operation(trace);
-                    printf("HERERERERERRE\n");
-                } else if (trace.line.find("Write c") != std::string::npos) {
-                    parse_cap_register_write(trace);
-                }
-                // Ignore Cap Tag Write lines for now
-            }
-            
-            // Check if we read a line that should be processed as next instruction
-            if (!trace.line.empty() && 
-                trace.line.find("Memory") == std::string::npos &&
-                trace.line.find("Write c") == std::string::npos &&
-                trace.line.find("Cap Tag") == std::string::npos) {
-                line_already_read = true;
-            }
+            parse_memory_operation(line, trace);
+            parse_cap_memory_operation(line, trace);
+            parse_cap_register_write(line, trace);
         }
-        else continue;
-        
-        // Handle conditional branch taken/not taken
-        if (pending_instr) {
-            if (prev_trace.branch_type == BRANCH_CONDITIONAL) {
-                uint64_t fall_through_pc = prev_trace.curr_instr.ip + get_instruction_length(prev_trace.decoded_instr.inst);
-                prev_trace.curr_instr.branch_taken = (trace.curr_instr.ip != fall_through_pc);
-            }
-            
-            // Write previous instruction to stdout (unless verbose mode is enabled)
-            if (!verbose) {
-                std::cout.write(reinterpret_cast<const char*>(&prev_trace.curr_instr), sizeof(trace_instr_format));
-            }
-            
-            if (verbose) {
-                prev_trace.debug_print_instruction();
-            }
-        }
-        
-        prev_trace = trace;
-        pending_instr = true;
-        instruction_count++;
-        
-        // Clear current instruction data for next iteration (after copying to prev_trace)
-        memset(&trace.curr_instr, 0, sizeof(trace_instr_format));
-        trace.is_ld = false;
-        trace.is_st = false;
-        trace.is_cap = false;
-        trace.tagged = false;
     }
     
     // Handle the last pending instruction
