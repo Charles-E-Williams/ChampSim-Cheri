@@ -7,7 +7,7 @@ CXXFLAGS = -std=c++20 -O3 \
 
 LDFLAGS = -flto 
 
-SRC = qemu2ChampSim.cc disas.cc stream.cc
+SRC = qemu2ChampSim.cc disas.cc tracereader.cc
 TARGET = qemu2ChampSim
 
 all: $(TARGET)
