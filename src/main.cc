@@ -34,6 +34,7 @@
 #include "stats_printer.h"
 #include "tracereader.h"
 #include "vmem.h"
+#include "capability_memory.h"
 
 namespace champsim
 {
@@ -117,6 +118,10 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
 
   for (auto& p : phases) {
     std::iota(std::begin(p.trace_index), std::end(p.trace_index), 0);
+  }
+
+  if (knob_cheri) {
+    champsim::initialize_capability_memory(NUM_CPUS);
   }
 
   fmt::print("\n*** ChampSim Multicore Out-of-Order Simulator ***\nWarmup Instructions: {}\nSimulation Instructions: {}\nNumber of CPUs: {}\nPage size: {}\n\n",

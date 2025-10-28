@@ -26,6 +26,7 @@
 
 #include "instruction.h"
 #include "util/detect.h"
+#include "capability_memory.h"
 
 namespace champsim
 {
@@ -73,6 +74,18 @@ public:
 
   [[nodiscard]] auto eof() const { return pimpl_->eof(); }
 };
+
+// helper to extract capabilities and populate capability memory 
+template <typename T>
+inline bool is_store_instruction(const T& trace_instr) {
+  for (size_t i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+    if (trace_instr.destination_memory[i] != 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 
 template <typename T, typename F>
 class bulk_tracereader
@@ -126,8 +139,36 @@ ooo_model_instr bulk_tracereader<T, F>::operator()()
     // Inflate trace format into core model instructions
     auto begin = std::begin(trace_read_buf);
     auto end = std::next(begin, bytes_read / sizeof(T));
-    std::transform(begin, end, std::back_inserter(instr_buffer), [cpu = this->cpu](T t) { return ooo_model_instr{cpu, t}; });
 
+    std::transform(begin, end, std::back_inserter(instr_buffer), 
+      [cpu = this->cpu](T t) {
+        // Only process capability data for cheri_instr type
+        // For input_instr and cloudsuite_instr, this entire block is compiled out
+        if constexpr (std::is_same_v<T, cheri_instr>) {
+          // Check if this is a capability store instruction
+          if (t.is_cap_instr && t.tag && champsim::is_store_instruction(t)) {
+            // Build capability from trace data
+              champsim::capability cap{
+              champsim::address{t.offset},
+              champsim::address{t.base},
+              champsim::address{t.length},
+              t.permissions,
+              (bool)t.tag,
+              (bool)t.is_cap_instr
+            };
+            
+            // Store capability for each destination memory address
+            for (size_t i = 0; i < NUM_INSTR_DESTINATIONS; i++) {
+              if (t.destination_memory[i] != 0) {
+                champsim::global_capability_memory[cpu].store_capability(
+                  champsim::address{t.destination_memory[i]}, cap);
+              }
+            }
+          }
+        }
+        // For input_instr and cloudsuite_instr: no capability processing
+        return ooo_model_instr{cpu, t}; 
+      });
     // Set branch targets
     set_branch_targets(std::begin(instr_buffer), std::end(instr_buffer));
   }
