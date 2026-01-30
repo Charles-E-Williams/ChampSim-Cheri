@@ -22,6 +22,7 @@
 // special registers that help us identify branches
 namespace champsim
 {
+constexpr char REG_RETURN = 1;
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
@@ -84,7 +85,7 @@ struct cheri_instr { // 94 bytes
   unsigned long long base; 
   unsigned long long length;
   unsigned long long offset;
-  unsigned int permissions;
+  unsigned short permissions;
   unsigned char tag;
   unsigned char is_cap_instr;
 };

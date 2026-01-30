@@ -34,7 +34,7 @@
 #include "stats_printer.h"
 #include "tracereader.h"
 #include "vmem.h"
-#include "capability_memory.h"
+
 
 namespace champsim
 {
@@ -120,9 +120,7 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
     std::iota(std::begin(p.trace_index), std::end(p.trace_index), 0);
   }
 
-  if (knob_cheri) {
-    champsim::initialize_capability_memory(NUM_CPUS);
-  }
+  champsim::initialize_capability_memory(NUM_CPUS); //always initialize or guard?
 
   fmt::print("\n*** ChampSim Multicore Out-of-Order Simulator ***\nWarmup Instructions: {}\nSimulation Instructions: {}\nNumber of CPUs: {}\nPage size: {}\n\n",
              phases.at(0).length, phases.at(1).length, std::size(gen_environment.cpu_view()), PAGE_SIZE);

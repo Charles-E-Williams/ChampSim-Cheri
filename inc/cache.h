@@ -46,6 +46,7 @@
 #include "operable.h"
 #include "util/to_underlying.h" // for to_underlying
 #include "waitable.h"
+#include "capability_memory.h"
 
 class CACHE : public champsim::operable
 {
@@ -56,6 +57,8 @@ class CACHE : public champsim::operable
   using channel_type = champsim::channel;
   using request_type = typename channel_type::request_type;
   using response_type = typename channel_type::response_type;
+
+
 
   struct tag_lookup_type {
     champsim::address address;
@@ -133,7 +136,7 @@ private:
   std::pair<set_type::iterator, set_type::iterator> get_set_span(champsim::address address);
   [[nodiscard]] std::pair<set_type::const_iterator, set_type::const_iterator> get_set_span(champsim::address address) const;
   [[nodiscard]] long get_set_index(champsim::address address) const;
-
+  
   template <typename T>
   bool should_activate_prefetcher(const T& pkt) const;
 
@@ -206,10 +209,6 @@ public:
   [[nodiscard]] std::vector<std::size_t> get_pq_occupancy() const;
   [[nodiscard]] std::vector<std::size_t> get_pq_size() const;
   [[nodiscard]] std::vector<double> get_pq_occupancy_ratio() const;
-
-  //charles cheri 
-  [[nodiscard]] bool has_cap(champsim::address addr) const;
-  [[nodiscard]] champsim::capability get_capability(champsim::address addr) const;
 
 
   [[deprecated("Use get_set_index() instead.")]] [[nodiscard]] uint64_t get_set(uint64_t address) const;

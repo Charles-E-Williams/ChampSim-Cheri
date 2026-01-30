@@ -39,7 +39,7 @@ enum branch_type {
   BRANCH_CONDITIONAL,
   BRANCH_DIRECT_CALL,
   BRANCH_INDIRECT_CALL,
-  BRANCH_RETURN,
+  BRANCH_RETURN,     
   BRANCH_OTHER,
   NOT_BRANCH
 };
@@ -151,71 +151,58 @@ private:
     bool reads_sp = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_STACK_POINTER);
     bool reads_flags = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_FLAGS);
     bool reads_ip = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_INSTRUCTION_POINTER);
+    bool reads_ra = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_RETURN);
+    bool writes_ra = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_RETURN);
+
+
     bool reads_other = std::count_if(std::begin(source_registers), std::end(source_registers), [](uint8_t r) {
-      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER;
+      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER && r != champsim::REG_RETURN; 
+    });
+    bool writes_other = std::count_if(std::begin(destination_registers), std::end(destination_registers), [](uint8_t r) {
+      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER && r != champsim::REG_RETURN; 
     });
 
 
-
     // determine what kind of branch this is, if any
-    if (!reads_sp && !reads_flags && writes_ip && !reads_other) {
-      // direct jump
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_DIRECT_JUMP;
-    } else if (!reads_sp && !reads_ip && !reads_flags && writes_ip && reads_other) {
-      // indirect branch
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_INDIRECT;
+    if (!reads_sp && !reads_flags && writes_ip && !reads_other && !reads_ip) {
+        // direct jump
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_DIRECT_JUMP;
+    } else if (!reads_sp && !reads_ip && !reads_flags && writes_ip && reads_other && !writes_other) {
+        // indirect branch
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_INDIRECT;
     } else if (!reads_sp && reads_ip && !writes_sp && writes_ip && (reads_flags || reads_other)) {
-      // conditional branch
-      is_branch = true;
-      branch_taken = instr.branch_taken; // don't change this
-      branch = BRANCH_CONDITIONAL;
-    } else if (reads_sp && reads_ip && writes_sp && writes_ip && !reads_flags && !reads_other) {
-      // direct call
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_DIRECT_CALL;
-    } else if (reads_sp && reads_ip && writes_sp && writes_ip && !reads_flags && reads_other) {
-      // indirect call
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_INDIRECT_CALL;
-    } else if (reads_sp && !reads_ip && writes_sp && writes_ip) {
-      // return
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_RETURN;
+        // conditional branch
+        is_branch = true;
+        branch_taken = instr.branch_taken;
+        branch = BRANCH_CONDITIONAL;
+    } else if (writes_ip && reads_ip && !reads_flags && !reads_other && !reads_ra && ((reads_sp && writes_sp) || (writes_ra || writes_other)))  {
+        // direct call
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_DIRECT_CALL;
+    } else if (writes_ip && reads_ip && !reads_flags && (reads_ra || reads_other) && ((reads_sp && writes_sp) || (writes_ra || writes_other))){
+        // indirect call
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_INDIRECT_CALL;
+    } else if (writes_ip && !reads_ip && ((reads_sp && writes_sp) || (reads_ip && reads_ra && !writes_other && !reads_sp))) {
+        // return
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_RETURN;
     } else if (writes_ip) {
-      // some other branch type that doesn't fit the above categories
-      is_branch = true;
-      branch_taken = instr.branch_taken; // don't change this
-      branch = BRANCH_OTHER;
-    } // ===== RISC-V BRANCHES =====    
-      // I added these in because risc-v does not directly manipulate the stack pointer in calls and returns.
-      // Without these, the btb will warn that the return address corresponding to a previous call is lower. 
-      // This should allow ChampSim to more faithfully 
-      else if (!reads_sp && reads_ip && !writes_sp && writes_ip && !reads_flags && !reads_other) {
-      // RISC-V direct call (jal ra, target) - reads IP to save return address, writes IP
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_DIRECT_CALL;
-    } else if (!reads_sp && reads_ip && !writes_sp && writes_ip && !reads_flags && reads_other) {
-      // RISC-V indirect call (jalr ra, rs, offset) - reads IP + other reg, writes IP
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_INDIRECT_CALL;
-    } else if (!reads_sp && !reads_ip && !writes_sp && writes_ip && !reads_flags && reads_other) {
-      // RISC-V return (jalr x0, ra, 0) - reads ra register, writes IP only
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_RETURN;
-    // ===== END RISC-V BRANCHES =====    
+        // some other branch type that doesn't fit the above categories
+        is_branch = true;
+        branch_taken = instr.branch_taken; // don't change this
+        branch = BRANCH_OTHER;
     } else {
-      branch_taken = false;
+        branch_taken = false;
     }
+
   }
 
 public:

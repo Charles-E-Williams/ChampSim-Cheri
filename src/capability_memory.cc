@@ -20,47 +20,53 @@
 namespace champsim {
 
 // Define the global capability memory vector
-std::vector<capability_memory> global_capability_memory;
+std::vector<capability_memory> cap_mem;
 
 void initialize_capability_memory(size_t num_cpus) {
-  global_capability_memory.clear();
-  global_capability_memory.resize(num_cpus);
+  cap_mem.clear();
+  cap_mem.resize(num_cpus);
 }
 
 void capability_memory::store_capability(champsim::address addr, const capability& cap) {
+
+  if (!cap.tag && !cap.is_cap_instr) return;
+  
+  uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
   if (cap.tag) {
-    // Align to 16-byte boundary (capability size)
-    // Capabilities are 16 bytes, so we need 16-byte granularity
-    constexpr uint64_t CAP_ALIGN_BITS = 4; // log2(16) = 4
-    auto cap_aligned_addr = addr.to<uint64_t>() >> CAP_ALIGN_BITS;
-    cap_map[cap_aligned_addr] = cap;
+    cap_map[index] = cap;
   } else {
-    clear_capability(addr);
+    cap_map.erase(index);
   }
 }
 
 std::optional<capability> capability_memory::load_capability(champsim::address addr) const {
-  // Align to 16-byte boundary
-  constexpr uint64_t CAP_ALIGN_BITS = 4;
-  auto cap_aligned_addr = addr.to<uint64_t>() >> CAP_ALIGN_BITS;
-  auto it = cap_map.find(cap_aligned_addr);
+
+  if (cap_map.empty())
+    return std::nullopt;
+
+  uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
+  auto it = cap_map.find(index);
   if (it != cap_map.end() && it->second.tag) {
-    return it->second;
+      return it->second;
   }
   return std::nullopt;
 }
 
 bool capability_memory::has_capability(champsim::address addr) const {
-  constexpr uint64_t CAP_ALIGN_BITS = 4;
-  auto cap_aligned_addr = addr.to<uint64_t>() >> CAP_ALIGN_BITS;
-  auto it = cap_map.find(cap_aligned_addr);
+  if (cap_map.empty())
+    return false;
+
+  uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
+  auto it = cap_map.find(index);
   return (it != cap_map.end() && it->second.tag);
 }
 
-void capability_memory::clear_capability(champsim::address addr) {
-  constexpr uint64_t CAP_ALIGN_BITS = 4;
-  auto cap_aligned_addr = addr.to<uint64_t>() >> CAP_ALIGN_BITS;
-  cap_map.erase(cap_aligned_addr);
+void capability_memory::invalidate_tag(champsim::address addr) {
+  if (cap_map.empty())
+    return;
+
+  uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
+  cap_map.erase(index);
 }
 
 

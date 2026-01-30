@@ -28,6 +28,7 @@ namespace champsim {
 class capability_memory {
 private:
   std::unordered_map<uint64_t, capability> cap_map;
+  static constexpr uint64_t CAP_ALIGNMENT_BITS = 4;
 
 public:
   capability_memory() = default;
@@ -35,15 +36,13 @@ public:
   void store_capability(champsim::address addr, const capability& cap);
   std::optional<capability> load_capability(champsim::address addr) const;
   bool has_capability(champsim::address addr) const;
-  void clear_capability(champsim::address addr);
+  void invalidate_tag(champsim::address addr);
   size_t size() const { return cap_map.size(); }
   void clear() { cap_map.clear(); }
 };
 
-// Global capability memory - one per CPU
-extern std::vector<capability_memory> global_capability_memory;
+extern std::vector<capability_memory> cap_mem;
 
-// Initialize global capability memory (call this before simulation)
 void initialize_capability_memory(size_t num_cpus);
 
 } // namespace champsim

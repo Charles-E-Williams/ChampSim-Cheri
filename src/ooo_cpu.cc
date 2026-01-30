@@ -29,10 +29,13 @@
 #include "deadlock.h"
 #include "instruction.h"
 #include "util/span.h"
+#include "capability_memory.h"
 
 std::chrono::seconds elapsed_time();
 
+
 constexpr long long STAT_PRINTING_PERIOD = 10000000;
+extern std::vector<champsim::capability_memory> cap_mem;
 
 long O3_CPU::operate()
 {
@@ -615,6 +618,11 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
 
+  if (data_packet.cap.is_cap_instr || data_packet.cap.tag)
+    champsim::cap_mem[this->cpu].store_capability(data_packet.v_address, data_packet.cap);
+
+  else champsim::cap_mem[this->cpu].invalidate_tag(data_packet.v_address);
+
   return L1D_bus.issue_write(data_packet);
 }
 
@@ -854,6 +862,7 @@ bool CacheBus::issue_write(request_type data_packet)
   data_packet.cpu = cpu;
   data_packet.type = access_type::WRITE;
   data_packet.response_requested = false;
+
 
   return lower_level->add_wq(data_packet);
 }
