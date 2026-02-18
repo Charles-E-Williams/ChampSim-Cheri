@@ -150,25 +150,31 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
 
-  int index = CACHE::BLOCK::get_capability_index(mshr.address);
-  bool line_has_capability = (mshr.cap.tag == 1) || (mshr.cap.is_cap_instr == true);
-  
-
-  if (line_has_capability) { 
-    to_fill.capability_tags[index] = true;
-  } 
   
   champsim::address block_base{mshr.address.to<uint64_t>() & champsim::OFFSET_MASK_64B};
-  for (int i = 0; i < 4; i++) { // Four capabilities can be in a cache line
-    if (to_fill.capability_tags[i]) continue;
-
+  for (int i = 0; i < 4; i++) { 
     champsim::address index_addr{block_base.to<uint64_t>() + (i * 16)};
+    
+    // Load tag from the "Perfect Tag Memory" (Ground Truth)
     auto capability = champsim::cap_mem[mshr.cpu].load_capability(index_addr);
+    
     if (capability.has_value() && capability->tag) {
       to_fill.capability_tags[i] = true;
+    } else {
+      to_fill.capability_tags[i] = false;
     }
   }
 
+
+  if (mshr.type == access_type::WRITE) {
+    int index = BLOCK::get_capability_index(mshr.address);
+    
+    // Check if the NEW data being written has a tag
+    bool new_data_is_cap = (mshr.cap.tag == 1); 
+
+    // Explicitly OVERWRITE the tag at this index
+    to_fill.capability_tags[index] = new_data_is_cap;
+  }
   return to_fill;
 }
 
@@ -221,7 +227,7 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
 
-    int wb_index = CACHE::BLOCK::get_capability_index(way->address);
+    int wb_index = BLOCK::get_capability_index(way->address);
     if (way->capability_tags[wb_index]) {
       auto cap_opt = champsim::cap_mem[cpu].load_capability(way->address);
       if (cap_opt.has_value()) {
@@ -295,6 +301,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   if (should_activate_prefetcher(handle_pkt)) {
+    last_access_cap = handle_pkt.cap;
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
   }
 
@@ -306,7 +313,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    int index = CACHE::BLOCK::get_capability_index(handle_pkt.address);
+    int index = BLOCK::get_capability_index(handle_pkt.address);
     champsim::capability response_cap;
     if (way->capability_tags[index]) {
       auto cap_opt = champsim::cap_mem[cpu].load_capability(handle_pkt.address);
@@ -838,6 +845,29 @@ std::vector<double> occupancy_ratio_vec(std::vector<std::size_t> occ, std::vecto
   return retval;
 }
 } // namespace
+
+bool CACHE::has_cap(champsim::address addr) const {
+    auto [begin, end] = get_set_span(addr);
+    auto way = std::find_if(begin, end, matches_address(addr));
+    if (way == end || !way->valid)
+        return false;
+    int cap_index = BLOCK::get_capability_index(addr);
+    return way->capability_tags[cap_index];
+}
+
+champsim::capability CACHE::get_capability(champsim::address addr) const {
+    auto [begin, end] = get_set_span(addr);
+    auto way = std::find_if(begin, end, matches_address(addr));
+    if (way == end || !way->valid)
+        return champsim::capability{};
+    int cap_index = BLOCK::get_capability_index(addr);
+    if (!way->capability_tags[cap_index])
+        return champsim::capability{};
+    auto cap_opt = champsim::cap_mem[cpu].load_capability(addr);
+    if (cap_opt.has_value())
+        return cap_opt.value();
+    return champsim::capability{};
+}
 
 double CACHE::get_mshr_occupancy_ratio() const { return ::occupancy_ratio(get_mshr_occupancy(), get_mshr_size()); }
 

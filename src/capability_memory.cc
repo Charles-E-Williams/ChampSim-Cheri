@@ -15,6 +15,8 @@
  */
 
 #include "capability_memory.h"
+#include "msl/cheri_utils.h"
+
 #include <iostream>
 
 namespace champsim {
@@ -33,6 +35,8 @@ void capability_memory::store_capability(champsim::address addr, const capabilit
   
   uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
   if (cap.tag) {
+    // std::cout << "store_cap addr=0x" << std::hex << addr.to<uint64_t>() << " ";
+    // cheri::print_raw_cap(cap);
     cap_map[index] = cap;
   } else {
     cap_map.erase(index);

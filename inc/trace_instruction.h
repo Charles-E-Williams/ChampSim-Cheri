@@ -67,7 +67,7 @@ struct cloudsuite_instr {
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 
-struct cheri_instr { // 94 bytes
+struct cheri_instr { // 94 bytes, 96 with padding
   // instruction pointer or PC (Program Counter)
   unsigned long long ip;
 
@@ -85,7 +85,7 @@ struct cheri_instr { // 94 bytes
   unsigned long long base; 
   unsigned long long length;
   unsigned long long offset;
-  unsigned short permissions;
+  unsigned permissions;
   unsigned char tag;
   unsigned char is_cap_instr;
 };
