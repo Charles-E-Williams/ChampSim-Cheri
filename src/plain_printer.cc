@@ -119,11 +119,46 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     lines.push_back(fmt::format("cpu{}->{} PREFETCH REQUESTED: {:10} ISSUED: {:10} USEFUL: {:10} USELESS: {:10}", cpu, stats.name, stats.pf_requested,
                                 stats.pf_issued, stats.pf_useful, stats.pf_useless));
 
+
+    auto print_distribution = [&](const char* cap_label,
+        const champsim::stats::event_counter<cap_dist_key>& counter,
+        access_type type, const char* hitmiss_label) 
+    {
+      long total = 0;
+      for (auto coverage_events : cap_size_coverage_events_with_nocap) {
+        total += counter.value_or(cap_dist_key{coverage_events, type, cpu}, 0L);
+      }
+
+      if (total == 0)
+        return;
+
+      std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+      lines.push_back(fmt::format("cpu{}->{} {} DISTRIBUTION ({} {})",
+        cpu, stats.name, cap_label, type_name, hitmiss_label));
+      lines.push_back(fmt::format("----------------------------------------------------------------------"));
+
+      for (auto coverage_events : cap_size_coverage_events_with_nocap) {
+        auto coverage_events_idx = static_cast<std::size_t>(coverage_events);
+        long count = counter.value_or(cap_dist_key{coverage_events, type, cpu}, 0L);
+        double pct = (total > 0) ? (100.0 * static_cast<double>(count) / static_cast<double>(total)) : 0.0;
+        lines.push_back(fmt::format("  {:<12s}: {:5.1f}% ({:d})",
+        cap_size_coverage_events_names.at(coverage_events_idx), pct, count));
+      }
+
+      lines.push_back(fmt::format("----------------------------------------------------------------------"));
+    };
+
+      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE}) {
+        print_distribution("AUTHORIZING CAPABILITY", stats.cap_auth_hits, type, "HIT");
+        print_distribution("AUTHORIZING CAPABILITY", stats.cap_auth_misses, type, "MISS");
+        print_distribution("CAPABILITY PAYLOAD", stats.cap_data_hits, type, "HIT");
+        print_distribution("CAPABILITY PAYLOAD", stats.cap_data_misses, type, "MISS");
+      }
+      
     uint64_t total_downstream_demands = total_mshr_return - stats.mshr_return.value_or(std::pair{access_type::PREFETCH, cpu}, mshr_return_value_type{});
     lines.push_back(
         fmt::format("cpu{}->{} AVERAGE MISS LATENCY: {} cycles", cpu, stats.name, ::print_ratio(stats.total_miss_latency_cycles, total_downstream_demands)));
   }
-
   return lines;
 }
 

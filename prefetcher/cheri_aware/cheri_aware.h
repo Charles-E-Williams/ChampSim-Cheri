@@ -1,4 +1,3 @@
-// cheri_aware.h
 #ifndef PREFETCHER_CHERI_H
 #define PREFETCHER_CHERI_H
 

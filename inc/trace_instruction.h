@@ -87,7 +87,7 @@ struct cheri_instr { // 94 bytes, 96 with padding
   unsigned long long offset;
   unsigned permissions;
   unsigned char tag;
-  unsigned char is_cap_instr;
+  unsigned char cap_op;
 };
 
 #endif

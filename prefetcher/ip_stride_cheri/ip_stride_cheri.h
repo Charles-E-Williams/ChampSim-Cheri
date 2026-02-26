@@ -35,17 +35,22 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
 
   constexpr static std::size_t TRACKER_SETS = 256;
   constexpr static std::size_t TRACKER_WAYS = 4;
-  constexpr static int PREFETCH_DEGREE = 3;
+  constexpr static int PREFETCH_DEGREE = 32;
 
   std::optional<lookahead_entry> active_lookahead;
   champsim::msl::lru_table<tracker_entry> table{TRACKER_SETS, TRACKER_WAYS};
 
-  std::optional<champsim::capability> get_curr_capability() const;
+  std::optional<champsim::capability> get_auth_capability() const;
+  int compute_adaptive_degree(champsim::block_number cl_addr,
+                              champsim::block_number::difference_type stride,
+                              const champsim::capability& cap) const;
 
   uint64_t stride_prefetches_issued = 0;
   uint64_t stride_prefetches_bounded = 0;
   uint64_t cap_lookups = 0;
   uint64_t cap_hits = 0;
+  uint64_t degree_adapted_count = 0;   
+  uint64_t degree_full_count = 0;    
 
 public:
   using champsim::modules::prefetcher::prefetcher;

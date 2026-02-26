@@ -150,31 +150,6 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
 
-  
-  champsim::address block_base{mshr.address.to<uint64_t>() & champsim::OFFSET_MASK_64B};
-  for (int i = 0; i < 4; i++) { 
-    champsim::address index_addr{block_base.to<uint64_t>() + (i * 16)};
-    
-    // Load tag from the "Perfect Tag Memory" (Ground Truth)
-    auto capability = champsim::cap_mem[mshr.cpu].load_capability(index_addr);
-    
-    if (capability.has_value() && capability->tag) {
-      to_fill.capability_tags[i] = true;
-    } else {
-      to_fill.capability_tags[i] = false;
-    }
-  }
-
-
-  if (mshr.type == access_type::WRITE) {
-    int index = BLOCK::get_capability_index(mshr.address);
-    
-    // Check if the NEW data being written has a tag
-    bool new_data_is_cap = (mshr.cap.tag == 1); 
-
-    // Explicitly OVERWRITE the tag at this index
-    to_fill.capability_tags[index] = new_data_is_cap;
-  }
   return to_fill;
 }
 
@@ -227,12 +202,9 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
 
-    int wb_index = BLOCK::get_capability_index(way->address);
-    if (way->capability_tags[wb_index]) {
-      auto cap_opt = champsim::cap_mem[cpu].load_capability(way->address);
-      if (cap_opt.has_value()) {
-        writeback_packet.cap = cap_opt.value();
-      }
+    auto cap_opt = champsim::cap_mem[cpu].load_capability(way->address);
+    if (cap_opt.has_value()) {
+      writeback_packet.cap = cap_opt.value();
     }
 
 
@@ -301,7 +273,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   if (should_activate_prefetcher(handle_pkt)) {
-    last_access_cap = handle_pkt.cap;
+    auth_capability = handle_pkt.cap;
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
   }
 
@@ -313,15 +285,16 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    int index = BLOCK::get_capability_index(handle_pkt.address);
     champsim::capability response_cap;
-    if (way->capability_tags[index]) {
-      auto cap_opt = champsim::cap_mem[cpu].load_capability(handle_pkt.address);
-      if (cap_opt.has_value()) {
-        response_cap = cap_opt.value();
-      }
+    auto cap_opt = champsim::cap_mem[cpu].load_capability(handle_pkt.address);
+    if (cap_opt.has_value()) {
+      response_cap = cap_opt.value();
     }
 
+      auto auth_coverage_events = classify_capability(handle_pkt.cap);
+      sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
+      auto cap_data_coverage_events = classify_capability(response_cap);
+      sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
     
     response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, 
                           response_cap, handle_pkt.instr_depend_on_me};
@@ -330,17 +303,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
-  
-    if (handle_pkt.type == access_type::WRITE && (handle_pkt.cap.tag || handle_pkt.cap.is_cap_instr)) {
-      way->capability_tags[index] = true;
-            
-      if constexpr (champsim::debug_print) {
-        fmt::print("[{}] {} write hit set capability tag at {:#x} index {}\n", 
-                   NAME, __func__, handle_pkt.address.to<uint64_t>(), index);
-      }
-    }
-    
-
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
@@ -427,7 +389,15 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   }
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+  auto auth_coverage_events = classify_capability(handle_pkt.cap);
+  sim_stats.cap_auth_misses.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
 
+  cap_size_coverage_events cap_data_coverage_events = cap_size_coverage_events::NO_CAP;
+  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.address);
+  if (cap_opt.has_value()) 
+      cap_data_coverage_events = classify_capability(cap_opt.value());
+  sim_stats.cap_data_misses.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+  
   return true;
 }
 
@@ -444,7 +414,14 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   inflight_writes.push_back(to_allocate);
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+  auto auth_coverage_events = classify_capability(handle_pkt.cap);
+  sim_stats.cap_auth_misses.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
 
+  cap_size_coverage_events data_coverage_events = cap_size_coverage_events::NO_CAP;
+  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.address);
+  if (cap_opt.has_value())
+    data_coverage_events = classify_capability(cap_opt.value());
+  sim_stats.cap_data_misses.increment(cap_dist_key{data_coverage_events, handle_pkt.type, handle_pkt.cpu});
   return true;
 }
 
@@ -628,7 +605,6 @@ long CACHE::invalidate_entry(champsim::address inval_addr)
 
   if (inv_way != end) {
     inv_way->valid = false;
-    inv_way->capability_tags.fill(false);
   }
 
   return std::distance(begin, inv_way);
@@ -846,29 +822,6 @@ std::vector<double> occupancy_ratio_vec(std::vector<std::size_t> occ, std::vecto
 }
 } // namespace
 
-bool CACHE::has_cap(champsim::address addr) const {
-    auto [begin, end] = get_set_span(addr);
-    auto way = std::find_if(begin, end, matches_address(addr));
-    if (way == end || !way->valid)
-        return false;
-    int cap_index = BLOCK::get_capability_index(addr);
-    return way->capability_tags[cap_index];
-}
-
-champsim::capability CACHE::get_capability(champsim::address addr) const {
-    auto [begin, end] = get_set_span(addr);
-    auto way = std::find_if(begin, end, matches_address(addr));
-    if (way == end || !way->valid)
-        return champsim::capability{};
-    int cap_index = BLOCK::get_capability_index(addr);
-    if (!way->capability_tags[cap_index])
-        return champsim::capability{};
-    auto cap_opt = champsim::cap_mem[cpu].load_capability(addr);
-    if (cap_opt.has_value())
-        return cap_opt.value();
-    return champsim::capability{};
-}
-
 double CACHE::get_mshr_occupancy_ratio() const { return ::occupancy_ratio(get_mshr_occupancy(), get_mshr_size()); }
 
 std::vector<double> CACHE::get_rq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_rq_occupancy(), get_rq_size()); }
@@ -962,6 +915,11 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useful = sim_stats.pf_useful;
   roi_stats.pf_useless = sim_stats.pf_useless;
   roi_stats.pf_fill = sim_stats.pf_fill;
+
+  roi_stats.cap_auth_hits = sim_stats.cap_auth_hits;
+  roi_stats.cap_auth_misses = sim_stats.cap_auth_misses;
+  roi_stats.cap_data_hits = sim_stats.cap_data_hits;
+  roi_stats.cap_data_misses = sim_stats.cap_data_misses;
 
   for (auto* ul : upper_levels) {
     ul->roi_stats.RQ_ACCESS = ul->sim_stats.RQ_ACCESS;

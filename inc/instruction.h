@@ -108,7 +108,7 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
   champsim::capability cap{};
-  bool is_cap_instr = false;
+  uint8_t cap_op = 0;
 
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};
@@ -214,7 +214,7 @@ public:
     champsim::address{instr.length},
     instr.permissions,
     (bool)instr.tag,
-    (bool)instr.is_cap_instr
+   static_cast<champsim::cap_op_type>(instr.cap_op)
   }) {}
 
   [[nodiscard]] std::size_t num_mem_ops() const { return std::size(destination_memory) + std::size(source_memory); }

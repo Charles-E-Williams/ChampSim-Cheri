@@ -20,14 +20,22 @@
 
 namespace champsim 
 {
+
+    enum class cap_op_type : uint8_t {
+        NONE = 0,
+        AUTH_CAP,
+        MEM_CAP,
+        ARITH
+    };
+
     struct capability {
 
-        champsim::address offset{};
-        champsim::address base{};
-        champsim::address length{}; 
+        champsim::address offset{0};
+        champsim::address base{0};
+        champsim::address length{0}; 
         uint32_t permissions = 0;
         bool tag = false;
-        bool is_cap_instr = false;
+        cap_op_type cap_op{cap_op_type::NONE};
     };
 }
 #endif

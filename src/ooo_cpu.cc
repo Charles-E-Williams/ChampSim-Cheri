@@ -618,7 +618,7 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
 
-  if (data_packet.cap.is_cap_instr || data_packet.cap.tag)
+  if (data_packet.cap.cap_op == champsim::cap_op_type::MEM_CAP)
     champsim::cap_mem[this->cpu].store_capability(data_packet.v_address, data_packet.cap);
 
   else champsim::cap_mem[this->cpu].invalidate_tag(data_packet.v_address);

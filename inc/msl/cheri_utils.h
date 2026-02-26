@@ -128,7 +128,8 @@ inline void print_cap(const champsim::capability& cap)
             << " offset=0x" << cap.offset.to<uint64_t>()
             << " perms=0x" << cap.permissions
             << " tag=" << cap.tag
-            << std::dec << std::endl;
+            << " cap_op=" << static_cast<uint32_t>(cap.cap_op)
+            << std::dec << "\n";
 }
 
 } // namespace cheri

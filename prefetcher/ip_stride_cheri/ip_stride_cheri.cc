@@ -6,17 +6,35 @@
 
 #include "cache.h"
 
-std::optional<champsim::capability> ip_stride_cheri::get_curr_capability() const
+std::optional<champsim::capability> ip_stride_cheri::get_auth_capability() const
 {
-  // The cache stashes the current request's capability in last_access_cap
-  // just before calling the prefetcher. This is the capability that the
-  // instruction used to authorise its memory access — its bounds define
-  // the legal address range for that pointer.
-  const auto& cap = intern_->last_access_cap;
-  if (!cap.tag)
+  const auto& cap = intern_->auth_capability;
+  if (!cap.tag || cap.cap_op != champsim::cap_op_type::AUTH_CAP)
     return std::nullopt;
   
   return cap;
+}
+
+
+int ip_stride_cheri::compute_adaptive_degree(champsim::block_number cl_addr,
+                                             champsim::block_number::difference_type stride,
+                                             const champsim::capability& cap) const
+{
+  // How many cache lines lie between the current position and the
+  // capability bound in the direction we're striding?
+  int direction = (stride > 0) ? 1 : -1;
+  int remaining = cheri::remaining_lines(cl_addr, direction,
+                                         cap.base, cheri::capability_top(cap));
+
+  // Each prefetch covers |stride| cache lines of distance, so the
+  // maximum useful degree is remaining / |stride|.
+  int abs_stride = static_cast<int>(std::abs(stride));
+  int max_useful = (abs_stride > 0) ? (remaining / abs_stride) : 0;
+
+  // Clamp to [1, PREFETCH_DEGREE].  We always attempt at least 1 so the
+  // bounds check in cycle_operate can decide; if even that one is out of
+  // bounds it will be caught there.
+  return std::clamp(max_useful, 1, PREFETCH_DEGREE);
 }
 
 void ip_stride_cheri::prefetcher_initialize()
@@ -25,6 +43,8 @@ void ip_stride_cheri::prefetcher_initialize()
   stride_prefetches_bounded = 0;
   cap_lookups = 0;
   cap_hits = 0;
+  degree_adapted_count = 0;
+  degree_full_count = 0;
 }
 
 uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch,
@@ -33,7 +53,8 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
   champsim::block_number cl_addr{addr};
   champsim::block_number::difference_type stride = 0;
 
-  auto cap = get_curr_capability();
+  auto cap = get_auth_capability();
+
   cap_lookups++;
   if (cap.has_value())
     cap_hits++;
@@ -43,8 +64,22 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
   if (found.has_value()) {
     stride = champsim::offset(found->last_cl_addr, cl_addr);
 
-    if (stride != 0 && stride == found->last_stride)
-      active_lookahead = {champsim::address{cl_addr}, stride, PREFETCH_DEGREE, cap};
+    if (stride != 0 && stride == found->last_stride) {
+      int degree = PREFETCH_DEGREE;
+
+      if (cap.has_value()) {
+        degree = compute_adaptive_degree(cl_addr, stride, *cap);
+
+        if (degree < PREFETCH_DEGREE)
+          degree_adapted_count++;
+        else
+          degree_full_count++;
+      } else {
+        degree_full_count++;
+      }
+
+      active_lookahead = {champsim::address{cl_addr}, stride, degree, cap};
+    }
   }
 
   table.fill({ip, cl_addr, stride});
@@ -101,4 +136,11 @@ void ip_stride_cheri::prefetcher_final_stats()
   std::cout << "  CHERI cap hits:              " << cap_hits << std::endl;
   if (cap_lookups > 0)
     std::cout << "  CHERI cap hit rate:          " << (100.0 * static_cast<double>(cap_hits) / static_cast<double>(cap_lookups)) << "%" << std::endl;
+  std::cout << "  Degree full (== " << PREFETCH_DEGREE << "):          " << degree_full_count << std::endl;
+  std::cout << "  Degree adapted (< " << PREFETCH_DEGREE << "):        " << degree_adapted_count << std::endl;
+  if (degree_full_count + degree_adapted_count > 0) {
+    double adapt_pct = 100.0 * static_cast<double>(degree_adapted_count)
+                     / static_cast<double>(degree_full_count + degree_adapted_count);
+    std::cout << "  Degree adaptation rate:      " << adapt_pct << "%" << std::endl;
+  }
 }

@@ -23,9 +23,6 @@
 namespace champsim
 {
 
-constexpr uint64_t OFFSET_MASK_16B = ~0xFULL; 
-constexpr uint64_t OFFSET_MASK_64B = ~0x3FULL; 
-
 struct cache_block {
   bool valid = false;
   bool prefetch = false;
@@ -37,10 +34,6 @@ struct cache_block {
 
   uint32_t pf_metadata = 0;
   
-  std::array<bool, 4> capability_tags{false, false, false, false};
-  static constexpr int get_capability_index(champsim::address addr) {
-    return (addr.to<uint64_t>() >> 4) & 0x3;
-  }
 };
 } // namespace champsim
 
