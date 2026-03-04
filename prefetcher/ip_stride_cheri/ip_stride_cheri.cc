@@ -9,7 +9,7 @@
 std::optional<champsim::capability> ip_stride_cheri::get_auth_capability() const
 {
   const auto& cap = intern_->auth_capability;
-  if (!cap.tag || cap.cap_op != champsim::cap_op_type::AUTH_CAP)
+  if (!cap.tag)
     return std::nullopt;
   
   return cap;

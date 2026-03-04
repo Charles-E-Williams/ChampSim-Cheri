@@ -201,13 +201,9 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     writeback_packet.type = access_type::WRITE;
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
+    writeback_packet.cap = champsim::cap_mem[cpu].load_capability(way->v_address).value_or(champsim::capability{});
 
-    auto cap_opt = champsim::cap_mem[cpu].load_capability(way->address);
-    if (cap_opt.has_value()) {
-      writeback_packet.cap = cap_opt.value();
-    }
-
-
+    
     if constexpr (champsim::debug_print) {
       fmt::print("[{}] {} evict address: {} v_address: {} prefetch_metadata: {}\n", NAME, __func__, writeback_packet.address, writeback_packet.v_address,
                  fill_mshr.data_promise->pf_metadata);
@@ -285,16 +281,14 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
-    champsim::capability response_cap;
-    auto cap_opt = champsim::cap_mem[cpu].load_capability(handle_pkt.address);
-    if (cap_opt.has_value()) {
-      response_cap = cap_opt.value();
-    }
+    champsim::capability response_cap = champsim::cap_mem[cpu]
+                                    .load_capability(handle_pkt.v_address)
+                                    .value_or(champsim::capability{});
 
-      auto auth_coverage_events = classify_capability(handle_pkt.cap);
-      sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
-      auto cap_data_coverage_events = classify_capability(response_cap);
-      sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+    auto auth_coverage_events = classify_capability(handle_pkt.cap);
+    sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
+    auto cap_data_coverage_events = classify_capability(response_cap);
+    sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
     
     response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, 
                           response_cap, handle_pkt.instr_depend_on_me};
@@ -389,14 +383,14 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   }
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
-  auto auth_coverage_events = classify_capability(handle_pkt.cap);
-  sim_stats.cap_auth_misses.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
+  sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  cap_size_coverage_events cap_data_coverage_events = cap_size_coverage_events::NO_CAP;
-  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.address);
-  if (cap_opt.has_value()) 
-      cap_data_coverage_events = classify_capability(cap_opt.value());
-  sim_stats.cap_data_misses.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+  sim_stats.cap_data_misses.increment(cap_dist_key{
+    cap_opt ? classify_capability(*cap_opt) : cap_size_coverage_events::NO_CAP, 
+    handle_pkt.type, 
+    handle_pkt.cpu
+  });
   
   return true;
 }
@@ -414,14 +408,14 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   inflight_writes.push_back(to_allocate);
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
-  auto auth_coverage_events = classify_capability(handle_pkt.cap);
-  sim_stats.cap_auth_misses.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
+  sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  cap_size_coverage_events data_coverage_events = cap_size_coverage_events::NO_CAP;
-  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.address);
-  if (cap_opt.has_value())
-    data_coverage_events = classify_capability(cap_opt.value());
-  sim_stats.cap_data_misses.increment(cap_dist_key{data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+  sim_stats.cap_data_misses.increment(cap_dist_key{
+      cap_opt ? classify_capability(*cap_opt) : cap_size_coverage_events::NO_CAP, 
+      handle_pkt.type, 
+      handle_pkt.cpu
+  });
   return true;
 }
 

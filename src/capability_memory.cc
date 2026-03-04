@@ -21,7 +21,6 @@
 
 namespace champsim {
 
-// Define the global capability memory vector
 std::vector<capability_memory> cap_mem;
 
 void initialize_capability_memory(size_t num_cpus) {
@@ -31,8 +30,8 @@ void initialize_capability_memory(size_t num_cpus) {
 
 void capability_memory::store_capability(champsim::address addr, const capability& cap) {  
   uint64_t index = addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
-  std::cout << "store_cap addr=0x" << std::hex << addr.to<uint64_t>() << " ";
-  cheri::print_cap(cap);
+  // std::cout << "store_cap addr=0x" << std::hex << addr.to<uint64_t>() << " ";
+  // cheri::print_cap(cap);
   if (cap.tag) {
     cap_map[index] = cap;
   } else {
