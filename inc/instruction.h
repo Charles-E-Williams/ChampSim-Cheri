@@ -107,8 +107,11 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
-  champsim::capability cap{};
-  uint8_t cap_op = 0;
+  
+  champsim::capability auth_cap{};
+  champsim::capability transferred_cap{};
+  champsim::cap_op_type cap_op{champsim::cap_op_type::NONE};
+  bool is_presimpoint = false;
 
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};
@@ -135,7 +138,10 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
 private:
   template <typename T>
-  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid, champsim::capability capability) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid), cap(capability)
+  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid, champsim::capability auth, champsim::capability transferred, champsim::cap_op_type op)
+      : ip(instr.ip), is_branch(instr.is_branch), asid(local_asid),
+        auth_cap(auth), transferred_cap(transferred), cap_op(op),
+        is_presimpoint(champsim::is_presimpoint(op))
   {
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
@@ -206,16 +212,25 @@ private:
   }
 
 public:
-  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}, champsim::capability{}) {}
-  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}, champsim::capability{}) {}
-  ooo_model_instr(uint8_t cpu, cheri_instr instr) : ooo_model_instr(instr, {cpu,cpu}, champsim::capability{
-    champsim::address{instr.offset},
-    champsim::address{instr.base},
-    champsim::address{instr.length},
-    instr.permissions,
-    (bool)instr.tag,
-   static_cast<champsim::cap_op_type>(instr.cap_op)
-  }) {}
+  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}, champsim::capability{}, champsim::capability{}, champsim::cap_op_type::NONE) {}
+  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}, champsim::capability{}, champsim::capability{}, champsim::cap_op_type::NONE) {}
+  ooo_model_instr(uint8_t cpu, cheri_instr instr) : ooo_model_instr(instr, {cpu,cpu}, 
+          champsim::capability{
+              champsim::address{instr.auth_offset},
+              champsim::address{instr.auth_base},
+              champsim::address{instr.auth_length},
+              instr.auth_perms,
+              static_cast<bool>(instr.auth_tag)
+          },
+          champsim::capability{
+              champsim::address{instr.cap_offset},
+              champsim::address{instr.cap_base},
+              champsim::address{instr.cap_length},
+              instr.cap_perms,
+              static_cast<bool>(instr.cap_tag)
+          },
+          static_cast<champsim::cap_op_type>(instr.cap_op)
+  ) {}
 
   [[nodiscard]] std::size_t num_mem_ops() const { return std::size(destination_memory) + std::size(source_memory); }
 };

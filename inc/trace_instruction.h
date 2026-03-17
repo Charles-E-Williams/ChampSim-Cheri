@@ -67,7 +67,7 @@ struct cloudsuite_instr {
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
 
-struct cheri_instr { // 94 bytes, 96 with padding
+struct cheri_instr {
   // instruction pointer or PC (Program Counter)
   unsigned long long ip;
 
@@ -81,12 +81,21 @@ struct cheri_instr { // 94 bytes, 96 with padding
   unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
   unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
 
-  // cheri capability metadata
-  unsigned long long base; 
-  unsigned long long length;
-  unsigned long long offset;
-  unsigned permissions;
-  unsigned char tag;
+  // Authorizing capability
+  unsigned long long auth_base;
+  unsigned long long auth_length;
+  unsigned long long auth_offset;
+  unsigned auth_perms;
+  unsigned char auth_tag;
+
+  // Transferred capability (cap load/store payload)
+  unsigned long long cap_base;
+  unsigned long long cap_length;
+  unsigned long long cap_offset;
+  unsigned cap_perms;
+  unsigned char cap_tag;
+
+  // What's present (bitmask)
   unsigned char cap_op;
 };
 

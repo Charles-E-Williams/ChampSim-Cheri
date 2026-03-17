@@ -515,7 +515,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
   for (auto& smem : instr.source_memory) {
     auto q_entry = std::find_if_not(std::begin(LQ), std::end(LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
     assert(q_entry != std::end(LQ));
-    q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.cap); // add it to the load queue
+    q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.auth_cap, instr.transferred_cap); // add it to the load queue
 
 
     // Check for forwarding
@@ -540,7 +540,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
 
   // store
   for (auto& dmem : instr.destination_memory) {
-    SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid, instr.cap); // add it to the store queue
+    SQ.emplace_back(dmem, instr.instr_id, instr.ip, instr.asid, instr.auth_cap, instr.transferred_cap); // add it to the store queue
   }
 
   if constexpr (champsim::debug_print) {
@@ -612,16 +612,16 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.v_address = sq_entry.virtual_address;
   data_packet.instr_id = sq_entry.instr_id;
   data_packet.ip = sq_entry.ip;
-  data_packet.cap = sq_entry.cap;
+  data_packet.cap = sq_entry.auth_cap;  
 
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
 
-  if (data_packet.cap.cap_op == champsim::cap_op_type::MEM_CAP)
-    champsim::cap_mem[this->cpu].store_capability(data_packet.v_address, data_packet.cap);
-
-  else champsim::cap_mem[this->cpu].invalidate_tag(data_packet.v_address);
+  if (sq_entry.transferred_cap.tag)
+    champsim::cap_mem[this->cpu].store_capability(data_packet.v_address, sq_entry.transferred_cap);
+  else
+    champsim::cap_mem[this->cpu].invalidate_tag(data_packet.v_address);
 
   return L1D_bus.issue_write(data_packet);
 }
@@ -632,8 +632,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.v_address = lq_entry.virtual_address;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
-  data_packet.cap = lq_entry.cap;
-    
+  data_packet.cap = lq_entry.auth_cap;   
 
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -819,8 +818,11 @@ LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY
 {
 }
 
-LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id, champsim::address local_ip, std::array<uint8_t, 2> local_asid, champsim::capability cap_)
-    : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip), asid(local_asid), cap(cap_)
+LSQ_ENTRY::LSQ_ENTRY(champsim::address addr, champsim::program_ordered<LSQ_ENTRY>::id_type id,
+                     champsim::address local_ip, std::array<uint8_t, 2> local_asid,
+                     champsim::capability auth, champsim::capability transferred)
+    : champsim::program_ordered<LSQ_ENTRY>{id}, virtual_address(addr), ip(local_ip),
+      asid(local_asid), auth_cap(auth), transferred_cap(transferred)
 {
 }
 

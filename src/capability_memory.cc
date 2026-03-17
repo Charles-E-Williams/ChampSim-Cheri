@@ -15,7 +15,7 @@
  */
 
 #include "capability_memory.h"
-#include "msl/cheri_utils.h"
+#include "cheri_utils.h"
 
 #include <iostream>
 

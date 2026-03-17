@@ -212,6 +212,7 @@ public:
   [[nodiscard]] std::vector<std::size_t> get_pq_size() const;
   [[nodiscard]] std::vector<double> get_pq_occupancy_ratio() const;
 
+  [[nodiscard]] champsim::capability get_authorizing_capability() const;
 
   [[deprecated("Use get_set_index() instead.")]] [[nodiscard]] uint64_t get_set(uint64_t address) const;
   [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;

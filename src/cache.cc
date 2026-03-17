@@ -268,8 +268,9 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   }
 
   auto metadata_thru = handle_pkt.pf_metadata;
+  auth_capability = handle_pkt.cap;
+
   if (should_activate_prefetcher(handle_pkt)) {
-    auth_capability = handle_pkt.cap;
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
   }
 
@@ -385,9 +386,9 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
   sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+  auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{
-    cap_opt ? classify_capability(*cap_opt) : cap_size_coverage_events::NO_CAP, 
+    capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::NO_CAP, 
     handle_pkt.type, 
     handle_pkt.cpu
   });
@@ -410,9 +411,9 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
   sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+  auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{
-      cap_opt ? classify_capability(*cap_opt) : cap_size_coverage_events::NO_CAP, 
+      capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::NO_CAP, 
       handle_pkt.type, 
       handle_pkt.cpu
   });
@@ -823,6 +824,8 @@ std::vector<double> CACHE::get_rq_occupancy_ratio() const { return ::occupancy_r
 std::vector<double> CACHE::get_wq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_wq_occupancy(), get_wq_size()); }
 
 std::vector<double> CACHE::get_pq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_pq_occupancy(), get_pq_size()); }
+
+champsim::capability CACHE::get_authorizing_capability() const {return auth_capability;}
 
 void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetcher_initialize(); }
 
