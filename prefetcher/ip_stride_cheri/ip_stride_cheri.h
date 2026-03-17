@@ -1,10 +1,10 @@
-#ifndef IP_STRIDE_CHERI_H
-#define IP_STRIDE_CHERI_H
+#ifndef PREFETCHER_IP_STRIDE_CHERI_H
+#define PREFETCHER_IP_STRIDE_CHERI_H
 
 #include <cstdint>
 #include <optional>
 
-#include "msl/cheri_utils.h"
+#include "cheri_utils.h"
 #include "modules.h"
 #include "msl/lru_table.h"
 

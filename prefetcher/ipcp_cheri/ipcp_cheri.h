@@ -1,0 +1,102 @@
+#ifndef IPCP_CHERI_H
+#define IPCP_CHERI_H
+
+#include "champsim.h"
+#include "ipcp_cheri_vars.h"
+#include "modules.h"
+#include "cheri_utils.h"
+
+class IP_TABLE_L1_CHERI
+{
+public:
+  uint64_t ip_tag;
+  uint64_t last_page;        // last page seen by IP (used in fallback mode)
+  int64_t last_cl_offset;    // last cl offset -- page-relative in fallback, cap-relative when cap valid
+  int64_t last_stride;       // last delta observed
+  uint16_t ip_valid;         // valid IP or not
+  int conf;                  // CS confidence
+  uint16_t signature;        // CPLX signature
+  uint16_t str_dir;          // stream direction
+  uint16_t str_valid;        // stream valid
+  uint16_t str_strength;     // stream strength
+
+  // CHERI capability context for this IP
+  uint64_t cap_base;
+  uint64_t cap_length;
+  bool cap_valid;             // true if last access had a valid AUTH_CAP
+
+  IP_TABLE_L1_CHERI()
+  {
+    ip_tag = 0;
+    last_page = 0;
+    last_cl_offset = 0;
+    last_stride = 0;
+    ip_valid = 0;
+    signature = 0;
+    conf = 0;
+    str_dir = 0;
+    str_valid = 0;
+    str_strength = 0;
+    cap_base = 0;
+    cap_length = 0;
+    cap_valid = false;
+  };
+};
+
+class DELTA_PRED_TABLE_CHERI
+{
+public:
+  int delta;
+  int conf;
+
+  DELTA_PRED_TABLE_CHERI()
+  {
+    delta = 0;
+    conf = 0;
+  };
+};
+
+struct ipcp_cheri : public champsim::modules::prefetcher {
+private:
+  IP_TABLE_L1_CHERI trackers_l1[NUM_IP_TABLE_L1_ENTRIES];
+  DELTA_PRED_TABLE_CHERI DPT_l1[4096];
+  uint64_t ghb_l1[NUM_GHB_ENTRIES];
+  int64_t prev_cpu_cycle;
+  uint64_t num_misses;
+  float mpkc = {0};
+  int spec_nl = {0};
+
+  // CHERI statistics
+  uint64_t stat_cap_lookups = 0;
+  uint64_t stat_cap_hits = 0;
+  uint64_t stat_cap_offset_used = 0;     // times cap-relative offset was used
+  uint64_t stat_page_offset_fallback = 0; // times page-relative offset was used
+  uint64_t stat_page_cross_eliminated = 0; // page-cross adjustments avoided via cap
+  uint64_t stat_pf_bounded_by_cap = 0;   // prefetches clipped by capability bounds
+  uint64_t stat_pf_issued_cs = 0;
+  uint64_t stat_pf_issued_cplx = 0;
+  uint64_t stat_pf_issued_stream = 0;
+  uint64_t stat_pf_issued_nl = 0;
+
+  uint16_t update_sig_l1(uint16_t old_sig, int delta);
+  uint32_t encode_metadata(int stride, uint16_t type, int spec_nl);
+  void check_for_stream_l1(int index, uint64_t cl_addr);
+  int update_conf(int stride, int pred_stride, int conf);
+
+  // CHERI helpers
+  std::optional<champsim::capability> get_auth_capability() const;
+  bool is_valid_auth_cap(const champsim::capability& cap) const;
+
+public:
+  using champsim::modules::prefetcher::prefetcher;
+
+  void prefetcher_initialize();
+  uint32_t prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit,
+                                    bool useful_prefetch, access_type type, uint32_t metadata_in);
+  uint32_t prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch,
+                                 champsim::address evicted_addr, uint32_t metadata_in);
+  void prefetcher_cycle_operate();
+  void prefetcher_final_stats();
+};
+
+#endif
