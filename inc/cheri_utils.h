@@ -45,7 +45,10 @@ inline champsim::address capability_top(const champsim::capability& cap)
 
   uint64_t base = cap.base.to<uint64_t>();
   uint64_t length = cap.length.to<uint64_t>();
-  return champsim::address{ (length == UINT64_MAX) ? UINT64_MAX : (base + length) };
+  if (length == UINT64_MAX || (base > (UINT64_MAX - length))) 
+    return champsim::address{UINT64_MAX};
+
+  return champsim::address{base + length};
 }
 
 // True pointer/memory capability: tag is set
@@ -73,13 +76,14 @@ inline bool in_bounds(champsim::address addr, champsim::address base, champsim::
 }
 
 // Check if a cache line falls within [base, top)
-inline bool in_bounds(champsim::block_number block, champsim::address base, champsim::address top)
+inline bool overlaps_bounds(champsim::block_number block, champsim::address base, champsim::address top)
 {
   uint64_t block_start = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
   uint64_t block_end   = block_start + BLOCK_SIZE;
 
   return (block_start < top.to<uint64_t>()) && (block_end > base.to<uint64_t>());
 }
+
 // Compute remaining cache lines from addr to the capability bound in the given direction.
 // Returns 0 if already at or past the bound.
 inline int remaining_lines(champsim::block_number block, int direction,
@@ -98,8 +102,33 @@ inline int remaining_lines(champsim::block_number block, int direction,
   }
 }
 
+//computes the cache-line offset with respect to the capability 
+inline int lines_from_cap_base(champsim::address addr, const champsim::capability& cap)
+{
+  int64_t byte_offset = static_cast<int64_t>(addr.to<uint64_t>())
+                      - static_cast<int64_t>(cap.base.to<uint64_t>());
+  return static_cast<int>(byte_offset >> LOG2_BLOCK_SIZE);
+}
+
+// Objects spanning at most one cache line have nothing useful to prefetch.
+inline bool is_prefetchable(const champsim::capability& cap)
+{
+  return cap.length.to<uint64_t>() > BLOCK_SIZE;
+}
+
+inline uint64_t hash_capability(const champsim::capability& cap)
+{
+  uint64_t b = cap.base.to<uint64_t>();
+  uint64_t l = cap.length.to<uint64_t>();
+  uint64_t h = b ^ (l << 3) ^ (l >> 7);
+  h ^= (h >> 16);
+  h ^= (h >> 8);
+  return h;
+}
+
 inline bool prefetch_safe(champsim::address pf_addr, const champsim::capability& cap)
 {
+  if (!is_tag_valid(cap)) return false;
   if (has_seal(cap.permissions)) return false;
 
   return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load(cap.permissions);

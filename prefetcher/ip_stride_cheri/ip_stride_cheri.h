@@ -8,7 +8,22 @@
 #include "modules.h"
 #include "msl/lru_table.h"
 
+#define KB *1024 
+
 struct ip_stride_cheri : public champsim::modules::prefetcher {
+
+  struct cap_entry {
+    uint64_t cap_hash{};                    // capability index 
+    int64_t  last_offset_accessed{};        // most recent offset accessed 
+    int64_t  last_offset_prefetched{};      // most recent offset prefetched 
+    int64_t  last_stride{};                 // last observed stride
+    uint16_t access_count{};                // accesses seen 
+    uint8_t  confidence{};                  // stride confidence (0-3)
+ 
+    auto index() const { return cap_hash; }
+    auto tag() const { return cap_hash; }
+  };
+
   struct tracker_entry {
     champsim::address ip{};
     champsim::block_number last_cl_addr{};
@@ -33,24 +48,32 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     std::optional<champsim::capability> cap{};
   };
 
-  constexpr static std::size_t TRACKER_SETS = 256;
-  constexpr static std::size_t TRACKER_WAYS = 4;
-  constexpr static int PREFETCH_DEGREE = 32;
+  constexpr static std::size_t CAP_TABLE_SETS = 256;
+  constexpr static std::size_t CAP_TABLE_WAYS = 4;
 
+  constexpr static std::size_t IP_TABLE_SETS = 256;
+  constexpr static std::size_t IP_TABLE_WAYS = 4;
+
+  constexpr static int PREFETCH_DEGREE = 4;
+  constexpr static uint16_t PREFETCH_THRESHOLD = 2;
+  constexpr static uint8_t CONFIDENCE_THRESHOLD = 1;
+  constexpr static uint8_t MAX_CONFIDENCE = 3;
+
+  
+  champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
+  champsim::msl::lru_table<tracker_entry> ip_table{IP_TABLE_SETS, IP_TABLE_WAYS};
   std::optional<lookahead_entry> active_lookahead;
-  champsim::msl::lru_table<tracker_entry> table{TRACKER_SETS, TRACKER_WAYS};
-
-  std::optional<champsim::capability> get_auth_capability() const;
-  int compute_adaptive_degree(champsim::block_number cl_addr,
-                              champsim::block_number::difference_type stride,
-                              const champsim::capability& cap) const;
-
-  uint64_t stride_prefetches_issued = 0;
-  uint64_t stride_prefetches_bounded = 0;
-  uint64_t cap_lookups = 0;
-  uint64_t cap_hits = 0;
-  uint64_t degree_adapted_count = 0;   
-  uint64_t degree_full_count = 0;    
+ 
+  uint64_t cap_prefetches_issued{};
+  uint64_t cap_prefetches_bounded{};
+  uint64_t ip_prefetches_issued{};
+  uint64_t cap_table_hits{};
+  uint64_t cap_table_misses{};
+  uint64_t cap_accesses{};
+  uint64_t nocap_accesses{};
+  uint64_t threshold_filtered{};
+  uint64_t confidence_filtered{};
+  uint64_t category1_filtered{};   
 
 public:
   using champsim::modules::prefetcher::prefetcher;
