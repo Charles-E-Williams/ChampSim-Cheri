@@ -148,6 +148,7 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.address = mshr.address;
   to_fill.v_address = mshr.v_address;
   to_fill.data = mshr.data_promise->data;
+  to_fill.auth_cap = mshr.cap;
   to_fill.pf_metadata = metadata;
 
   return to_fill;
@@ -195,13 +196,14 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
     writeback_packet.cpu = fill_mshr.cpu;
     writeback_packet.address = way->address;
+    writeback_packet.v_address = way->v_address;
     writeback_packet.data = way->data;
     writeback_packet.instr_id = fill_mshr.instr_id;
     writeback_packet.ip = champsim::address{};
     writeback_packet.type = access_type::WRITE;
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
-    writeback_packet.cap = champsim::cap_mem[cpu].load_capability(way->v_address).value_or(champsim::capability{});
+    writeback_packet.cap = way->auth_cap;
 
     
     if constexpr (champsim::debug_print) {
@@ -298,6 +300,9 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
+    if (handle_pkt.type == access_type::WRITE) {
+      way->auth_cap = handle_pkt.cap;
+    }
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
