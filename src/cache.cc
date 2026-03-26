@@ -299,8 +299,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       ret->push_back(response);
     }
 
-    way->dirty |= (handle_pkt.type == access_type::WRITE);
     if (handle_pkt.type == access_type::WRITE) {
+      way->dirty = true;
       way->auth_cap = handle_pkt.cap;
     }
 
