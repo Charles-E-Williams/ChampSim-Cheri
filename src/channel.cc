@@ -51,7 +51,9 @@ bool do_collision_for_merge(Iter begin, Iter end, champsim::channel::request_typ
 {
   return do_collision_for(begin, end, packet, shamt, [](champsim::channel::request_type& source, champsim::channel::request_type& destination) {
     destination.response_requested |= source.response_requested;
-    destination.cap = source.response_requested ? source.cap : destination.cap;
+    if (source.response_requested) {
+      destination.cap = source.cap;
+    }
     auto instr_copy = std::move(destination.instr_depend_on_me);
 
     std::set_union(std::begin(instr_copy), std::end(instr_copy), std::begin(source.instr_depend_on_me), std::end(source.instr_depend_on_me),
