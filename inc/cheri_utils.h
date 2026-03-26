@@ -25,9 +25,6 @@ constexpr uint32_t PERM_UNSEAL                    = (1u << 9);
 constexpr uint32_t PERM_ACCESS_SYSTEM_REGISTERS   = (1u << 10);
 constexpr uint32_t PERM_SET_CID                   = (1u << 11);
 
-// ============================================================================
-// Permission checks
-// ============================================================================
 
 inline bool has_load(uint32_t perms)     { return (perms & PERM_LOAD) != 0; }
 inline bool has_store(uint32_t perms)    { return (perms & PERM_STORE) != 0; }
@@ -46,14 +43,13 @@ inline champsim::address capability_cursor(const champsim::capability& cap)
 inline champsim::address capability_top(const champsim::capability& cap)
 {
 
-  if (cap.length.to<uint64_t>() == UINT64_MAX)
-    return champsim::address{UINT64_MAX};
-
-  return champsim::address{cap.base.to<uint64_t>() + cap.length.to<uint64_t>()};
+  uint64_t base = cap.base.to<uint64_t>();
+  uint64_t length = cap.length.to<uint64_t>();
+  return champsim::address{ (length == UINT64_MAX) ? UINT64_MAX : (base + length) };
 }
 
 // True pointer/memory capability: tag is set
-inline bool is_pointer_cap(const champsim::capability& cap)
+inline bool is_tag_valid(const champsim::capability& cap)
 {
   return cap.tag;
 }
@@ -70,55 +66,44 @@ inline bool is_integer_cap(const champsim::capability& cap)
   return !cap.tag && capability_cursor(cap).to<uint64_t>() != 0;
 }
 
-// ============================================================================
-// Bounds checks
-// ============================================================================
-
 // Check if an address falls within [base, top)
 inline bool in_bounds(champsim::address addr, champsim::address base, champsim::address top)
 {
   return (addr.to<uint64_t>() >= base.to<uint64_t>()) && (addr.to<uint64_t>() < top.to<uint64_t>());
 }
 
-// Check if a block number (cache-line granularity) falls within [base, top)
+// Check if a cache line falls within [base, top)
 inline bool in_bounds(champsim::block_number block, champsim::address base, champsim::address top)
 {
-  uint64_t addr = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
-  return (addr >= base.to<uint64_t>()) && (addr < top.to<uint64_t>());
-}
+  uint64_t block_start = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
+  uint64_t block_end   = block_start + BLOCK_SIZE;
 
+  return (block_start < top.to<uint64_t>()) && (block_end > base.to<uint64_t>());
+}
 // Compute remaining cache lines from addr to the capability bound in the given direction.
 // Returns 0 if already at or past the bound.
 inline int remaining_lines(champsim::block_number block, int direction,
                            champsim::address base, champsim::address top)
 {
-  uint64_t addr = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
-  uint64_t lower_bound = base.to<uint64_t>();
-  uint64_t upper_bound = top.to<uint64_t>();
+  if (base.to<uint64_t>() >= top.to<uint64_t>()) return 0;
+
+  uint64_t current_blk = block.to<uint64_t>();
+  uint64_t base_blk    = base.to<uint64_t>() >> LOG2_BLOCK_SIZE;
+  uint64_t top_blk     = (top.to<uint64_t>() - 1) >> LOG2_BLOCK_SIZE; 
 
   if (direction > 0) {
-    if (addr >= upper_bound) return 0;
-    return static_cast<int>((upper_bound - addr) >> LOG2_BLOCK_SIZE);
+    return (current_blk >= top_blk) ? 0 : static_cast<int>(top_blk - current_blk);
   } else {
-    if (addr < lower_bound) return 0;
-    return static_cast<int>((addr - lower_bound) >> LOG2_BLOCK_SIZE);
+    return (current_blk <= base_blk) ? 0 : static_cast<int>(current_blk - base_blk);
   }
 }
 
-// ============================================================================
-// Combined safety check for prefetching
-// A prefetch is safe if the target is in bounds and the capability
-// grants read permission (PERMIT_LOAD).
-// ============================================================================
-
 inline bool prefetch_safe(champsim::address pf_addr, const champsim::capability& cap)
 {
+  if (has_seal(cap.permissions)) return false;
+
   return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load(cap.permissions);
 }
-
-// ============================================================================
-// Debug printing
-// ============================================================================
 
 inline void print_cap(const champsim::capability& cap)
 {
