@@ -15,9 +15,7 @@ void ip_stride_cheri::prefetcher_initialize()
   cap_table_misses = 0;
   cap_accesses = 0;
   nocap_accesses = 0;
-  threshold_filtered = 0;
-  confidence_filtered = 0;
-  category1_filtered = 0;
+  too_small_filtered = 0;
 }
 
 uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
@@ -30,54 +28,35 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
  
     // Skip single-element objects (too small to prefetch into)
     if (!cheri::is_prefetchable(cap)) {
-      category1_filtered++;
+      too_small_filtered++;
       return metadata_in;
     }
  
     uint64_t ch = cheri::hash_capability(cap);
     int64_t current_offset = cheri::lines_from_cap_base(addr, cap);
  
-    auto found = cap_table.check_hit({ch, current_offset, 0, 0, 0, 0});
+    auto found = cap_table.check_hit({ch, current_offset, 0, 0});
  
     if (found.has_value()) {
       cap_table_hits++;
  
       int64_t stride = current_offset - found->last_offset_accessed;
-      uint16_t new_count = (found->access_count < 64 KB)
-                         ? static_cast<uint16_t>(found->access_count + 1)
-                         : static_cast<uint16_t>(64 KB);
- 
-      uint8_t new_conf = found->confidence;
-      if (stride != 0) {
-        if (stride == found->last_stride) {
-          new_conf = (new_conf < MAX_CONFIDENCE)
-                   ? static_cast<uint8_t>(new_conf + 1)
-                   : MAX_CONFIDENCE;
-        } else {
-          new_conf = 0;
-        }
-      }
+
  
       if (stride != 0) {
-        if (new_count < PREFETCH_THRESHOLD) {
-          threshold_filtered++;
-        } else if (new_conf < CONFIDENCE_THRESHOLD) {
-          confidence_filtered++;
-        } else {
-          // Issue K prefetches at D stride, bounded by capability
-          active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
-        }
+        // Issue K prefetches at D stride, bounded by capability
+        active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
+        
       }
  
       // Update entry with current offset
       cap_table.fill({ch, current_offset, found->last_offset_prefetched,
-                       stride != 0 ? stride : found->last_stride,
-                       new_count, new_conf});
+                       stride != 0 ? stride : found->last_stride});
  
     } else {
       // First access through this capability -- seed the table
       cap_table_misses++;
-      cap_table.fill({ch, current_offset, 0, 0, 1, 0});
+      cap_table.fill({ch, current_offset, 0, 0});
     }
  
   } else { //fallback
@@ -149,10 +128,8 @@ uint32_t ip_stride_cheri::prefetcher_cache_fill(champsim::address addr, long set
 void ip_stride_cheri::prefetcher_final_stats()
 {
   std::cout << "\nip_stride_cheri final stats" << std::endl;
-  std::cout << "  --- Access classification ---" << std::endl;
   std::cout << "  Capability accesses:         " << cap_accesses << std::endl;
   std::cout << "  Non-capability accesses:     " << nocap_accesses << std::endl;
-  std::cout << "  --- Capability table ---" << std::endl;
   std::cout << "  Cap table hits:              " << cap_table_hits << std::endl;
   std::cout << "  Cap table misses:            " << cap_table_misses << std::endl;
   if (cap_table_hits + cap_table_misses > 0) {
@@ -160,11 +137,7 @@ void ip_stride_cheri::prefetcher_final_stats()
                     / static_cast<double>(cap_table_hits + cap_table_misses);
     std::cout << "  Cap table hit rate:          " << hit_rate << "%" << std::endl;
   }
-  std::cout << "  --- Filtering ---" << std::endl;
-  std::cout << "  Category 1 filtered:         " << category1_filtered << std::endl;
-  std::cout << "  Threshold filtered:          " << threshold_filtered << std::endl;
-  std::cout << "  Confidence filtered:         " << confidence_filtered << std::endl;
-  std::cout << "  --- Prefetch outcomes ---" << std::endl;
+  std::cout << "  Single-element object filtered prefetch:         " << too_small_filtered << std::endl;
   std::cout << "  Cap prefetches issued:       " << cap_prefetches_issued << std::endl;
   std::cout << "  Cap prefetches bounded:      " << cap_prefetches_bounded << std::endl;
   std::cout << "  IP fallback prefetches:      " << ip_prefetches_issued << std::endl;

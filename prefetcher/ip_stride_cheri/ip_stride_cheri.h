@@ -8,7 +8,6 @@
 #include "modules.h"
 #include "msl/lru_table.h"
 
-#define KB *1024 
 
 struct ip_stride_cheri : public champsim::modules::prefetcher {
 
@@ -17,8 +16,6 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     int64_t  last_offset_accessed{};        // most recent offset accessed 
     int64_t  last_offset_prefetched{};      // most recent offset prefetched 
     int64_t  last_stride{};                 // last observed stride
-    uint16_t access_count{};                // accesses seen 
-    uint8_t  confidence{};                  // stride confidence (0-3)
  
     auto index() const { return cap_hash; }
     auto tag() const { return cap_hash; }
@@ -55,10 +52,6 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
   constexpr static std::size_t IP_TABLE_WAYS = 4;
 
   constexpr static int PREFETCH_DEGREE = 4;
-  constexpr static uint16_t PREFETCH_THRESHOLD = 2;
-  constexpr static uint8_t CONFIDENCE_THRESHOLD = 1;
-  constexpr static uint8_t MAX_CONFIDENCE = 3;
-
   
   champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
   champsim::msl::lru_table<tracker_entry> ip_table{IP_TABLE_SETS, IP_TABLE_WAYS};
@@ -71,9 +64,7 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
   uint64_t cap_table_misses{};
   uint64_t cap_accesses{};
   uint64_t nocap_accesses{};
-  uint64_t threshold_filtered{};
-  uint64_t confidence_filtered{};
-  uint64_t category1_filtered{};   
+  uint64_t too_small_filtered{};   
 
 public:
   using champsim::modules::prefetcher::prefetcher;
