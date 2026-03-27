@@ -137,7 +137,7 @@ void ip_stride_cheri::prefetcher_final_stats()
                     / static_cast<double>(cap_table_hits + cap_table_misses);
     std::cout << "  Cap table hit rate:          " << hit_rate << "%" << std::endl;
   }
-  std::cout << "  Single-element object filtered prefetch:         " << too_small_filtered << std::endl;
+  std::cout << "  Single object filtered prefetch:         " << too_small_filtered << std::endl;
   std::cout << "  Cap prefetches issued:       " << cap_prefetches_issued << std::endl;
   std::cout << "  Cap prefetches bounded:      " << cap_prefetches_bounded << std::endl;
   std::cout << "  IP fallback prefetches:      " << ip_prefetches_issued << std::endl;

@@ -87,7 +87,8 @@ struct cache_stats {
   champsim::stats::event_counter<cap_dist_key> cap_data_hits = {};
   champsim::stats::event_counter<cap_dist_key> cap_data_misses = {};
 
-  champsim::stats::event_counter<cl_cap_key> capabilities_per_cl = {};
+  champsim::stats::event_counter<cl_cap_key> capabilities_per_cl_hit = {};
+  champsim::stats::event_counter<cl_cap_key> capabilities_per_cl_miss = {};
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);

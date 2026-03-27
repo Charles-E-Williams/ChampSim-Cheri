@@ -314,7 +314,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     // count number of capabilities seen in a cache line 
-    if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE) {
+    if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::PREFETCH) {
       uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
       unsigned count = 0;
       for (unsigned i = 0; i < 4; i++) {
@@ -322,7 +322,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
         if (cap_opt.has_value() && cap_opt->tag)
           count++;
       }
-      sim_stats.capabilities_per_cl.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
+      sim_stats.capabilities_per_cl_hit.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
     }
   }
 
@@ -413,6 +413,17 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
     handle_pkt.type, 
     handle_pkt.cpu
   });
+
+  if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE ||handle_pkt.type == access_type::PREFETCH) {
+    uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
+    unsigned count = 0;
+    for (unsigned i = 0; i < 4; i++) {
+      auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
+      if (cap_opt.has_value() && cap_opt->tag)
+        count++;
+    }
+    sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
+  }
   
   return true;
 }
@@ -439,6 +450,16 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
       handle_pkt.type, 
       handle_pkt.cpu
   });
+
+  uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
+  unsigned count = 0;
+  for (unsigned i = 0; i < 4; i++) {
+    auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
+    if (cap_opt.has_value() && cap_opt->tag)
+      count++;
+  }
+  sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
+  
   return true;
 }
 
@@ -943,7 +964,9 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.cap_auth_misses = sim_stats.cap_auth_misses;
   roi_stats.cap_data_hits = sim_stats.cap_data_hits;
   roi_stats.cap_data_misses = sim_stats.cap_data_misses;
-  roi_stats.capabilities_per_cl = sim_stats.capabilities_per_cl;
+  roi_stats.capabilities_per_cl_hit = sim_stats.capabilities_per_cl_hit;
+  roi_stats.capabilities_per_cl_miss = sim_stats.capabilities_per_cl_miss;
+
 
   for (auto* ul : upper_levels) {
     ul->roi_stats.RQ_ACCESS = ul->sim_stats.RQ_ACCESS;

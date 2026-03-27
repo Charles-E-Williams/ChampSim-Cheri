@@ -198,21 +198,20 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
         if (!has_cap(type, cpu))
           continue;
 
+        long hit_total = 0, miss_total = 0;
+        for (auto b : cap_size_coverage_events_with_untagged) {
+          hit_total  += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          miss_total += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+        }
+
+        if (hit_total + miss_total == 0)
+          continue;
+
         long tagged_hits = 0, tagged_misses = 0;
         for (auto b : cap_size_coverage_events_all) {
           tagged_hits   += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
           tagged_misses += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
         }
-
-        if (tagged_hits + tagged_misses == 0)
-          continue;
-
-        // Untagged payloads
-        long untagged_hits = stats.cap_data_hits.value_or(
-            cap_dist_key{cap_size_coverage_events::UNTAGGED, type, cpu}, 0L);
-        long untagged_misses = stats.cap_data_misses.value_or(
-            cap_dist_key{cap_size_coverage_events::UNTAGGED, type, cpu}, 0L);
-        long total_accesses = tagged_hits + tagged_misses + untagged_hits + untagged_misses;
 
         if (!any_cap_printed) {
           lines.emplace_back("");
@@ -221,15 +220,19 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
         }
 
         std::string type_name{access_type_names.at(champsim::to_underlying(type))};
-        double cap_pct = 100.0 * static_cast<double>(tagged_hits + tagged_misses) / static_cast<double>(total_accesses);
-
         lines.emplace_back("");
-        lines.push_back(fmt::format("  Capability — {} ({} tagged, {} untagged)", type_name, tagged_hits + tagged_misses, untagged_hits + untagged_misses));
-        lines.push_back(fmt::format("  {:.1f}% of {}s carried a tagged capability", cap_pct, type_name));
-        lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}", "Pointer Size", "% of Hits", "% of Misses"));
-        lines.push_back(fmt::format("  {:-<47s}", ""));
+        lines.push_back(fmt::format("  Capability — {} ({} hits, {} misses)", type_name, hit_total, miss_total));
+        double tagged_pct = (hit_total + miss_total > 0)
+            ? 100.0 * static_cast<double>(tagged_hits + tagged_misses) / static_cast<double>(hit_total + miss_total)
+            : 0.0;
+        lines.push_back(fmt::format("  Tagged Access Rate {:.1f}% ({} tagged, {} untagged)",
+            tagged_pct, tagged_hits + tagged_misses,
+            (hit_total + miss_total) - (tagged_hits + tagged_misses)));
+        lines.push_back(fmt::format("  {:<16s}  {:>10s} {:>11s}  {:>11s} {:>13s}",
+            "Pointer Size", "Hits", "Misses", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<73s}", ""));
 
-        for (auto b : cap_size_coverage_events_all) {
+        for (auto b : cap_size_coverage_events_with_untagged) {
           auto idx = static_cast<std::size_t>(b);
           long hit = stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
           long miss = stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
@@ -237,10 +240,12 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
           if (hit + miss == 0)
             continue;
 
-          lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}",
+          lines.push_back(fmt::format("  {:<16s} {:10d} {:11d} {:>11s}  {:>13s}",
               cap_size_coverage_events_names.at(idx),
-              pct_str(hit, tagged_hits),
-              pct_str(miss, tagged_misses)));
+              hit,
+              miss,
+              pct_str(hit, hit_total),
+              pct_str(miss, miss_total)));
         }
       }
       if (any_cap_printed)
@@ -254,27 +259,53 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
       }
       return false;
     };
+
     if (should_print_cl_caps(stats.name)) {
-      for (const auto type : {access_type::LOAD, access_type::WRITE}) {
-        uint64_t cl_accessed = 0;
-        std::array<uint64_t, 5> cl_cap_counts{};
+      for (const auto type : {access_type::LOAD, access_type::WRITE, access_type::PREFETCH}) {
+        uint64_t cl_hit_total = 0;
+        std::array<uint64_t, 5> cl_hit_counts{};
         for (unsigned i = 0; i <= 4; i++) {
-          cl_cap_counts[i] = stats.capabilities_per_cl.value_or(cl_cap_key{i, type, cpu}, 0L);
-          cl_accessed += cl_cap_counts[i];
+          cl_hit_counts[i] = stats.capabilities_per_cl_hit.value_or(cl_cap_key{i, type, cpu}, 0L);
+          cl_hit_total += cl_hit_counts[i];
         }
-        if (cl_accessed == 0)
+
+        uint64_t cl_miss_total = 0;
+        std::array<uint64_t, 5> cl_miss_counts{};
+        for (unsigned i = 0; i <= 4; i++) {
+          cl_miss_counts[i] = stats.capabilities_per_cl_miss.value_or(cl_cap_key{i, type, cpu}, 0L);
+          cl_miss_total += cl_miss_counts[i];
+        }
+
+        if (cl_hit_total == 0 && cl_miss_total == 0)
           continue;
 
         std::string type_name{access_type_names.at(champsim::to_underlying(type))};
         lines.emplace_back("");
-        double avg = static_cast<double>(
-            cl_cap_counts[1] + 2*cl_cap_counts[2] + 3*cl_cap_counts[3] + 4*cl_cap_counts[4])
-            / static_cast<double>(cl_accessed);
-        lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Hit (avg {:.2f})", type_name, avg));
-        for (unsigned i = 0; i <= 4; i++) {
-          if (cl_cap_counts[i] > 0)
-            lines.push_back(fmt::format("    {} capabilities: ({:5.1f}%)", i,
-                100.0 * static_cast<double>(cl_cap_counts[i]) / static_cast<double>(cl_accessed)));
+
+        if (cl_hit_total > 0) {
+          double avg_hit = static_cast<double>(
+              cl_hit_counts[1] + 2*cl_hit_counts[2] + 3*cl_hit_counts[3] + 4*cl_hit_counts[4])
+              / static_cast<double>(cl_hit_total);
+          lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Hit (avg {:.2f})", type_name, avg_hit));
+          for (unsigned i = 0; i <= 4; i++) {
+            if (cl_hit_counts[i] > 0)
+              lines.push_back(fmt::format("    {} capabilities: {:10d} ({:5.1f}%)", i,
+                  cl_hit_counts[i],
+                  100.0 * static_cast<double>(cl_hit_counts[i]) / static_cast<double>(cl_hit_total)));
+          }
+        }
+
+        if (cl_miss_total > 0) {
+          double avg_miss = static_cast<double>(
+              cl_miss_counts[1] + 2*cl_miss_counts[2] + 3*cl_miss_counts[3] + 4*cl_miss_counts[4])
+              / static_cast<double>(cl_miss_total);
+          lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Miss (avg {:.2f})", type_name, avg_miss));
+          for (unsigned i = 0; i <= 4; i++) {
+            if (cl_miss_counts[i] > 0)
+              lines.push_back(fmt::format("    {} capabilities: {:10d} ({:5.1f}%)", i,
+                  cl_miss_counts[i],
+                  100.0 * static_cast<double>(cl_miss_counts[i]) / static_cast<double>(cl_miss_total)));
+          }
         }
       }
       lines.emplace_back("");
