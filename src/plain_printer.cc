@@ -174,8 +174,8 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
         std::string type_name{access_type_names.at(champsim::to_underlying(type))};
         lines.emplace_back("");
         lines.push_back(fmt::format("  Authority Capability - {} ({} hits, {} misses)", type_name, hit_total, miss_total));
-        lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}", "Object Size", "% of Hits", "% of Misses"));
-        lines.push_back(fmt::format("  {:-<47s}", ""));
+        lines.push_back(fmt::format("  {:<16s}  {:>10s} {:>11s}  {:>11s} {:>13s}", "Object Size", "Hits", "Misses", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<73s}", ""));
 
         for (auto b : cap_size_coverage_events_with_untagged) {
           auto idx = static_cast<std::size_t>(b);
@@ -185,8 +185,10 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
           if (hit + miss == 0)
             continue;
 
-          lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}",
+          lines.push_back(fmt::format("  {:<16s} {:10d} {:11d} {:>11s}  {:>13s}",
               cap_size_coverage_events_names.at(idx),
+              hit,
+              miss,
               pct_str(hit, hit_total),
               pct_str(miss, miss_total)));
         }
