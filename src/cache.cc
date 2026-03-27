@@ -149,9 +149,7 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.v_address = mshr.v_address;
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
-
-  if (mshr.type == access_type::WRITE)
-    to_fill.auth_cap = mshr.cap;
+  to_fill.auth_cap = mshr.cap;
 
   return to_fill;
 }
@@ -303,10 +301,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
-    if (handle_pkt.type == access_type::WRITE) {
-        way->auth_cap = handle_pkt.cap; // update auth cap if the block is modified
-    }
-
+    way->auth_cap = handle_pkt.cap; // update auth cap if the block is modified
+   
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
       ++sim_stats.pf_useful;
