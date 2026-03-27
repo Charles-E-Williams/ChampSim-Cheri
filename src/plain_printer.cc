@@ -120,7 +120,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
                                 stats.pf_issued, stats.pf_useful, stats.pf_useless));
 
 
-// CHERI capability distributions — only for data-path caches/TLBs
+    // CHERI capability distributions — only for data-path caches/TLBs
     auto should_print_cheri = [](const std::string& name) {
       for (const auto* suffix : {"L1D", "L2C", "LLC", "DTLB", "STLB"}) {
         if (name.find(suffix) != std::string::npos)
@@ -131,8 +131,6 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
 
     if (should_print_cheri(stats.name)) {
 
-      constexpr long MIN_ACCESS_THRESHOLD = 100;
-
       auto has_auth_data = [&](access_type type, std::size_t cpu_id) {
         for (auto b : cap_size_coverage_events_all) {
           if (stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
@@ -141,7 +139,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
         return false;
       };
 
-      auto has_transferred_data = [&](access_type type, std::size_t cpu_id) {
+      auto has_cap = [&](access_type type, std::size_t cpu_id) {
         for (auto b : cap_size_coverage_events_all) {
           if (stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
           if (stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
@@ -150,115 +148,134 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
       };
 
       auto pct_str = [](long count, long total) -> std::string {
-        if (total == 0) return fmt::format("{:>5s} ", "-");
+        if (total == 0) return fmt::format("{:>6s}", "-");
         return fmt::format("{:5.1f}%", 100.0 * static_cast<double>(count) / static_cast<double>(total));
       };
 
       bool any_cap_printed = false;
 
-      // ---- Auth capability distribution (object sizes being accessed) ----
-      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE}) {
+      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE, access_type::TRANSLATION}) {
         if (!has_auth_data(type, cpu))
           continue;
 
         long hit_total = 0, miss_total = 0;
-        for (auto b : cap_size_coverage_events_with_nocap) {
+        for (auto b : cap_size_coverage_events_with_untagged) {
           hit_total  += stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
           miss_total += stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
         }
 
-        if (hit_total + miss_total < MIN_ACCESS_THRESHOLD)
-          continue;
 
         if (!any_cap_printed) {
           lines.emplace_back("");
-          lines.push_back(fmt::format("cpu{}->{} CHERI CAPABILITY DISTRIBUTIONS", cpu, stats.name));
+          lines.push_back(fmt::format("{} — CHERI Capability Distributions", stats.name));
           any_cap_printed = true;
         }
 
         std::string type_name{access_type_names.at(champsim::to_underlying(type))};
         lines.emplace_back("");
-        lines.push_back(fmt::format("  Auth Capability (object sizes) - {} {}", stats.name, type_name));
-        lines.push_back(fmt::format("  {:<12s}  {:>10s}  {:>10s}", "Size", "Hit", "Miss"));
-        lines.push_back(fmt::format("  {:-<38s}", ""));
+        lines.push_back(fmt::format("  Authority Capability - {} ({} hits, {} misses)", type_name, hit_total, miss_total));
+        lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}", "Object Size", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<47s}", ""));
 
-        for (auto b : cap_size_coverage_events_with_nocap) {
+        for (auto b : cap_size_coverage_events_with_untagged) {
           auto idx = static_cast<std::size_t>(b);
-          long h = stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
-          long m = stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long hit = stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long miss = stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
 
-          if (h + m == 0)
+          if (hit + miss == 0)
             continue;
 
-          lines.push_back(fmt::format("  {:<12s}  {:>10s}  {:>10s}",
+          lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}",
               cap_size_coverage_events_names.at(idx),
-              pct_str(h, hit_total),
-              pct_str(m, miss_total)));
+              pct_str(hit, hit_total),
+              pct_str(miss, miss_total)));
         }
-
-        lines.push_back(fmt::format("  {:-<38s}", ""));
-        lines.push_back(fmt::format("  {:<12s}  {:>10d}  {:>10d}", "Total", hit_total, miss_total));
       }
 
-      // ---- Transferred capability distribution (pointer payloads only) ----
       for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE}) {
-        if (!has_transferred_data(type, cpu))
+        if (!has_cap(type, cpu))
           continue;
 
-        // Compute totals excluding NO_CAP — only real capability payloads
-        long hit_total = 0, miss_total = 0;
+        long tagged_hits = 0, tagged_misses = 0;
         for (auto b : cap_size_coverage_events_all) {
-          hit_total  += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
-          miss_total += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+          tagged_hits   += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          tagged_misses += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
         }
 
-        if (hit_total + miss_total == 0)
+        if (tagged_hits + tagged_misses == 0)
           continue;
 
-        // Also grab NO_CAP counts for the summary line
-        long nocap_hits = stats.cap_data_hits.value_or(
-            cap_dist_key{cap_size_coverage_events::NO_CAP, type, cpu}, 0L);
-        long nocap_misses = stats.cap_data_misses.value_or(
-            cap_dist_key{cap_size_coverage_events::NO_CAP, type, cpu}, 0L);
-        long total_accesses = hit_total + miss_total + nocap_hits + nocap_misses;
+        // Untagged payloads
+        long untagged_hits = stats.cap_data_hits.value_or(
+            cap_dist_key{cap_size_coverage_events::UNTAGGED, type, cpu}, 0L);
+        long untagged_misses = stats.cap_data_misses.value_or(
+            cap_dist_key{cap_size_coverage_events::UNTAGGED, type, cpu}, 0L);
+        long total_accesses = tagged_hits + tagged_misses + untagged_hits + untagged_misses;
 
         if (!any_cap_printed) {
           lines.emplace_back("");
-          lines.push_back(fmt::format("cpu{}->{} CHERI CAPABILITY DISTRIBUTIONS", cpu, stats.name));
+          lines.push_back(fmt::format("{} — CHERI Capability Distributions", stats.name));
           any_cap_printed = true;
         }
 
         std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+        double cap_pct = 100.0 * static_cast<double>(tagged_hits + tagged_misses) / static_cast<double>(total_accesses);
+
         lines.emplace_back("");
-        lines.push_back(fmt::format("  Transferred Capability (pointer payloads) - {} {}", stats.name, type_name));
-        lines.push_back(fmt::format("  {:<12s}  {:>10s}  {:>10s}", "Size", "Hit", "Miss"));
-        lines.push_back(fmt::format("  {:-<38s}", ""));
+        lines.push_back(fmt::format("  Capability — {} ({} tagged, {} untagged)", type_name, tagged_hits + tagged_misses, untagged_hits + untagged_misses));
+        lines.push_back(fmt::format("  {:.1f}% of {}s carried a tagged capability", cap_pct, type_name));
+        lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}", "Pointer Size", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<47s}", ""));
 
         for (auto b : cap_size_coverage_events_all) {
           auto idx = static_cast<std::size_t>(b);
-          long h = stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
-          long m = stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long hit = stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long miss = stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
 
-          if (h + m == 0)
+          if (hit + miss == 0)
             continue;
 
-          lines.push_back(fmt::format("  {:<12s}  {:>10s}  {:>10s}",
+          lines.push_back(fmt::format("  {:<16s}  {:>11s}  {:>13s}",
               cap_size_coverage_events_names.at(idx),
-              pct_str(h, hit_total),
-              pct_str(m, miss_total)));
+              pct_str(hit, tagged_hits),
+              pct_str(miss, tagged_misses)));
         }
-
-        lines.push_back(fmt::format("  {:-<38s}", ""));
-        lines.push_back(fmt::format("  {:<12s}  {:>10d}  {:>10d}", "Capability", hit_total, miss_total));
-        lines.push_back(fmt::format("  {:<12s}  {:>10d}  {:>10d}", "Scalar",
-            nocap_hits, nocap_misses));
-
-        double cap_pct = 100.0 * static_cast<double>(hit_total + miss_total) / static_cast<double>(total_accesses);
-        lines.push_back(fmt::format("  Capability density: {:.1f}% of {} accesses", cap_pct, type_name));
       }
-
       if (any_cap_printed)
         lines.emplace_back("");
+    }
+
+    auto should_print_cl_caps = [](const std::string& name) {
+      for (const auto* suffix : {"L1D", "L2C", "LLC"}) {
+        if (name.find(suffix) != std::string::npos)
+          return true;
+      }
+      return false;
+    };
+    if (should_print_cl_caps(stats.name)) {
+      for (const auto type : {access_type::LOAD, access_type::WRITE}) {
+        uint64_t cl_accessed = 0;
+        std::array<uint64_t, 5> cl_cap_counts{};
+        for (unsigned i = 0; i <= 4; i++) {
+          cl_cap_counts[i] = stats.capabilities_per_cl.value_or(cl_cap_key{i, type, cpu}, 0L);
+          cl_accessed += cl_cap_counts[i];
+        }
+        if (cl_accessed == 0)
+          continue;
+
+        std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+        lines.emplace_back("");
+        double avg = static_cast<double>(
+            cl_cap_counts[1] + 2*cl_cap_counts[2] + 3*cl_cap_counts[3] + 4*cl_cap_counts[4])
+            / static_cast<double>(cl_accessed);
+        lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Hit (avg {:.2f})", type_name, avg));
+        for (unsigned i = 0; i <= 4; i++) {
+          if (cl_cap_counts[i] > 0)
+            lines.push_back(fmt::format("    {} capabilities: ({:5.1f}%)", i,
+                100.0 * static_cast<double>(cl_cap_counts[i]) / static_cast<double>(cl_accessed)));
+        }
+      }
+      lines.emplace_back("");
     }
 
     uint64_t total_downstream_demands = total_mshr_return - stats.mshr_return.value_or(std::pair{access_type::PREFETCH, cpu}, mshr_return_value_type{});

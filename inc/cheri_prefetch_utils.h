@@ -1,5 +1,5 @@
-#ifndef CHERI_UTILS_H
-#define CHERI_UTILS_H
+#ifndef CHERI_PREFETCH_UTILS_H
+#define CHERI_PREFETCH_UTILS_H
 
 #include <cstdint>
 #include <iostream>

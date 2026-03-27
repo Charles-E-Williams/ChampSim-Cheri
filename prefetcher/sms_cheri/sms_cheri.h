@@ -21,7 +21,7 @@
 #include "cheri.h"
 #include "modules.h"
 #include "sms_cheri_helper.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 
 struct sms_cheri : public champsim::modules::prefetcher {
 private:

@@ -24,7 +24,7 @@
 
 #include "champsim.h"
 #include "modules.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 #include "msl/lru_table.h"
 #include "capability_memory.h"
 #include "kratos_helper.h"

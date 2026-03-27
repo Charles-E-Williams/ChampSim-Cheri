@@ -31,6 +31,7 @@ struct cache_block {
   champsim::address address{};
   champsim::address v_address{};
   champsim::address data{};
+  champsim::capability auth_cap{};
 
   uint32_t pf_metadata = 0;
   

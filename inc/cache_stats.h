@@ -17,14 +17,14 @@ enum class cap_size_coverage_events : uint8_t {
   B_64KB_1MB,   // 64KB–1MB
   B_1MB_1GB,    // 1MB–1GB
   B_GT_1GB,     // > 1GB
-  NO_CAP,       // no valid capability present
+  UNTAGGED,      
   NUM_coverage_events
 };
 
-inline constexpr std::size_t NUM_CAP_SIZE_coverage_events = static_cast<std::size_t>(cap_size_coverage_events::NO_CAP);
+inline constexpr std::size_t NUM_CAP_SIZE_coverage_events = static_cast<std::size_t>(cap_size_coverage_events::UNTAGGED);
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(cap_size_coverage_events::NUM_coverage_events)> cap_size_coverage_events_names{{
-    "0-128B", "128B-4KB", "4KB-64KB", "64KB-1MB", "1MB-1GB", ">1GB", "NO_CAP"
+    "0-128B", "128B-4KB", "4KB-64KB", "64KB-1MB", "1MB-1GB", ">1GB", "UNTAGGED"
 }};
 
 inline constexpr std::array<cap_size_coverage_events, 6> cap_size_coverage_events_all{{
@@ -32,10 +32,10 @@ inline constexpr std::array<cap_size_coverage_events, 6> cap_size_coverage_event
     cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_1GB, cap_size_coverage_events::B_GT_1GB
 }};
 
-inline constexpr std::array<cap_size_coverage_events, 7> cap_size_coverage_events_with_nocap{{
+inline constexpr std::array<cap_size_coverage_events, 7> cap_size_coverage_events_with_untagged{{
     cap_size_coverage_events::B_0_128B, cap_size_coverage_events::B_128B_4KB, cap_size_coverage_events::B_4KB_64KB,
     cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_1GB, cap_size_coverage_events::B_GT_1GB,
-    cap_size_coverage_events::NO_CAP
+    cap_size_coverage_events::UNTAGGED
 }};
 
 inline cap_size_coverage_events classify_cap_size(uint64_t length)
@@ -56,14 +56,15 @@ inline cap_size_coverage_events classify_cap_size(uint64_t length)
 inline cap_size_coverage_events classify_capability(const champsim::capability& cap)
 {
   if (!cap.tag)
-    return cap_size_coverage_events::NO_CAP;
+    return cap_size_coverage_events::UNTAGGED;
   uint64_t len = cap.length.to<uint64_t>();
   if (len == 0)
-    return cap_size_coverage_events::NO_CAP;
+    return cap_size_coverage_events::UNTAGGED;
   return classify_cap_size(len);
 }
 
 using cap_dist_key = std::tuple<cap_size_coverage_events, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
+using cl_cap_key = std::tuple<unsigned, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
 
 struct cache_stats {
   std::string name;
@@ -85,6 +86,8 @@ struct cache_stats {
   champsim::stats::event_counter<cap_dist_key> cap_auth_misses = {};
   champsim::stats::event_counter<cap_dist_key> cap_data_hits = {};
   champsim::stats::event_counter<cap_dist_key> cap_data_misses = {};
+
+  champsim::stats::event_counter<cl_cap_key> capabilities_per_cl = {};
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);

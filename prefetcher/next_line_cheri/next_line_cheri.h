@@ -5,7 +5,7 @@
 
 #include "address.h"
 #include "modules.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 #include "cache.h"
 
 

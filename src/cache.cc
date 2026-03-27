@@ -150,6 +150,9 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
 
+  if (mshr.type == access_type::WRITE)
+    to_fill.auth_cap = mshr.cap;
+
   return to_fill;
 }
 
@@ -195,13 +198,14 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
     writeback_packet.cpu = fill_mshr.cpu;
     writeback_packet.address = way->address;
+    writeback_packet.v_address = way->v_address;
     writeback_packet.data = way->data;
     writeback_packet.instr_id = fill_mshr.instr_id;
     writeback_packet.ip = champsim::address{};
     writeback_packet.type = access_type::WRITE;
     writeback_packet.pf_metadata = way->pf_metadata;
     writeback_packet.response_requested = false;
-    writeback_packet.cap = champsim::cap_mem[cpu].load_capability(way->v_address).value_or(champsim::capability{});
+    writeback_packet.cap = way->auth_cap;
 
     
     if constexpr (champsim::debug_print) {
@@ -294,15 +298,30 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, 
                           response_cap, handle_pkt.instr_depend_on_me};
     for (auto* ret : handle_pkt.to_return) {
-      ret->push_back(response);
+      ret->push_back(response); 
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
+    if (handle_pkt.type == access_type::WRITE) {
+        way->auth_cap = handle_pkt.cap; // update auth cap if the block is modified
+    }
 
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
       ++sim_stats.pf_useful;
       way->prefetch = false;
+    }
+
+    // count number of capabilities seen in a cache line 
+    if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE) {
+      uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
+      unsigned count = 0;
+      for (unsigned i = 0; i < 4; i++) {
+        auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
+        if (cap_opt.has_value() && cap_opt->tag)
+          count++;
+      }
+      sim_stats.capabilities_per_cl.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
     }
   }
 
@@ -388,7 +407,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
 
   auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{
-    capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::NO_CAP, 
+    capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
     handle_pkt.type, 
     handle_pkt.cpu
   });
@@ -413,7 +432,7 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
 
   auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{
-      capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::NO_CAP, 
+      capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
       handle_pkt.type, 
       handle_pkt.cpu
   });
@@ -605,13 +624,11 @@ long CACHE::invalidate_entry(champsim::address inval_addr)
   return std::distance(begin, inv_way);
 }
 
-bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata, champsim::capability cap)
 {
   ++sim_stats.pf_requested;
-
-  if (std::size(internal_PQ) >= PQ_SIZE) {
+  if (std::size(internal_PQ) >= PQ_SIZE)
     return false;
-  }
 
   request_type pf_packet;
   pf_packet.type = access_type::PREFETCH;
@@ -620,11 +637,17 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
+  pf_packet.cap = cap;
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
-
   return true;
+}
+
+
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
+{
+  return prefetch_line(pf_addr, fill_this_level, prefetch_metadata, auth_capability);
 }
 
 // LCOV_EXCL_START exclude deprecated function
@@ -917,6 +940,7 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.cap_auth_misses = sim_stats.cap_auth_misses;
   roi_stats.cap_data_hits = sim_stats.cap_data_hits;
   roi_stats.cap_data_misses = sim_stats.cap_data_misses;
+  roi_stats.capabilities_per_cl = sim_stats.capabilities_per_cl;
 
   for (auto* ul : upper_levels) {
     ul->roi_stats.RQ_ACCESS = ul->sim_stats.RQ_ACCESS;

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <optional>
 
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 #include "modules.h"
 #include "msl/lru_table.h"
 

@@ -7,7 +7,7 @@
 
 #include "champsim.h"
 #include "modules.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 
 
 

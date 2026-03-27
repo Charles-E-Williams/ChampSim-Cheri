@@ -4,7 +4,7 @@
 #include "champsim.h"
 #include "ipcp_cheri_vars.h"
 #include "modules.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 
 class IP_TABLE_L1_CHERI
 {

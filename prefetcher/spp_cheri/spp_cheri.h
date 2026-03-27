@@ -7,7 +7,7 @@
 
 #include "cache.h"
 #include "modules.h"
-#include "cheri_utils.h"
+#include "cheri_prefetch_utils.h"
 #include "msl/lru_table.h"
 
 struct spp_cheri : public champsim::modules::prefetcher {
