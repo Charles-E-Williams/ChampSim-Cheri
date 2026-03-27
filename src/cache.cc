@@ -291,7 +291,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
                                     .value_or(champsim::capability{});
 
     auto auth_coverage_events = classify_capability(handle_pkt.cap);
-    sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
+    if (handle_pkt.cap.tag)
+      sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
     auto cap_data_coverage_events = classify_capability(response_cap);
     sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
     
@@ -403,7 +404,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   }
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
-  sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
+  if (handle_pkt.cap.tag)
+    sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
   auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{
@@ -428,7 +430,8 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   inflight_writes.push_back(to_allocate);
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
-  sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
+  if (handle_pkt.cap.tag)
+    sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
   auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
   sim_stats.cap_data_misses.increment(cap_dist_key{

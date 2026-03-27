@@ -615,6 +615,9 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.ip = sq_entry.ip;
   data_packet.cap = sq_entry.auth_cap;  
 
+  if(!data_packet.cap.tag) 
+    fmt::print("[OOO_CPU] WARNING: Store Instruction missing tagged authority capability. This is a problem with your trace.\n"); 
+
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
   }
@@ -633,7 +636,11 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.v_address = lq_entry.virtual_address;
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
-  data_packet.cap = lq_entry.auth_cap;   
+  data_packet.cap = lq_entry.auth_cap;  
+
+  if(!data_packet.cap.tag) 
+    fmt::print("[OOO_CPU] WARNING: Load Instruction missing tagged authority capability. This is a problem with your trace.\n"); 
+
 
   if constexpr (champsim::debug_print) {
     fmt::print("[LQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
