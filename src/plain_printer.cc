@@ -154,7 +154,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
 
       bool any_cap_printed = false;
 
-      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE, access_type::TRANSLATION}) {
+      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE, access_type::TRANSLATION} ) {
         if (!has_auth_data(type, cpu))
           continue;
 
