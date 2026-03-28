@@ -4,18 +4,6 @@
 
 #include "cache.h"
 
-// ============================================================================
-// CHERI helpers
-// ============================================================================
-
-std::optional<champsim::capability> berti_cheri::get_auth_capability() const
-{
-  const auto& cap = intern_->auth_capability;
-  if (!cap.tag)
-    return std::nullopt;
-  return cap;
-}
-
 uint64_t berti_cheri::compute_region_addr(uint64_t addr, bool cap_valid, uint64_t cap_base) const
 {
   if (cap_valid) return cap_base;
@@ -50,18 +38,18 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
  
   // ---- CHERI: extract capability metadata ----
-  auto cap_opt = get_auth_capability();
+  auto cap = intern_->get_authorizing_capability();
   stat_cap_lookups++;
  
   bool use_cap = false;
   uint64_t cap_base_val = 0;
   uint64_t cap_length_val = 0;
  
-  if (cap_opt.has_value()) {
+  if (cheri::is_tag_valid(cap)) {
     stat_cap_hits++;
     use_cap = true;
-    cap_base_val = cap_opt->base.to<uint64_t>();
-    cap_length_val = cap_opt->length.to<uint64_t>();
+    cap_base_val = cap.base.to<uint64_t>();
+    cap_length_val = cap.length.to<uint64_t>();
   }
  
   // ---- Compute region identity and offset ----
@@ -225,7 +213,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
                 bool in_bounds = true;
                 if (use_cap)
-                  in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, *cap_opt);
+                  in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
                 else
                   in_bounds = (intern_->virtual_prefetch || pf_page_addr == page_addr);
  
@@ -260,7 +248,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
                 bool in_bounds = true;
                 if (use_cap)
-                  in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, *cap_opt);
+                  in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
                 else
                   in_bounds = (intern_->virtual_prefetch || pf_page_addr == page_addr);
  
@@ -296,7 +284,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
  
               if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, pf_offset)) {
                 if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
-                  bool in_bounds = use_cap ? cheri::prefetch_safe(champsim::address{pf_addr}, *cap_opt)
+                  bool in_bounds = use_cap ? cheri::prefetch_safe(champsim::address{pf_addr}, cap)
                                            : (intern_->virtual_prefetch || pf_page_addr == page_addr);
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
@@ -323,7 +311,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
  
               if ((((uint64_t)1 << j) & u_vector) && !l1d_requested_offset_current_pages_table(index, pf_offset)) {
                 if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
-                  bool in_bounds = use_cap ? cheri::prefetch_safe(champsim::address{pf_addr}, *cap_opt)
+                  bool in_bounds = use_cap ? cheri::prefetch_safe(champsim::address{pf_addr}, cap)
                                            : (intern_->virtual_prefetch || pf_page_addr == page_addr);
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
@@ -358,7 +346,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
           && (!match_confidence || (((uint64_t)1 << pf_offset) & u_vector))) {
         bool in_bounds = true;
         if (use_cap)
-          in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, *cap_opt);
+          in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
         else
           in_bounds = (intern_->virtual_prefetch || pf_page_addr == page_addr);
  

@@ -4,19 +4,6 @@
 
 #include "cache.h"
 
-std::optional<champsim::capability> ipcp_cheri::get_auth_capability() const
-{
-  const auto& cap = intern_->auth_capability;
-  if (!cap.tag)
-    return std::nullopt;
-  return cap;
-}
-
-bool ipcp_cheri::is_valid_auth_cap(const champsim::capability& cap) const
-{
-  return cap.tag;
-}
-
 void ipcp_cheri::prefetcher_initialize()
 {
   std::cout << "IPCP_CHERI_AT_L1_CONFIG" << std::endl
@@ -47,17 +34,17 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   uint64_t curr_page = addr >> LOG2_PAGE_SIZE;
   uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
 
-  auto cap_opt = get_auth_capability();
+  auto cap = intern_->get_authorizing_capability();
   stat_cap_lookups++;
 
   bool use_cap = false;
   uint64_t cap_base_val = 0;
   uint64_t cap_length_val = 0;
 
-  if (cap_opt.has_value() && is_valid_auth_cap(*cap_opt)) {
+  if (cheri::is_tag_valid(cap)) {
     stat_cap_hits++;
-    cap_base_val = cap_opt->base.to<uint64_t>();
-    cap_length_val = cap_opt->length.to<uint64_t>();
+    cap_base_val = cap.base.to<uint64_t>();
+    cap_length_val = cap.length.to<uint64_t>();
     use_cap = true;
   }
 
@@ -128,7 +115,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     uint64_t pf_address = ((addr >> LOG2_BLOCK_SIZE) + 1) << LOG2_BLOCK_SIZE;
     // CHERI bounds check for NL prefetch
     if (use_cap) {
-      if (!cheri::prefetch_safe(champsim::address{pf_address}, *cap_opt)) {
+      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
         return 0;
       }
@@ -181,6 +168,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
         stride -= 64;
     }
   }
+
+  if (stride == 0)
+      return 0;
 
   // update constant stride(CS) confidence
   trackers_l1[index].conf = update_conf((int)stride, (int)trackers_l1[index].last_stride, trackers_l1[index].conf);
@@ -235,7 +225,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
       // Boundary check: CHERI bounds or same-page
       if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, *cap_opt)) {
+        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
           stat_pf_bounded_by_cap++;
           break;
         }
@@ -256,7 +246,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       uint64_t pf_address = (cl_addr + (trackers_l1[index].last_stride * (i + 1))) << LOG2_BLOCK_SIZE;
 
       if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, *cap_opt)) {
+        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
           stat_pf_bounded_by_cap++;
           break;
         }
@@ -280,7 +270,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
       // Boundary check: CHERI bounds or same-page
       if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, *cap_opt)) {
+        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
           stat_pf_bounded_by_cap++;
           break;
         }
@@ -310,7 +300,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
  
     bool nl_ok = true;
     if (use_cap) {
-      if (!cheri::prefetch_safe(champsim::address{pf_address}, *cap_opt)) {
+      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
         nl_ok = false;
       }

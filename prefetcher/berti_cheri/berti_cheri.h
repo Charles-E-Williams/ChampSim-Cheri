@@ -133,7 +133,6 @@ private:
   void l1d_record_current_page(uint64_t index_current);
 
   // CHERI helpers
-  std::optional<champsim::capability> get_auth_capability() const;
   uint64_t compute_region_addr(uint64_t addr, bool cap_valid, uint64_t cap_base) const;
   uint64_t compute_offset(uint64_t addr, bool cap_valid, uint64_t cap_base) const;
 

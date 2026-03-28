@@ -26,7 +26,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
   uint64_t addr = address.to<uint64_t>();
   uint64_t pc = ip.to<uint64_t>();
 
-  auto cap = get_auth_capability();
+  auto cap = intern_->get_authorizing_capability();
 
   // Decompose the demand into region identity + intra-region offset.
   // When a valid capability is available the region aligns to the object;

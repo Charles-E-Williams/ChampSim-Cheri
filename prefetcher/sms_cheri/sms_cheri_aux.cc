@@ -13,20 +13,7 @@
 
 #include "cache.h"
 
-// ============================================================================
-// Capability access
-// ============================================================================
 
-std::optional<champsim::capability> sms_cheri::get_auth_capability() const
-{
-  const auto& cap = intern_->auth_capability;
-
-  // Only accept tagged AUTH_CAP capabilities.
-  if (!cap.tag)
-    return std::nullopt;
-
-  return cap;
-}
 
 // ============================================================================
 // Region / offset decomposition
@@ -48,15 +35,15 @@ std::optional<champsim::capability> sms_cheri::get_auth_capability() const
 // ============================================================================
 
 sms_cheri::region_info
-sms_cheri::decompose(uint64_t pa, const std::optional<champsim::capability>& cap) const
+sms_cheri::decompose(uint64_t pa, const champsim::capability& cap) const
 {
   region_info ri{};
 
-  if (cap.has_value()) {
-    uint64_t cap_base = cap->base.to<uint64_t>();
-    uint64_t cap_len  = cap->length.to<uint64_t>();
+  if (cap.tag) {
+    uint64_t cap_base = cap.base.to<uint64_t>();
+    uint64_t cap_len  = cap.length.to<uint64_t>();
     uint64_t cap_top  = cap_base + cap_len;
-    uint64_t va       = cap_base + cap->offset.to<uint64_t>();
+    uint64_t va       = cap_base + cap.offset.to<uint64_t>();
 
     // Guard: VA must be >= cap_base (should always hold for a valid cap).
     if (va < cap_base) {

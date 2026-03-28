@@ -14,7 +14,6 @@
 #define __SMS_CHERI_H__
 
 #include <deque>
-#include <optional>
 #include <vector>
 
 #include "champsim.h"
@@ -46,8 +45,6 @@ private:
   std::vector<std::deque<PHTEntry*>> pht;
   std::deque<uint64_t> pref_buffer;
 
-  // ---- Capability access ----
-  std::optional<champsim::capability> get_auth_capability() const;
 
   // ---- Region / offset decomposition ----
   // Decomposes a demand into (region_id, offset, cap metadata) using
@@ -61,7 +58,7 @@ private:
     uint64_t demand_va_page;
     bool     has_cap;
   };
-  region_info decompose(uint64_t pa, const std::optional<champsim::capability>& cap) const;
+  region_info decompose(uint64_t pa, const champsim::capability& cap) const;
 
   // ---- Filter Table ----
   std::deque<FTEntry*>::iterator search_filter_table(uint64_t region_id);

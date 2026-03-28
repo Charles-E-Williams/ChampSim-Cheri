@@ -83,9 +83,6 @@ private:
   void check_for_stream_l1(int index, uint64_t cl_addr);
   int update_conf(int stride, int pred_stride, int conf);
 
-  // CHERI helpers
-  std::optional<champsim::capability> get_auth_capability() const;
-  bool is_valid_auth_cap(const champsim::capability& cap) const;
 
 public:
   using champsim::modules::prefetcher::prefetcher;

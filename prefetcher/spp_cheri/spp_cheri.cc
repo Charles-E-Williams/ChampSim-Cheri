@@ -1,15 +1,9 @@
 #include "spp_cheri.h"
 
+
 #include <cassert>
 #include <iostream>
 
-std::optional<champsim::capability> spp_cheri::get_auth_capability() const
-{
-  const auto& cap = intern_->auth_capability;
-  if (!cap.tag)
-    return std::nullopt;
-  return cap;
-}
 
 void spp_cheri::prefetcher_initialize()
 {
@@ -50,8 +44,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   confidence_q[0] = 100;
   GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued) : 0;
 
-  // ---- CHERI: extract capability metadata ----
-  auto cap_opt = get_auth_capability();
+  auto cap = intern_->get_authorizing_capability();
   stat_cap_lookups++;
 
   bool use_cap = false;
@@ -59,12 +52,12 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   uint64_t cap_length_val = 0;
   uint64_t cap_offset_val = 0;
 
-  if (cap_opt.has_value()) {
+  if (cap.tag) {
     stat_cap_hits++;
     use_cap = true;
-    cap_base_val = cap_opt->base.to<uint64_t>();
-    cap_length_val = cap_opt->length.to<uint64_t>();
-    cap_offset_val = cap_opt->offset.to<uint64_t>();
+    cap_base_val = cap.base.to<uint64_t>();
+    cap_length_val = cap.length.to<uint64_t>();
+    cap_offset_val = cap.offset.to<uint64_t>();
   }
 
   if constexpr (SPP_DEBUG_PRINT) {
@@ -518,7 +511,7 @@ void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confi
       delta[i] = pf_delta;
       return;
     }
-    if (confidence[i] < min_conf) {
+    if (confidence[i] <= min_conf) {
       min_conf = confidence[i];
       victim_way = i;
     }

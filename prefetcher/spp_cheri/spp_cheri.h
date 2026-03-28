@@ -211,9 +211,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
   uint64_t stat_pf_issued = 0;
   uint64_t stat_cross_page_in_cap = 0;  // cross-page deltas within same capability
 
-  // CHERI helpers
-  std::optional<champsim::capability> get_auth_capability() const;
-
   using prefetcher::prefetcher;
   void prefetcher_initialize();
   void prefetcher_cycle_operate();

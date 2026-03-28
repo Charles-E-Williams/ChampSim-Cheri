@@ -519,7 +519,7 @@ void spp_dev::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confide
 
     // GHR replacement policy is based on the stored confidence value
     // An entry with the lowest confidence is selected as a victim
-    if (confidence[i] < min_conf) {
+    if (confidence[i] <= min_conf) {
       min_conf = confidence[i];
       victim_way = i;
     }
