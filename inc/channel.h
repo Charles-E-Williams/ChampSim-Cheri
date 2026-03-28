@@ -34,24 +34,19 @@ namespace champsim
 
 struct cache_queue_stats {
   uint64_t RQ_ACCESS = 0;
-  uint64_t RQ_MERGED = 0;
   uint64_t RQ_FULL = 0;
   uint64_t RQ_TO_CACHE = 0;
   uint64_t PQ_ACCESS = 0;
-  uint64_t PQ_MERGED = 0;
   uint64_t PQ_FULL = 0;
   uint64_t PQ_TO_CACHE = 0;
   uint64_t WQ_ACCESS = 0;
-  uint64_t WQ_MERGED = 0;
   uint64_t WQ_FULL = 0;
   uint64_t WQ_TO_CACHE = 0;
-  uint64_t WQ_FORWARD = 0;
 };
 
 class channel
 {
   struct request {
-    bool forward_checked = false;
     bool is_translated = true;
     bool response_requested = true;
 
@@ -134,8 +129,6 @@ public:
   [[nodiscard]] std::size_t rq_size() const;
   [[nodiscard]] std::size_t wq_size() const;
   [[nodiscard]] std::size_t pq_size() const;
-
-  void check_collision();
 };
 } // namespace champsim
 
