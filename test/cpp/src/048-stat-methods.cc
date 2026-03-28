@@ -3,7 +3,7 @@
 #include "msl/stat_methods.h"
 
 TEST_CASE("A categorizer exhausts the full category space evenly") {
-  std::size_t sample_rate = GENERATE(4, 8, 16, 32,64);
+  std::size_t sample_rate = GENERATE(4, 8, 16, 32, 64);
   auto full_space_factor = 4;
   champsim::msl::categorizer<long> cat(sample_rate);
   std::vector<std::size_t> seen(static_cast<std::size_t>(sample_rate), 0);
@@ -139,5 +139,4 @@ TEST_CASE("Dueling counter predicts static values for sampled sets") {
     REQUIRE(dsc.decide(cat1_candidate) == false); //should always predict false for cat 1 candidate
     REQUIRE(dsc.decide(cat0_candidate) == true); //should always predict true for cat 0 candidate
 }
-
 
