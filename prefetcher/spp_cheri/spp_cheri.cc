@@ -173,10 +173,6 @@ uint32_t spp_cheri::prefetcher_cache_fill(champsim::address addr, long set, long
   return metadata_in;
 }
 
-// ============================================================================
-// Hash function (same as vanilla SPP)
-// ============================================================================
-
 uint64_t spp_cheri::get_hash(uint64_t key)
 {
   key += (key << 12);
@@ -191,17 +187,6 @@ uint64_t spp_cheri::get_hash(uint64_t key)
   return key;
 }
 
-// ============================================================================
-// CHERI-aware Signature Table
-//
-// Dual-mode keying:
-//   Cap-mode:  ST indexed by hash(cap_base), entries store cap-relative offsets.
-//              Delta = current_cap_cl_offset - last_cap_cl_offset.
-//              Multi-page objects produce ONE entry with a coherent signature chain.
-//   Page-mode: Vanilla SPP behavior -- indexed by hash(page_number), page-relative offsets.
-//
-// Entries in both modes coexist in the same ST.  cap_valid[] distinguishes them.
-// ============================================================================
 
 void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uint32_t& last_sig,
                                                      uint32_t& curr_sig, int64_t& out_delta,
@@ -209,7 +194,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
                                                      uint64_t cap_length_val)
 {
 
-  // ---- Determine ST set and lookup key ----
   uint32_t set;
   if (use_cap) {
     set = static_cast<uint32_t>(get_hash(cap_base_val) % ST_SET);
@@ -228,7 +212,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
   if (use_cap)
     cap_cl_offset = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);
     
-  // ---- Search for matching entry ----
   for (match = 0; match < ST_WAY; match++) {
     if (!valid[set][match])
       continue;
@@ -292,7 +275,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
     }
   }
 
-  // ---- Allocate new entry if miss ----
   if (match == ST_WAY) {
     // Find invalid entry
     for (match = 0; match < ST_WAY; match++) {
@@ -318,7 +300,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
     }
   }
 
-  // ---- LRU replacement if no invalid entry ----
   if (match == ST_WAY) {
     for (match = 0; match < ST_WAY; match++) {
       if (lru[set][match] == ST_WAY - 1) {
@@ -343,7 +324,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
     }
   }
 
-  // ---- GHR bootstrap on ST miss (same as vanilla) ----
   if constexpr (GHR_ON) {
     if (ST_hit == 0) {
       uint32_t GHR_found = _parent->GHR.check_entry(page_offset);
@@ -358,7 +338,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
     }
   }
 
-  // ---- Update LRU ----
   for (uint32_t way = 0; way < ST_WAY; way++) {
     if (lru[set][way] < lru[set][match])
       lru[set][way]++;
@@ -366,9 +345,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
   lru[set][match] = 0;
 }
 
-// ============================================================================
-// Pattern Table (structurally identical to vanilla SPP, just int64_t deltas)
-// ============================================================================
 
 void spp_cheri::PATTERN_TABLE::update_pattern(uint32_t last_sig, int64_t curr_delta)
 {
@@ -447,9 +423,6 @@ void spp_cheri::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<int64
   }
 }
 
-// ============================================================================
-// Prefetch Filter (identical to vanilla SPP)
-// ============================================================================
 
 bool spp_cheri::PREFETCH_FILTER::check(champsim::address check_addr, FILTER_REQUEST filter_request)
 {
