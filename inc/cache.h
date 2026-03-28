@@ -78,7 +78,7 @@ class CACHE : public champsim::operable
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
-  
+    bool is_instr = false;
     champsim::chrono::clock::time_point event_cycle = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -107,6 +107,7 @@ public:
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
+    bool is_instr = false;
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -146,6 +147,9 @@ private:
   template <typename T>
   champsim::address module_address(const T& element) const;
 
+  template <typename T>
+  bool module_is_instr(const T& element) const;
+
   auto matches_address(champsim::address address) const;
   std::pair<mshr_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
@@ -180,7 +184,9 @@ public:
   std::deque<mshr_type> inflight_writes;
 
   champsim::capability auth_capability{};
-  
+  champsim::address vaddr{};
+
+
   long operate() final;
   void initialize() final;
   void begin_phase() final;
@@ -213,6 +219,8 @@ public:
   [[nodiscard]] std::vector<double> get_pq_occupancy_ratio() const;
 
   [[nodiscard]] champsim::capability get_authorizing_capability() const;
+  [[nodiscard]] champsim::address get_vaddr() const;
+
 
   [[deprecated("Use get_set_index() instead.")]] [[nodiscard]] uint64_t get_set(uint64_t address) const;
   [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;

@@ -94,13 +94,13 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
-      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), cap(req.cap), instr_depend_on_me(req.instr_depend_on_me)
+      type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), cap(req.cap), is_instr(req.is_instr), instr_depend_on_me(req.instr_depend_on_me)
 {
 }
 
 CACHE::mshr_type::mshr_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), cap(req.cap), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
+      prefetch_from_this(req.prefetch_from_this), cap(req.cap), is_instr(req.is_instr), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
 {
 }
 
@@ -168,6 +168,12 @@ champsim::address CACHE::module_address(const T& element) const
   return champsim::address{address.slice_upper(match_offset_bits ? champsim::data::bits{} : OFFSET_BITS)};
 }
 
+template <typename T>
+bool CACHE::module_is_instr(const T& element) const
+{
+  return element.is_instr;
+}
+
 bool CACHE::handle_fill(const mshr_type& fill_mshr)
 {
   cpu = fill_mshr.cpu;
@@ -222,8 +228,11 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
     evicting_address = module_address(*way);
   }
 
-  auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx,
-                                                  (fill_mshr.type == access_type::PREFETCH), evicting_address, fill_mshr.data_promise->pf_metadata);
+  auto metadata_thru = fill_mshr.data_promise->pf_metadata;
+  if (!module_is_instr(fill_mshr)) {  // limiting only for data line fills
+    metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx, (fill_mshr.type == access_type::PREFETCH), 
+                                               evicting_address, fill_mshr.data_promise->pf_metadata);
+  }
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
                               fill_mshr.type);
 
@@ -256,7 +265,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 {
   cpu = handle_pkt.cpu;
 
-
   // access cache
   auto [set_begin, set_end] = get_set_span(handle_pkt.address);
   auto way = std::find_if(set_begin, set_end, [matcher = matches_address(handle_pkt.address)](const auto& x) { return x.valid && matcher(x); });
@@ -271,8 +279,9 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   auth_capability = handle_pkt.cap;
+  vaddr = handle_pkt.v_address;
 
-  if (should_activate_prefetcher(handle_pkt)) {
+  if (should_activate_prefetcher(handle_pkt) && !module_is_instr(handle_pkt)) { // limiting only to data line hits
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
   }
 
@@ -284,6 +293,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
 
+    // CHERI CACHE STATS
     champsim::capability response_cap = champsim::cap_mem[cpu]
                                     .load_capability(handle_pkt.v_address)
                                     .value_or(champsim::capability{});
@@ -343,6 +353,7 @@ auto CACHE::mshr_and_forward_packet(const tag_lookup_type& handle_pkt) -> std::p
   fwd_pkt.data = handle_pkt.data;
   fwd_pkt.instr_id = handle_pkt.instr_id;
   fwd_pkt.ip = handle_pkt.ip;
+  fwd_pkt.is_instr = handle_pkt.is_instr;
 
   fwd_pkt.instr_depend_on_me = handle_pkt.instr_depend_on_me;
   fwd_pkt.response_requested = (!handle_pkt.prefetch_from_this || !handle_pkt.skip_fill);
@@ -400,6 +411,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   }
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+  
+  // CHERI CACHE STATS
   if (handle_pkt.cap.tag)
     sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
@@ -437,6 +450,8 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   inflight_writes.push_back(to_allocate);
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+
+  // CHERI CACHE STATS
   if (handle_pkt.cap.tag)
     sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
@@ -868,7 +883,9 @@ std::vector<double> CACHE::get_wq_occupancy_ratio() const { return ::occupancy_r
 
 std::vector<double> CACHE::get_pq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_pq_occupancy(), get_pq_size()); }
 
-champsim::capability CACHE::get_authorizing_capability() const {return auth_capability;}
+champsim::capability CACHE::get_authorizing_capability() const {return auth_capability; }
+
+champsim::address CACHE::get_vaddr() const {return vaddr; }
 
 void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetcher_initialize(); }
 

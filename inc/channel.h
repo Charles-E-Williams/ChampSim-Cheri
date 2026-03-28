@@ -57,8 +57,7 @@ class channel
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
-
-
+    bool is_instr = false;
     access_type type{access_type::LOAD};
 
     uint32_t pf_metadata = 0;
