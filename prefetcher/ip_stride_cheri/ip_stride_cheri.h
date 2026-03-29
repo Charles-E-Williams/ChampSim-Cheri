@@ -53,13 +53,9 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
   champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
   std::optional<lookahead_entry> active_lookahead;
  
-  uint64_t cap_prefetches_issued{};
   uint64_t cap_prefetches_bounded{};
-  uint64_t ip_prefetches_issued{};
   uint64_t cap_table_hits{};
   uint64_t cap_table_misses{};
-  uint64_t cap_accesses{};
-  uint64_t nocap_accesses{};
   uint64_t too_small_filtered{};   
 
 public:

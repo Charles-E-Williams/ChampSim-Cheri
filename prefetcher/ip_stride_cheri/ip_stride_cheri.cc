@@ -8,13 +8,9 @@
 
 void ip_stride_cheri::prefetcher_initialize()
 {
-  cap_prefetches_issued = 0;
   cap_prefetches_bounded = 0;
-  ip_prefetches_issued = 0;
   cap_table_hits = 0;
   cap_table_misses = 0;
-  cap_accesses = 0;
-  nocap_accesses = 0;
   too_small_filtered = 0;
 }
 
@@ -23,8 +19,7 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
                                                    access_type type, uint32_t metadata_in)
 {
   const auto& cap = intern_->get_authorizing_capability();
-  if (cap.tag && cheri::has_load(cap.permissions)) {
-    cap_accesses++;
+  if (cheri::has_load(cap.permissions)) {
  
     // Skip single-element objects (too small to prefetch into)
     if (!cheri::is_prefetchable(cap)) {
@@ -39,7 +34,6 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
  
     if (found.has_value()) {
       cap_table_hits++;
- 
       int64_t stride = current_offset - found->last_offset_accessed;
 
  
@@ -86,12 +80,7 @@ void ip_stride_cheri::prefetcher_cycle_operate()
     const bool mshr_under_light_load = intern_->get_mshr_occupancy_ratio() < 0.5;
     const bool success = prefetch_line(pf_address, mshr_under_light_load, 0);
  
-    if (success) {
-      if (cap.has_value())
-        cap_prefetches_issued++;
-      else
-        ip_prefetches_issued++;
- 
+    if (success) { 
       active_lookahead = {pf_address, stride, degree - 1, cap};
     }
  
@@ -112,17 +101,11 @@ uint32_t ip_stride_cheri::prefetcher_cache_fill(champsim::address addr, long set
 void ip_stride_cheri::prefetcher_final_stats()
 {
   std::cout << "\nip_stride_cheri final stats" << std::endl;
-  std::cout << "  Capability accesses:         " << cap_accesses << std::endl;
-  std::cout << "  Non-capability accesses:     " << nocap_accesses << std::endl;
-  std::cout << "  Cap table hits:              " << cap_table_hits << std::endl;
-  std::cout << "  Cap table misses:            " << cap_table_misses << std::endl;
   if (cap_table_hits + cap_table_misses > 0) {
     double hit_rate = 100.0 * static_cast<double>(cap_table_hits)
                     / static_cast<double>(cap_table_hits + cap_table_misses);
     std::cout << "  Cap table hit rate:          " << hit_rate << "%" << std::endl;
   }
   std::cout << "  Single object filtered prefetch:         " << too_small_filtered << std::endl;
-  std::cout << "  Cap prefetches issued:       " << cap_prefetches_issued << std::endl;
   std::cout << "  Cap prefetches bounded:      " << cap_prefetches_bounded << std::endl;
-  std::cout << "  IP fallback prefetches:      " << ip_prefetches_issued << std::endl;
 }
