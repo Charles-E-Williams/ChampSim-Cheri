@@ -23,9 +23,7 @@ int berti_cheri::l1d_calculate_stride(uint64_t prev_offset, uint64_t current_off
   return stride;
 }
 
-// ============================================================================
-// Current Pages Table
-// ============================================================================
+
 
 void berti_cheri::l1d_init_current_pages_table()
 {
@@ -35,7 +33,6 @@ void berti_cheri::l1d_init_current_pages_table()
     l1d_current_pages_table[i].u_vector = 0;
     l1d_current_pages_table[i].last_burst = 0;
     l1d_current_pages_table[i].lru = i;
-    l1d_current_pages_table[i].cap_valid = false;
     l1d_current_pages_table[i].cap_base = 0;
     l1d_current_pages_table[i].cap_length = 0;
   }
@@ -91,8 +88,7 @@ int berti_cheri::l1d_get_berti_current_pages_table(uint64_t index, uint64_t& ctr
 }
 
 void berti_cheri::l1d_add_current_pages_table(uint64_t index, uint64_t region_addr, uint64_t ip,
-                                              uint64_t offset, bool cap_valid, uint64_t cap_base,
-                                              uint64_t cap_length)
+                                              uint64_t offset, uint64_t cap_base, uint64_t cap_length)
 {
   assert(index < L1D_CURRENT_PAGES_TABLE_ENTRIES);
   l1d_current_pages_table[index].region_addr = region_addr;
@@ -103,7 +99,6 @@ void berti_cheri::l1d_add_current_pages_table(uint64_t index, uint64_t region_ad
     l1d_current_pages_table[index].berti_ctr[i] = 0;
   }
   l1d_current_pages_table[index].last_burst = 0;
-  l1d_current_pages_table[index].cap_valid = cap_valid;
   l1d_current_pages_table[index].cap_base = cap_base;
   l1d_current_pages_table[index].cap_length = cap_length;
 }
@@ -144,7 +139,6 @@ void berti_cheri::l1d_remove_current_table_entry(uint64_t index)
   l1d_current_pages_table[index].region_addr = 0;
   l1d_current_pages_table[index].u_vector = 0;
   l1d_current_pages_table[index].berti[0] = 0;
-  l1d_current_pages_table[index].cap_valid = false;
   l1d_current_pages_table[index].cap_base = 0;
   l1d_current_pages_table[index].cap_length = 0;
 }
@@ -309,7 +303,6 @@ void berti_cheri::l1d_init_record_pages_table()
     l1d_record_pages_table[i].first_offset = 0;
     l1d_record_pages_table[i].berti = 0;
     l1d_record_pages_table[i].lru = i;
-    l1d_record_pages_table[i].cap_valid = false;
     l1d_record_pages_table[i].cap_length = 0;
   }
 }
@@ -336,14 +329,12 @@ void berti_cheri::l1d_update_lru_record_pages_table(uint64_t index)
 }
 
 void berti_cheri::l1d_add_record_pages_table(uint64_t index, uint64_t region_addr, uint64_t vector,
-                                             uint64_t first_offset, int berti, bool cap_valid,
-                                             uint64_t cap_length)
+                                             uint64_t first_offset, int berti, uint64_t cap_length)
 {
   l1d_record_pages_table[index].region_addr = region_addr;
   l1d_record_pages_table[index].u_vector = vector;
   l1d_record_pages_table[index].first_offset = first_offset;
   l1d_record_pages_table[index].berti = berti;
-  l1d_record_pages_table[index].cap_valid = cap_valid;
   l1d_record_pages_table[index].cap_length = cap_length;
   l1d_update_lru_record_pages_table(index);
 }
@@ -374,7 +365,6 @@ void berti_cheri::l1d_copy_entries_record_pages_table(uint64_t index_from, uint6
   l1d_record_pages_table[index_to].u_vector = l1d_record_pages_table[index_from].u_vector;
   l1d_record_pages_table[index_to].first_offset = l1d_record_pages_table[index_from].first_offset;
   l1d_record_pages_table[index_to].berti = l1d_record_pages_table[index_from].berti;
-  l1d_record_pages_table[index_to].cap_valid = l1d_record_pages_table[index_from].cap_valid;
   l1d_record_pages_table[index_to].cap_length = l1d_record_pages_table[index_from].cap_length;
   l1d_update_lru_record_pages_table(index_to);
 }
@@ -401,7 +391,6 @@ void berti_cheri::l1d_record_current_page(uint64_t index_current)
   uint64_t region_addr = l1d_current_pages_table[index_current].region_addr;
   uint64_t first_offset = l1d_current_pages_table[index_current].first_offset;
   uint64_t u_vector = l1d_current_pages_table[index_current].u_vector;
-  bool cap_valid = l1d_current_pages_table[index_current].cap_valid;
   uint64_t cap_length = l1d_current_pages_table[index_current].cap_length;
 
   // Find existing record or allocate new one
@@ -409,6 +398,5 @@ void berti_cheri::l1d_record_current_page(uint64_t index_current)
   if (record_index == L1D_RECORD_PAGES_TABLE_ENTRIES)
     record_index = l1d_get_lru_record_pages_entry();
 
-  l1d_add_record_pages_table(record_index, region_addr, u_vector, first_offset, b,
-                             cap_valid, cap_length);
+  l1d_add_record_pages_table(record_index, region_addr, u_vector, first_offset, b, cap_length);
 }

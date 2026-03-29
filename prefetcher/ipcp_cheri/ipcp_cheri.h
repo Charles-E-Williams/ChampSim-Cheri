@@ -10,8 +10,7 @@ class IP_TABLE_L1_CHERI
 {
 public:
   uint64_t ip_tag;
-  uint64_t last_page;        // last page seen by IP (used in fallback mode)
-  int64_t last_cl_offset;    // last cl offset -- page-relative in fallback, cap-relative when cap valid
+  int64_t last_cl_offset;    // last cl offset relative to capability
   int64_t last_stride;       // last delta observed
   uint16_t ip_valid;         // valid IP or not
   int conf;                  // CS confidence
@@ -23,12 +22,10 @@ public:
   // CHERI capability context for this IP
   uint64_t cap_base;
   uint64_t cap_length;
-  bool cap_valid;             // true if last access had a valid AUTH_CAP
 
   IP_TABLE_L1_CHERI()
   {
     ip_tag = 0;
-    last_page = 0;
     last_cl_offset = 0;
     last_stride = 0;
     ip_valid = 0;
@@ -39,7 +36,6 @@ public:
     str_strength = 0;
     cap_base = 0;
     cap_length = 0;
-    cap_valid = false;
   };
 };
 
@@ -67,11 +63,6 @@ private:
   int spec_nl = {0};
 
   // CHERI statistics
-  uint64_t stat_cap_lookups = 0;
-  uint64_t stat_cap_hits = 0;
-  uint64_t stat_cap_offset_used = 0;     // times cap-relative offset was used
-  uint64_t stat_page_offset_fallback = 0; // times page-relative offset was used
-  uint64_t stat_page_cross_eliminated = 0; // page-cross adjustments avoided via cap
   uint64_t stat_pf_bounded_by_cap = 0;   // prefetches clipped by capability bounds
   uint64_t stat_pf_issued_cs = 0;
   uint64_t stat_pf_issued_cplx = 0;

@@ -31,36 +31,15 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 {
   uint64_t addr = address.to<uint64_t>();
   uint64_t ip = ip_addr.to<uint64_t>();
-  uint64_t curr_page = addr >> LOG2_PAGE_SIZE;
   uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
 
   auto cap = intern_->get_authorizing_capability();
-  stat_cap_lookups++;
+  uint64_t cap_base_val = cap.base.to<uint64_t>();
+  uint64_t cap_length_val = cap.length.to<uint64_t>();
 
-  bool use_cap = false;
-  uint64_t cap_base_val = 0;
-  uint64_t cap_length_val = 0;
-
-  if (cheri::is_tag_valid(cap)) {
-    stat_cap_hits++;
-    cap_base_val = cap.base.to<uint64_t>();
-    cap_length_val = cap.length.to<uint64_t>();
-    use_cap = true;
-  }
-
-  // Compute offset: capability-relative or page-relative 
-  // When capability is valid, the offset is relative to the object base.
-  // This eliminates the need for page-crossing stride adjustments.
-  int64_t cl_offset = 0;
-  if (use_cap) {
-    // Object-relative offset in cache-line units
-    cl_offset = static_cast<int64_t>((addr - cap_base_val) >> LOG2_BLOCK_SIZE);
-    stat_cap_offset_used++;
-  } else {
-    // Fallback: page-relative offset (original IPCP behavior)
-    cl_offset = static_cast<int64_t>((addr >> LOG2_BLOCK_SIZE) & 0x3F);
-    stat_page_offset_fallback++;
-  }
+  // Compute offset
+  // Object-relative offset in cache-line units.
+  int64_t cl_offset = static_cast<int64_t>((addr - cap_base_val) >> LOG2_BLOCK_SIZE);
 
   uint16_t signature = 0, last_signature = 0;
   int prefetch_degree = 0;
@@ -93,7 +72,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // New or conflicting IP
     if (trackers_l1[index].ip_valid == 0) {
       trackers_l1[index].ip_tag = ip_tag;
-      trackers_l1[index].last_page = curr_page;
       trackers_l1[index].last_cl_offset = cl_offset;
       trackers_l1[index].last_stride = 0;
       trackers_l1[index].ip_valid = 1;
@@ -104,7 +82,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       trackers_l1[index].str_dir = 0;
 
       // Store capability context
-      trackers_l1[index].cap_valid = use_cap;
       trackers_l1[index].cap_base = cap_base_val;
       trackers_l1[index].cap_length = cap_length_val;
     } else {
@@ -113,12 +90,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
     // Next-line prefetch on new IP
     uint64_t pf_address = ((addr >> LOG2_BLOCK_SIZE) + 1) << LOG2_BLOCK_SIZE;
-    // CHERI bounds check for NL prefetch
-    if (use_cap) {
-      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
-        stat_pf_bounded_by_cap++;
-        return 0;
-      }
+    if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
+      stat_pf_bounded_by_cap++;
+      return 0;
     }
 
     metadata = encode_metadata(1, NL_TYPE, spec_nl);
@@ -129,44 +103,15 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     trackers_l1[index].ip_valid = 1;
   }
 
-  // when both current and stored access use capabilities
-  // from the same object, the stride is computed directly from object-relative
-  // offsets.  No page-crossing adjustment is needed.
+  // When both accesses are within the same capability object, stride is the
+  // difference in object-relative offsets. No page-boundary correction needed.
   int64_t stride = 0;
-  bool same_cap_context = use_cap && trackers_l1[index].cap_valid
-                          && (cap_base_val == trackers_l1[index].cap_base);
+  bool same_object = (cap_base_val == trackers_l1[index].cap_base);
 
-  if (same_cap_context) {
-    // Both accesses are within the same capability object.
-    // Stride is simply the difference in object-relative offsets.
+  if (same_object) {
     stride = cl_offset - trackers_l1[index].last_cl_offset;
-    // No page-boundary correction needed -- this is the key win.
-
-    if (curr_page != trackers_l1[index].last_page) {
-      // We crossed a page but stayed in the same object.
-      // In vanilla IPCP this would have triggered stride += 64.
-      // With CHERI-relative offsets, we get the correct stride for free.
-      stat_page_cross_eliminated++;
-    }
   } else {
-    // Fallback: vanilla IPCP stride computation
-    if (cl_offset > trackers_l1[index].last_cl_offset)
-      stride = cl_offset - trackers_l1[index].last_cl_offset;
-    else {
-      stride = trackers_l1[index].last_cl_offset - cl_offset;
-      stride *= -1;
-    }
-
-    if (stride == 0)
-        return 0;
-
-    // Page boundary learning 
-    if (curr_page != trackers_l1[index].last_page) {
-      if (stride < 0)
-        stride += 64;
-      else
-        stride -= 64;
-    }
+    stride = 0;
   }
 
   if (stride == 0)
@@ -192,8 +137,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
   // Update stored state
   trackers_l1[index].last_cl_offset = cl_offset;
-  trackers_l1[index].last_page = curr_page;
-  trackers_l1[index].cap_valid = use_cap;
   trackers_l1[index].cap_base = cap_base_val;
   trackers_l1[index].cap_length = cap_length_val;
 
@@ -209,8 +152,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   }
 
   // ---- Prefetch issuance ----
-  // For each class (Stream, CS, CPLX, NL), the prefetch boundary is
-  // either capability bounds (when available) or same-page (fallback).
+  // Prefetch boundary is always capability bounds.
 
   if (trackers_l1[index].str_valid == 1) {
     // Stream IP
@@ -223,15 +165,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       else
         pf_address = (cl_addr - i - 1) << LOG2_BLOCK_SIZE;
 
-      // Boundary check: CHERI bounds or same-page
-      if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
-          stat_pf_bounded_by_cap++;
-          break;
-        }
-      } else {
-        if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
-          break;
+      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
+        stat_pf_bounded_by_cap++;
+        break;
       }
 
       metadata = encode_metadata(trackers_l1[index].str_dir == 1 ? 1 : -1, S_TYPE, spec_nl);
@@ -245,14 +181,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     for (int i = 0; i < prefetch_degree; i++) {
       uint64_t pf_address = (cl_addr + (trackers_l1[index].last_stride * (i + 1))) << LOG2_BLOCK_SIZE;
 
-      if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
-          stat_pf_bounded_by_cap++;
-          break;
-        }
-      } else {
-        if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
-          break;
+      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
+        stat_pf_bounded_by_cap++;
+        break;
       }
 
       metadata = encode_metadata((int)trackers_l1[index].last_stride, CS_TYPE, spec_nl);
@@ -268,22 +199,14 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       pref_offset += DPT_l1[signature].delta;
       uint64_t pf_address = ((cl_addr + pref_offset) << LOG2_BLOCK_SIZE);
 
-      // Boundary check: CHERI bounds or same-page
-      if (use_cap) {
-        if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
-          stat_pf_bounded_by_cap++;
-          break;
-        }
-      } else {
-        if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
-          break;
+      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
+        stat_pf_bounded_by_cap++;
+        break;
       }
 
       if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
         break;
 
-      // Encode delta as 0 for CPLX (stock IPCP convention: don't propagate
-      // complex deltas to downstream prefetchers via metadata)
       metadata = encode_metadata(0, CPLX_TYPE, spec_nl);
       if (DPT_l1[signature].conf > 0) {
         intern_->prefetch_line(champsim::address{pf_address}, true, metadata);
@@ -293,29 +216,24 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
       signature = update_sig_l1(signature, DPT_l1[signature].delta);
     }
-  } 
+  }
 
   if (num_prefs == 0 && spec_nl == 1) {
     uint64_t pf_address = ((cl_addr + 1) << LOG2_BLOCK_SIZE);
- 
+
     bool nl_ok = true;
-    if (use_cap) {
-      if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
-        stat_pf_bounded_by_cap++;
-        nl_ok = false;
-      }
-    } else {
-      if ((pf_address >> LOG2_PAGE_SIZE) != (addr >> LOG2_PAGE_SIZE))
-        nl_ok = false;
+    if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
+      stat_pf_bounded_by_cap++;
+      nl_ok = false;
     }
- 
+
     if (nl_ok) {
       metadata = encode_metadata(1, NL_TYPE, spec_nl);
       intern_->prefetch_line(champsim::address{pf_address}, true, metadata);
       stat_pf_issued_nl++;
     }
   }
-  
+
   return 0;
 }
 
@@ -328,9 +246,6 @@ uint32_t ipcp_cheri::prefetcher_cache_fill(champsim::address addr, long set, lon
 
 void ipcp_cheri::prefetcher_cycle_operate() {}
 
-// ============================================================================
-// Signature and metadata helpers (structurally unchanged from vanilla IPCP)
-// ============================================================================
 
 uint16_t ipcp_cheri::update_sig_l1(uint16_t old_sig, int delta)
 {
@@ -409,23 +324,10 @@ int ipcp_cheri::update_conf(int stride, int pred_stride, int conf)
   return conf;
 }
 
-// ============================================================================
-// Statistics
-// ============================================================================
-
 void ipcp_cheri::prefetcher_final_stats()
 {
   std::cout << std::endl;
   std::cout << "ipcp_cheri final stats" << std::endl;
-  std::cout << "  CHERI cap lookups:               " << stat_cap_lookups << std::endl;
-  std::cout << "  CHERI cap hits:                  " << stat_cap_hits << std::endl;
-  if (stat_cap_lookups > 0)
-    std::cout << "  CHERI cap hit rate:              "
-              << (100.0 * static_cast<double>(stat_cap_hits) / static_cast<double>(stat_cap_lookups))
-              << "%" << std::endl;
-  std::cout << "  Cap-relative offset used:        " << stat_cap_offset_used << std::endl;
-  std::cout << "  Page-relative offset fallback:   " << stat_page_offset_fallback << std::endl;
-  std::cout << "  Page-cross adjustments avoided:  " << stat_page_cross_eliminated << std::endl;
   std::cout << "  Prefetches bounded by cap:       " << stat_pf_bounded_by_cap << std::endl;
   std::cout << "  Prefetches issued (CS):          " << stat_pf_issued_cs << std::endl;
   std::cout << "  Prefetches issued (CPLX):        " << stat_pf_issued_cplx << std::endl;

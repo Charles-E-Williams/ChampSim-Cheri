@@ -58,22 +58,6 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
       cap_table_misses++;
       cap_table.fill({ch, current_offset, 0, 0});
     }
- 
-  } else { //fallback
-    nocap_accesses++;
-    champsim::block_number cl_addr{addr};
-    champsim::block_number::difference_type stride = 0;
-
-    auto found = ip_table.check_hit({ip, cl_addr, stride});
- 
-    if (found.has_value()) {
-      stride = champsim::offset(found->last_cl_addr, cl_addr);
-      if (stride != 0 && stride == found->last_stride) {
-        active_lookahead = lookahead_entry{champsim::address{cl_addr}, stride, PREFETCH_DEGREE, std::nullopt};
-      }
-    }
- 
-    ip_table.fill({ip, cl_addr, stride});
   }
  
   return metadata_in;

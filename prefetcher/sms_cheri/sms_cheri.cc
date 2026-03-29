@@ -28,16 +28,9 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
 
   auto cap = intern_->get_authorizing_capability();
 
-  // Decompose the demand into region identity + intra-region offset.
-  // When a valid capability is available the region aligns to the object;
-  // otherwise we fall back to the stock 2KB physical region.
+
   region_info ri = decompose(addr, cap);
 
-  stat_total_accesses++;
-  if (ri.has_cap)
-    stat_cap_accesses++;
-  else
-    stat_nocap_accesses++;
 
   std::vector<uint64_t> pref_addr;
 
@@ -76,19 +69,6 @@ uint32_t sms_cheri::prefetcher_cache_fill(champsim::address addr, long set,
 
 void sms_cheri::prefetcher_final_stats()
 {
-  std::cout << "\nsms_cheri final stats" << std::endl;
-  std::cout << "  Total accesses:              " << stat_total_accesses << std::endl;
-  std::cout << "  Cap-backed accesses:         " << stat_cap_accesses << std::endl;
-  std::cout << "  Page-fallback accesses:      " << stat_nocap_accesses << std::endl;
-  if (stat_total_accesses > 0) {
-    std::cout << "  Cap coverage:                "
-              << (100.0 * static_cast<double>(stat_cap_accesses)
-                  / static_cast<double>(stat_total_accesses))
-              << "%" << std::endl;
-  }
-  std::cout << "  Prefetches generated:        " << stat_pref_generated << std::endl;
-  std::cout << "    from cap-backed patterns:  " << stat_pref_cap << std::endl;
-  std::cout << "    from page-based patterns:  " << stat_pref_nocap << std::endl;
   std::cout << "  Prefetches clipped (bounds):  " << stat_pref_bounds_clip << std::endl;
   std::cout << "  Prefetches clipped (page):    " << stat_pref_page_clip << std::endl;
 }

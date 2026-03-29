@@ -60,12 +60,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
 
   static uint64_t get_hash(uint64_t key);
 
-  // ========================================================================
-  // CHERI-aware Signature Table
-  // Dual-keyed: entries track either a physical page (vanilla) or a
-  // capability object (when cap metadata is available).  Cap-relative
-  // deltas unify multi-page object patterns into a single signature chain.
-  // ========================================================================
   class SIGNATURE_TABLE
   {
     struct tag_extent : champsim::dynamic_extent {
@@ -77,27 +71,21 @@ struct spp_cheri : public champsim::modules::prefetcher {
     using tag_type = champsim::address_slice<tag_extent>;
 
     bool valid[ST_SET][ST_WAY];
-    tag_type tag[ST_SET][ST_WAY];              // page tag (fallback)
     offset_type last_offset[ST_SET][ST_WAY];   // page-relative last offset
     uint32_t sig[ST_SET][ST_WAY];
     uint32_t lru[ST_SET][ST_WAY];
-
-    // CHERI per-entry state
-    bool cap_valid[ST_SET][ST_WAY];
     uint64_t cap_base[ST_SET][ST_WAY];         // capability base for this entry
     uint64_t cap_length[ST_SET][ST_WAY];
     int64_t last_cap_cl_offset[ST_SET][ST_WAY]; // cap-relative last offset (cache-line units)
 
-    SIGNATURE_TABLE()
+  SIGNATURE_TABLE()
     {
       for (uint32_t set = 0; set < ST_SET; set++)
         for (uint32_t way = 0; way < ST_WAY; way++) {
           valid[set][way] = 0;
-          tag[set][way] = tag_type{};
           last_offset[set][way] = offset_type{};
           sig[set][way] = 0;
           lru[set][way] = way;
-          cap_valid[set][way] = false;
           cap_base[set][way] = 0;
           cap_length[set][way] = 0;
           last_cap_cl_offset[set][way] = 0;
@@ -106,14 +94,10 @@ struct spp_cheri : public champsim::modules::prefetcher {
 
     // Dual-mode signature read/update
     void read_and_update_sig(champsim::address addr, uint32_t& last_sig, uint32_t& curr_sig,
-                             int64_t& delta, bool use_cap, uint64_t cap_base_val, uint64_t cap_offset_val,
+                             int64_t& delta, uint64_t cap_base_val, uint64_t cap_offset_val,
                              uint64_t cap_length_val);
   };
 
-  // ========================================================================
-  // Pattern Table (structurally unchanged)
-  // Signatures from both page-mode and cap-mode feed into the same PT.
-  // ========================================================================
   class PATTERN_TABLE
   {
   public:
@@ -138,9 +122,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
                       uint32_t& lookahead_conf, uint32_t& pf_q_tail, uint32_t& depth);
   };
 
-  // ========================================================================
-  // Prefetch Filter (structurally unchanged)
-  // ========================================================================
   class PREFETCH_FILTER
   {
   public:
@@ -161,12 +142,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
     bool check(champsim::address pf_addr, FILTER_REQUEST filter_request);
   };
 
-  // ========================================================================
-  // Global History Register
-  // Repurposed: stores cross-page patterns.  Under CHERI, cross-page
-  // within the same capability is handled by the ST directly, so GHR
-  // primarily handles cross-capability bootstrapping.
-  // ========================================================================
+
   class GLOBAL_REGISTER
   {
   public:
@@ -203,12 +179,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
   GLOBAL_REGISTER GHR;
 
   // CHERI statistics
-  uint64_t stat_cap_lookups = 0;
-  uint64_t stat_cap_hits = 0;
-  uint64_t stat_cap_st_used = 0;        // ST accesses using cap-relative mode
-  uint64_t stat_page_st_fallback = 0;   // ST accesses using page-relative mode
   uint64_t stat_pf_bounded_by_cap = 0;  // prefetches clipped by capability bounds
-  uint64_t stat_pf_issued = 0;
   uint64_t stat_cross_page_in_cap = 0;  // cross-page deltas within same capability
 
   using prefetcher::prefetcher;

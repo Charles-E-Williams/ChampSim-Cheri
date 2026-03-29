@@ -1,15 +1,3 @@
-//=======================================================================================//
-// File             : sms_cheri/sms_cheri.h
-// Description      : CHERI-aware Spatial Memory Streaming prefetcher.
-//                    When a valid AUTH_CAP capability is present on the demand,
-//                    spatial regions are defined relative to object bounds
-//                    (cap_base) rather than physical page boundaries.  This
-//                    aligns the learned spatial footprint with data-structure
-//                    layout, improving pattern reuse across allocations.
-//                    Falls back to stock SMS (page-based) when no capability
-//                    metadata is available.
-//=======================================================================================//
-
 #ifndef __SMS_CHERI_H__
 #define __SMS_CHERI_H__
 
@@ -24,7 +12,7 @@
 
 struct sms_cheri : public champsim::modules::prefetcher {
 private:
-  // ---- Configuration ----
+  //  Configuration 
   constexpr static uint32_t AT_SIZE = 32;
   constexpr static uint32_t FT_SIZE = 64;
   constexpr static uint32_t PHT_SIZE = 2048;
@@ -39,14 +27,11 @@ private:
   // Not constexpr because LOG2_BLOCK_SIZE is extern const in ChampSim.
   static uint32_t region_cls() { return 1u << (REGION_SIZE_LOG - LOG2_BLOCK_SIZE); }
 
-  // ---- Internal data structures ----
   std::deque<FTEntry*> filter_table;
   std::deque<ATEntry*> acc_table;
   std::vector<std::deque<PHTEntry*>> pht;
   std::deque<uint64_t> pref_buffer;
 
-
-  // ---- Region / offset decomposition ----
   // Decomposes a demand into (region_id, offset, cap metadata) using
   // capability bounds when available, page boundaries otherwise.
   struct region_info {
@@ -56,31 +41,29 @@ private:
     uint64_t cap_top;
     uint64_t demand_pa_page;
     uint64_t demand_va_page;
-    bool     has_cap;
   };
   region_info decompose(uint64_t pa, const champsim::capability& cap) const;
 
-  // ---- Filter Table ----
   std::deque<FTEntry*>::iterator search_filter_table(uint64_t region_id);
   std::deque<FTEntry*>::iterator search_victim_filter_table();
   void evict_filter_table(std::deque<FTEntry*>::iterator victim);
   void insert_filter_table(uint64_t pc, const region_info& ri);
 
-  // ---- Accumulation Table ----
+  //  Accumulation Table 
   std::deque<ATEntry*>::iterator search_acc_table(uint64_t region_id);
   std::deque<ATEntry*>::iterator search_victim_acc_table();
   void evict_acc_table(std::deque<ATEntry*>::iterator victim);
   void update_age_acc_table(std::deque<ATEntry*>::iterator current);
   void insert_acc_table(FTEntry* ftentry, uint32_t offset);
 
-  // ---- Pattern History Table ----
+  //  Pattern History Table 
   std::deque<PHTEntry*>::iterator search_pht(uint64_t signature, uint32_t& set);
   std::deque<PHTEntry*>::iterator search_victim_pht(int32_t set);
   void evict_pht(int32_t set, std::deque<PHTEntry*>::iterator victim);
   void update_age_pht(int32_t set, std::deque<PHTEntry*>::iterator current);
   void insert_pht_table(ATEntry* atentry);
 
-  // ---- Signature / prefetch generation ----
+  //  Signature / prefetch generation 
   uint64_t create_signature(uint64_t pc, uint32_t offset);
 
   // Generate prefetch addresses.  For capability-backed regions the
@@ -92,13 +75,7 @@ private:
   void buffer_prefetch(std::vector<uint64_t> pref_addr);
   void issue_prefetch();
 
-  // ---- Statistics ----
-  uint64_t stat_total_accesses = 0;
-  uint64_t stat_cap_accesses = 0;     // demands with a valid capability
-  uint64_t stat_nocap_accesses = 0;   // fallback to page-based
-  uint64_t stat_pref_generated = 0;
-  uint64_t stat_pref_cap = 0;        // prefetches from cap-backed patterns
-  uint64_t stat_pref_nocap = 0;      // prefetches from page-based patterns
+  //  Statistics 
   uint64_t stat_pref_bounds_clip = 0; // prefetches suppressed by cap bounds
   uint64_t stat_pref_page_clip = 0;  // prefetches suppressed by same-page
 

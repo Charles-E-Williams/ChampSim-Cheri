@@ -30,22 +30,16 @@ typedef struct __l1d_cheri_current_page_entry {
   // CHERI context
   uint64_t cap_base;
   uint64_t cap_length;
-  bool cap_valid;                                        // true if this entry tracks a capability object
 } l1d_cheri_current_page_entry;
 
-// ============================================================================
-// Previous requests table entry (unchanged structurally)
-// offset is now region-relative (cap-relative or page-relative)
-// ============================================================================
+
 typedef struct __l1d_cheri_prev_request_entry {
   uint64_t page_addr_pointer; // index into current-pages table
   uint64_t offset;            // region-relative offset
   uint64_t time;
 } l1d_cheri_prev_request_entry;
 
-// ============================================================================
-// Previous prefetches table entry (unchanged structurally)
-// ============================================================================
+
 typedef struct __l1d_cheri_prev_prefetch_entry {
   uint64_t page_addr_pointer;
   uint64_t offset;
@@ -53,23 +47,17 @@ typedef struct __l1d_cheri_prev_prefetch_entry {
   bool completed;
 } l1d_cheri_prev_prefetch_entry;
 
-// ============================================================================
-// Record pages table entry
-// region_addr replaces page_addr for CHERI-aware recording
-// ============================================================================
+
 typedef struct __l1d_cheri_record_page_entry {
   uint64_t region_addr;    // cap_base or page_addr
   uint64_t u_vector;
   uint64_t first_offset;
   int berti;
   uint64_t lru;
-  bool cap_valid;          // was this recorded from a capability-tracked region?
   uint64_t cap_length;     // preserved for bounds checking on replay
 } l1d_cheri_record_page_entry;
 
-// ============================================================================
-// BERTI-CHERI prefetcher
-// ============================================================================
+
 struct berti_cheri : public champsim::modules::prefetcher {
 private:
   l1d_cheri_current_page_entry l1d_current_pages_table[L1D_CURRENT_PAGES_TABLE_ENTRIES];
@@ -81,10 +69,6 @@ private:
   uint64_t l1d_ip_table[L1D_IP_TABLE_ENTRIES];
 
   // CHERI statistics
-  uint64_t stat_cap_lookups = 0;
-  uint64_t stat_cap_hits = 0;
-  uint64_t stat_cap_region_used = 0;
-  uint64_t stat_page_region_fallback = 0;
   uint64_t stat_pf_bounded_by_cap = 0;
   uint64_t stat_pf_issued_berti = 0;
   uint64_t stat_pf_issued_burst = 0;
@@ -99,7 +83,7 @@ private:
   void l1d_update_lru_current_pages_table(uint64_t index);
   uint64_t l1d_get_lru_current_pages_entry();
   int l1d_get_berti_current_pages_table(uint64_t index, uint64_t& ctr);
-  void l1d_add_current_pages_table(uint64_t index, uint64_t region_addr, uint64_t ip, uint64_t offset, bool cap_valid, uint64_t cap_base, uint64_t cap_length);
+  void l1d_add_current_pages_table(uint64_t index, uint64_t region_addr, uint64_t ip, uint64_t offset, uint64_t cap_base, uint64_t cap_length);
   uint64_t l1d_update_demand_current_pages_table(uint64_t index, uint64_t offset);
   void l1d_add_berti_current_pages_table(uint64_t index, int berti);
   bool l1d_requested_offset_current_pages_table(uint64_t index, uint64_t offset);
@@ -123,7 +107,7 @@ private:
   void l1d_init_record_pages_table();
   uint64_t l1d_get_lru_record_pages_entry();
   void l1d_update_lru_record_pages_table(uint64_t index);
-  void l1d_add_record_pages_table(uint64_t index, uint64_t region_addr, uint64_t vector, uint64_t first_offset, int berti, bool cap_valid, uint64_t cap_length);
+  void l1d_add_record_pages_table(uint64_t index, uint64_t region_addr, uint64_t vector, uint64_t first_offset, int berti, uint64_t cap_length);
   uint64_t l1d_get_entry_record_pages_table(uint64_t region_addr, uint64_t first_offset);
   uint64_t l1d_get_entry_record_pages_table(uint64_t region_addr);
   void l1d_copy_entries_record_pages_table(uint64_t index_from, uint64_t index_to);
@@ -132,9 +116,6 @@ private:
 
   void l1d_record_current_page(uint64_t index_current);
 
-  // CHERI helpers
-  uint64_t compute_region_addr(uint64_t addr, bool cap_valid, uint64_t cap_base) const;
-  uint64_t compute_offset(uint64_t addr, bool cap_valid, uint64_t cap_base) const;
 
 public:
   using champsim::modules::prefetcher::prefetcher;

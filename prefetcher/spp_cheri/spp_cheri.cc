@@ -45,28 +45,18 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued) : 0;
 
   auto cap = intern_->get_authorizing_capability();
-  stat_cap_lookups++;
 
-  bool use_cap = false;
-  uint64_t cap_base_val = 0;
-  uint64_t cap_length_val = 0;
-  uint64_t cap_offset_val = 0;
-
-  if (cap.tag) {
-    stat_cap_hits++;
-    use_cap = true;
-    cap_base_val = cap.base.to<uint64_t>();
-    cap_length_val = cap.length.to<uint64_t>();
-    cap_offset_val = cap.offset.to<uint64_t>();
-  }
+  uint64_t cap_base_val   = cap.base.to<uint64_t>();
+  uint64_t cap_length_val = cap.length.to<uint64_t>();
+  uint64_t cap_offset_val = cap.offset.to<uint64_t>();
 
   if constexpr (SPP_DEBUG_PRINT) {
     std::cout << std::endl << "[SPP-CHERI] " << __func__ << " addr: " << addr
-              << " page: " << page << " cap_valid: " << use_cap << std::endl;
+              << " page: " << page << " cap_valid: " << std::endl;
   }
 
   // Stage 1: Read and update signature stored in ST
-  ST.read_and_update_sig(addr, last_sig, curr_sig, delta, use_cap, cap_base_val, cap_offset_val, cap_length_val);
+  ST.read_and_update_sig(addr, last_sig, curr_sig, delta, cap_base_val, cap_offset_val, cap_length_val);
 
   // Also check the prefetch filter to update global accuracy
   FILTER.check(addr, spp_cheri::L2C_DEMAND);
@@ -94,15 +84,11 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
         // Physical same-page constraint (mandatory for PIPT L2C)
         if (champsim::page_number{pf_addr} == page) {
           // CHERI bounds check (advisory -- skip prefetch if out of object bounds)
-          bool in_cap_bounds = true;
-          if (use_cap) {
-              uint64_t demand_va = cap_base_val + cap_offset_val;
-              uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
-              uint64_t pf_page_offset = pf_addr.to<uint64_t>() & page_mask;
-              uint64_t pf_va = (demand_va & ~page_mask) | pf_page_offset;
-              in_cap_bounds = (pf_va >= cap_base_val)
-               && (pf_va < cap_base_val + cap_length_val);
-          }
+          uint64_t demand_va = cap_base_val + cap_offset_val;
+          uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
+          uint64_t pf_page_offset = pf_addr.to<uint64_t>() & page_mask;
+          uint64_t pf_va = (demand_va & ~page_mask) | pf_page_offset;
+          bool in_cap_bounds = (pf_va >= cap_base_val) && (pf_va < cap_base_val + cap_length_val);
 
           if (!in_cap_bounds) {
             stat_pf_bounded_by_cap++;
@@ -115,7 +101,6 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
           if (FILTER.check(pf_addr, ((confidence_q[i] >= FILL_THRESHOLD) ?
                                       spp_cheri::SPP_L2C_PREFETCH : spp_cheri::SPP_LLC_PREFETCH))) {
             prefetch_line(pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0);
-            stat_pf_issued++;
 
             if (confidence_q[i] >= FILL_THRESHOLD) {
               GHR.pf_issued++;
@@ -190,88 +175,50 @@ uint64_t spp_cheri::get_hash(uint64_t key)
 
 void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uint32_t& last_sig,
                                                      uint32_t& curr_sig, int64_t& out_delta,
-                                                     bool use_cap, uint64_t cap_base_val, uint64_t cap_offset_val,
+                                                     uint64_t cap_base_val, uint64_t cap_offset_val,
                                                      uint64_t cap_length_val)
 {
-
-  uint32_t set;
-  if (use_cap) {
-    set = static_cast<uint32_t>(get_hash(cap_base_val) % ST_SET);
-  } else {
-    set = static_cast<uint32_t>(get_hash(champsim::page_number{addr}.to<uint64_t>()) % ST_SET);
-  }
+  uint32_t set = static_cast<uint32_t>(get_hash(cap_base_val) % ST_SET);
 
   auto match = ST_WAY;
-  tag_type partial_page{addr};
   offset_type page_offset{addr};
   uint8_t ST_hit = 0;
   long sig_delta = 0;
 
-  // Compute capability-relative offset (used only in cap mode)
-  int64_t cap_cl_offset = 0;
-  if (use_cap)
-    cap_cl_offset = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);
-    
+  int64_t cap_cl_offset = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);
+
   for (match = 0; match < ST_WAY; match++) {
     if (!valid[set][match])
       continue;
 
-    if (use_cap && cap_valid[set][match]) {
-      // Cap-mode match: same cap_base
-      if (cap_base[set][match] == cap_base_val) {
-        last_sig = sig[set][match];
+    if (cap_base[set][match] == cap_base_val) {
+      last_sig = sig[set][match];
 
-        // Delta in cap-relative cache-line units
-        out_delta = cap_cl_offset - last_cap_cl_offset[set][match];
+      // Delta in cap-relative cache-line units
+      out_delta = cap_cl_offset - last_cap_cl_offset[set][match];
 
-        if (out_delta) {
-          // Track cross-page strides within the same capability
-          champsim::page_number last_page{champsim::address{cap_base_val + (static_cast<uint64_t>(last_cap_cl_offset[set][match]) << LOG2_BLOCK_SIZE)}};
-          champsim::page_number curr_page{champsim::address{cap_base_val + cap_offset_val}};
-          if (last_page != curr_page)
-            _parent->stat_cross_page_in_cap++;
+      if (out_delta) {
+        // Track cross-page strides within the same capability
+        champsim::page_number last_page{champsim::address{cap_base_val + (static_cast<uint64_t>(last_cap_cl_offset[set][match]) << LOG2_BLOCK_SIZE)}};
+        champsim::page_number curr_page{champsim::address{cap_base_val + cap_offset_val}};
+        if (last_page != curr_page)
+          _parent->stat_cross_page_in_cap++;
 
-          sig_delta = (out_delta < 0)
-                          ? (((-1) * out_delta) + (1 << (SIG_DELTA_BIT - 1)))
-                          : out_delta;
-          // Clamp to SIG_DELTA_BIT range for signature computation
-          sig_delta &= ((1 << SIG_DELTA_BIT) - 1);
+        sig_delta = (out_delta < 0)
+                        ? (((-1) * out_delta) + (1 << (SIG_DELTA_BIT - 1)))
+                        : out_delta;
+        sig_delta &= ((1 << SIG_DELTA_BIT) - 1);
 
-          sig[set][match] = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
-          curr_sig = sig[set][match];
-          last_cap_cl_offset[set][match] = cap_cl_offset;
-          last_offset[set][match] = page_offset;  // keep in sync for GHR
-
-          _parent->stat_cap_st_used++;
-        } else {
-          last_sig = 0;
-        }
-
-        ST_hit = 1;
-        break;
+        sig[set][match] = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
+        curr_sig = sig[set][match];
+        last_cap_cl_offset[set][match] = cap_cl_offset;
+        last_offset[set][match] = page_offset;  // keep in sync for GHR
+      } else {
+        last_sig = 0;
       }
-    } else if (!use_cap && !cap_valid[set][match]) {
-      // Page-mode match: same page tag
-      if (tag[set][match] == partial_page) {
-        last_sig = sig[set][match];
-        out_delta = static_cast<int64_t>(champsim::offset(last_offset[set][match], page_offset));
 
-        if (out_delta) {
-          sig_delta = (out_delta < 0)
-                          ? (((-1) * out_delta) + (1 << (SIG_DELTA_BIT - 1)))
-                          : out_delta;
-          sig[set][match] = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
-          curr_sig = sig[set][match];
-          last_offset[set][match] = page_offset;
-
-          _parent->stat_page_st_fallback++;
-        } else {
-          last_sig = 0;
-        }
-
-        ST_hit = 1;
-        break;
-      }
+      ST_hit = 1;
+      break;
     }
   }
 
@@ -280,20 +227,12 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
     for (match = 0; match < ST_WAY; match++) {
       if (!valid[set][match]) {
         valid[set][match] = 1;
-        tag[set][match] = partial_page;
         sig[set][match] = 0;
         curr_sig = 0;
         last_offset[set][match] = page_offset;
-
-        cap_valid[set][match] = use_cap;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
         last_cap_cl_offset[set][match] = cap_cl_offset;
-
-        if (use_cap)
-          _parent->stat_cap_st_used++;
-        else
-          _parent->stat_page_st_fallback++;
 
         break;
       }
@@ -303,12 +242,10 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, uin
   if (match == ST_WAY) {
     for (match = 0; match < ST_WAY; match++) {
       if (lru[set][match] == ST_WAY - 1) {
-        tag[set][match] = partial_page;
         sig[set][match] = 0;
         curr_sig = 0;
         last_offset[set][match] = page_offset;
 
-        cap_valid[set][match] = use_cap;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
         last_cap_cl_offset[set][match] = cap_cl_offset;
@@ -519,15 +456,6 @@ void spp_cheri::prefetcher_final_stats()
 {
   std::cout << std::endl;
   std::cout << "spp_cheri final stats" << std::endl;
-  std::cout << "  CHERI cap lookups:               " << stat_cap_lookups << std::endl;
-  std::cout << "  CHERI cap hits:                  " << stat_cap_hits << std::endl;
-  if (stat_cap_lookups > 0)
-    std::cout << "  CHERI cap hit rate:              "
-              << (100.0 * static_cast<double>(stat_cap_hits) / static_cast<double>(stat_cap_lookups))
-              << "%" << std::endl;
-  std::cout << "  ST cap-mode accesses:            " << stat_cap_st_used << std::endl;
-  std::cout << "  ST page-mode fallbacks:          " << stat_page_st_fallback << std::endl;
   std::cout << "  Cross-page deltas in cap:        " << stat_cross_page_in_cap << std::endl;
-  std::cout << "  Prefetches issued:               " << stat_pf_issued << std::endl;
   std::cout << "  Prefetches bounded by cap:       " << stat_pf_bounded_by_cap << std::endl;
 }
