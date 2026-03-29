@@ -74,6 +74,7 @@ private:
   uint64_t stat_pf_issued_burst = 0;
   uint64_t stat_cross_page_in_object = 0;  // prefetches that cross page boundary but stay in object
 
+  uint64_t l1d_make_region_key(uint64_t cap_base, uint64_t cap_page_index);
   uint64_t l1d_get_latency(uint64_t cycle, uint64_t cycle_prev);
 
   int l1d_calculate_stride(uint64_t prev_offset, uint64_t current_offset);

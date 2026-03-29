@@ -4,17 +4,16 @@ uint32_t next_line_cheri::prefetcher_cache_operate(champsim::address addr, champ
                                              uint32_t metadata_in)
 {
 
-  auto auth_cap = intern_->get_authorizing_capability(); cap_lookups++;
+  auto auth_cap = intern_->get_authorizing_capability();
 
   champsim::block_number pf_block{addr};
   champsim::address next_line_addr{pf_block + 1};
   if (cheri::is_tag_valid(auth_cap)) {
-    cap_hits++;
     if (!cheri::prefetch_safe(next_line_addr, auth_cap)) { //no prefetch if the address is outside the bounds of the capability
       prefetches_bounded++; 
       return metadata_in;
     }
-  }
+  }   
 
   prefetch_line(next_line_addr, true, metadata_in);
   prefetches_issued++;
@@ -30,6 +29,4 @@ void next_line_cheri::prefetcher_final_stats() {
   std::cout << "Next-Line CHERI Prefetcher Stats:" << "\n";
   std::cout << "Prefetches Issued: " << prefetches_issued << "\n";
   std::cout << "Prefetches Bounded by Bounds: " << prefetches_bounded << "\n";
-  std::cout << "Capability Lookups: " << cap_lookups << "\n";
-  std::cout << "Capability Hits: " << cap_hits << "\n";
 }

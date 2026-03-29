@@ -100,7 +100,6 @@ void ampm_cheri::do_prefetch(CACHE* cache, champsim::address pa, champsim::addre
 
             if (cache->prefetch_line(pf_addr, two_level, metadata_in)) {
               add_to_map(va_candidate, cap, true);
-              stat_pf_issued++;
               pf_count++;
             }
           } else {

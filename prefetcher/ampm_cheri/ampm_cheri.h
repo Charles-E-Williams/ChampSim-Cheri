@@ -88,9 +88,6 @@ public:
                    const champsim::capability& cap, uint32_t metadata_in,
                    int degree, bool two_level);
 
-  uint64_t stat_cap_lookups              = 0;
-  uint64_t stat_cap_hits                 = 0;
-  uint64_t stat_pf_issued                = 0;
   uint64_t stat_pf_bounded_by_cap        = 0;
   uint64_t stat_cross_page_detected      = 0;
   uint64_t stat_cross_page_cant_issue    = 0;  

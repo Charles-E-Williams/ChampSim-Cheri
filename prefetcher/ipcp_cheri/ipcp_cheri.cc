@@ -151,7 +151,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     ghb_l1[0] = cl_addr;
   }
 
-  // ---- Prefetch issuance ----
   // Prefetch boundary is always capability bounds.
 
   if (trackers_l1[index].str_valid == 1) {
@@ -199,13 +198,13 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       pref_offset += DPT_l1[signature].delta;
       uint64_t pf_address = ((cl_addr + pref_offset) << LOG2_BLOCK_SIZE);
 
+      if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
+        break;
+
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
         break;
       }
-
-      if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
-        break;
 
       metadata = encode_metadata(0, CPLX_TYPE, spec_nl);
       if (DPT_l1[signature].conf > 0) {

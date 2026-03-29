@@ -122,6 +122,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
                       uint32_t& lookahead_conf, uint32_t& pf_q_tail, uint32_t& depth);
   };
 
+
   class PREFETCH_FILTER
   {
   public:

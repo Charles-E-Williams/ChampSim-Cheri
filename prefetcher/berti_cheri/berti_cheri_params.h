@@ -42,8 +42,6 @@
 #define L1D_IP_TABLE_INDEX_MASK (L1D_IP_TABLE_ENTRIES - 1)
 #define L1D_IP_TABLE_NULL_POINTER L1D_RECORD_PAGES_TABLE_ENTRIES
 
-// CHERI-specific: max berti distance when using cap-relative offsets
-// (relaxed from L1D_PAGE_BLOCKS for large objects)
-#define L1D_CHERI_MAX_BERTI_DISTANCE 256
+#define L1D_CHERI_REGION_HASH_MULT 0x9e3779b97f4a7c15ULL
 
 #endif

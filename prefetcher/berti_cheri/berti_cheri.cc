@@ -24,16 +24,14 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
   uint64_t ip = ip_addr.to<uint64_t>();
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
  
-  //  CHERI: extract capability metadata 
   auto cap = intern_->get_authorizing_capability();
- 
-  uint64_t cap_base_val = cap.base.to<uint64_t>();
-  uint64_t cap_length_val = cap.length.to<uint64_t>();
+  uint64_t cap_base = cap.base.to<uint64_t>();
+  uint64_t cap_length = cap.length.to<uint64_t>();
  
   //  Compute region identity and offset 
-  uint64_t region_addr = cap_base_val;
-  uint64_t offset = (addr - cap_base_val) >> LOG2_BLOCK_SIZE;
-  uint64_t bitmap_offset = offset & L1D_PAGE_OFFSET_MASK;
+  uint64_t cap_page_index = (addr - cap_base) >> LOG2_PAGE_SIZE;
+  uint64_t region_addr = l1d_make_region_key(cap_base, cap_page_index);
+  uint64_t bitmap_offset = (addr >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
  
   uint64_t line_addr = addr >> LOG2_BLOCK_SIZE;
   uint64_t page_addr = line_addr >> L1D_PAGE_BLOCKS_BITS;
@@ -64,7 +62,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
             if (b[i] == 0)
               break;
             // CHERI: relaxed bound for cap-relative offsets
-            if (abs(b[i]) >= L1D_CHERI_MAX_BERTI_DISTANCE)
+            if (abs(b[i]) >= L1D_PAGE_BLOCKS)
               continue;
             
             l1d_add_berti_current_pages_table(index, b[i]);
@@ -91,7 +89,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
       l1d_record_current_page(victim_index);
  
       index = victim_index;
-      l1d_add_current_pages_table(index, region_addr, ip & L1D_IP_TABLE_INDEX_MASK, bitmap_offset, cap_base_val, cap_length_val);
+      l1d_add_current_pages_table(index, region_addr, ip & L1D_IP_TABLE_INDEX_MASK, bitmap_offset, cap_base, cap_length);
  
       // Set up IP table for new entry
       uint64_t index_record = l1d_get_entry_record_pages_table(region_addr, bitmap_offset);
@@ -332,20 +330,26 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
 
   //  CHERI: determine region for filled address 
-  uint64_t line_addr = (addr >> LOG2_BLOCK_SIZE);
-  uint64_t offset = line_addr & L1D_PAGE_OFFSET_MASK;
+//  Page-relative offset for fill — matches page-chunked region scheme 
+  uint64_t offset = (addr >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
 
-  // Search all entries for a match -- the region_addr might be cap_base or page_addr
+  // Search entries: bounds-check first, then verify region_addr matches the
+  // correct page-chunk within the object. This correctly handles multi-page
+  // objects that have multiple entries (one per page).
   uint64_t pointer_prev = L1D_CURRENT_PAGES_TABLE_ENTRIES;
 
   for (int i = 0; i < L1D_CURRENT_PAGES_TABLE_ENTRIES; i++) {
     if (l1d_current_pages_table[i].u_vector == 0)
       continue;
-    uint64_t cap_top = l1d_current_pages_table[i].cap_base + l1d_current_pages_table[i].cap_length;
-    if (addr >= l1d_current_pages_table[i].cap_base && addr < cap_top) {
-      pointer_prev = i;
-      offset = ((addr - l1d_current_pages_table[i].cap_base) >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
-      break;
+    uint64_t entry_cap_base = l1d_current_pages_table[i].cap_base;
+    uint64_t cap_top = entry_cap_base + l1d_current_pages_table[i].cap_length;
+    if (addr >= entry_cap_base && addr < cap_top) {
+      uint64_t cap_page_idx = (addr - entry_cap_base) >> LOG2_PAGE_SIZE;
+      uint64_t expected_region = l1d_make_region_key(entry_cap_base, cap_page_idx);
+      if (l1d_current_pages_table[i].region_addr == expected_region) {
+        pointer_prev = i;
+        break;
+      }
     }
   }
 
@@ -362,22 +366,28 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
       for (int i = 0; i < L1D_CURRENT_PAGES_TABLE_NUM_BERTI_PER_ACCESS; i++) {
         if (b[i] == 0)
           break;
-        int max_dist = L1D_CHERI_MAX_BERTI_DISTANCE;
-        if (abs(b[i]) < max_dist)
-          l1d_add_berti_current_pages_table(pointer_prev, b[i]);
+        // Page-chunked: distances naturally bounded by page size
+        if (abs(b[i]) >= L1D_PAGE_BLOCKS)
+          continue;
+        l1d_add_berti_current_pages_table(pointer_prev, b[i]);
       }
     }
   }
 
-  // Handle evicted page/region
+  // Handle evicted page/region — same region_addr verification
   uint64_t victim_index = L1D_CURRENT_PAGES_TABLE_ENTRIES;
   for (int i = 0; i < L1D_CURRENT_PAGES_TABLE_ENTRIES; i++) {
     if (l1d_current_pages_table[i].u_vector == 0)
       continue;
-    uint64_t cap_top = l1d_current_pages_table[i].cap_base + l1d_current_pages_table[i].cap_length;
-    if (evicted_addr >= l1d_current_pages_table[i].cap_base && evicted_addr < cap_top) {
-      victim_index = i;
-      break;
+    uint64_t entry_cap_base = l1d_current_pages_table[i].cap_base;
+    uint64_t cap_top = entry_cap_base + l1d_current_pages_table[i].cap_length;
+    if (evicted_addr >= entry_cap_base && evicted_addr < cap_top) {
+      uint64_t cap_page_idx = (evicted_addr - entry_cap_base) >> LOG2_PAGE_SIZE;
+      uint64_t expected_region = l1d_make_region_key(entry_cap_base, cap_page_idx);
+      if (l1d_current_pages_table[i].region_addr == expected_region) {
+        victim_index = i;
+        break;
+      }
     }
   }
 

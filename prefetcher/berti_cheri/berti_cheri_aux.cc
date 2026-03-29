@@ -1,5 +1,17 @@
 #include "berti_cheri.h"
 
+
+uint64_t berti_cheri::l1d_make_region_key(uint64_t cap_base, uint64_t cap_page_index)
+{
+  // Different pages of the same object get distinct keys;
+  // different objects on the same page get distinct keys (different cap_base).
+  uint64_t k = cap_base ^ (cap_page_index * L1D_CHERI_REGION_HASH_MULT);
+  k ^= (k >> 16);
+  k ^= (k >> 8);
+  if (k == 0) k = 1;  // avoid collision
+  return k;
+}
+
 uint64_t berti_cheri::l1d_get_latency(uint64_t cycle, uint64_t cycle_prev)
 {
   return cycle - cycle_prev;
@@ -22,8 +34,6 @@ int berti_cheri::l1d_calculate_stride(uint64_t prev_offset, uint64_t current_off
   }
   return stride;
 }
-
-
 
 void berti_cheri::l1d_init_current_pages_table()
 {

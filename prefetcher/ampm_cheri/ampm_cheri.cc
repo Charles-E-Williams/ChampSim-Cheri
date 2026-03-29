@@ -22,10 +22,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
   auto cap = intern_->get_authorizing_capability();
   champsim::address va = intern_->get_vaddr();
 
-  stat_cap_lookups++;
-  stat_cap_hits++;
-
-  // Access map records in VA space (v_addr - cap.base is meaningful)
+  // access map records in VA space
   add_to_map(va, cap, false);
 
   do_prefetch(intern_, addr, va, cap, metadata_in, PREFETCH_DEGREE,
@@ -45,16 +42,7 @@ uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, long set, lon
 void ampm_cheri::prefetcher_final_stats()
 {
   std::cout << "\n=== AMPM-CHERI Final Stats ===" << std::endl;
-  std::cout << "  Cap lookups:              " << stat_cap_lookups << std::endl;
-  std::cout << "  Cap hits:                 " << stat_cap_hits << std::endl;
-  if (stat_cap_lookups > 0) {
-    double hit_rate = 100.0 * static_cast<double>(stat_cap_hits)
-                            / static_cast<double>(stat_cap_lookups);
-    std::cout << "  Cap hit rate:             " << hit_rate << "%" << std::endl;
-  }
-  std::cout << "  Prefetches issued:        " << stat_pf_issued << std::endl;
   std::cout << "  Bounded by cap:           " << stat_pf_bounded_by_cap << std::endl;
   std::cout << "  Cross-page detected:      " << stat_cross_page_detected << std::endl;
   std::cout << "  Cross-page cant issue:    " << stat_cross_page_cant_issue << std::endl;
-  std::cout << "==============================\n" << std::endl;
 }
