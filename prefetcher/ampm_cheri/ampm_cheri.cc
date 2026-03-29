@@ -20,7 +20,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
                                               access_type type, uint32_t metadata_in)
 {
   auto cap = intern_->get_authorizing_capability();
-  champsim::address va = intern_->get_vaddr();
+  champsim::address va = cap.base + cap.offset;
 
   // access map records in VA space
   add_to_map(va, cap, false);

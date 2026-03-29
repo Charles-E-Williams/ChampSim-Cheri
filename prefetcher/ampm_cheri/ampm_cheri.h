@@ -1,31 +1,3 @@
-//=======================================================================================//
-// File             : ampm_cheri/ampm_cheri.h
-// Description      : CHERI-aware Access Map Pattern Matching (AMPM) prefetcher.
-//
-//                    Extends baseline AMPM (Ishii, Inaba, Hiraki — JILP 2011):
-//
-//                    1. Object-relative zones — capability base replaces page
-//                       boundary as the zone anchor, unifying multi-page objects.
-//                    2. Bounds clipping — prefetch candidates outside the
-//                       capability are suppressed via cheri::prefetch_safe().
-//                    3. Cross-page stride detection — object-relative offsets
-//                       make page boundaries invisible to pattern matching.
-//
-//                    The access map operates in virtual address space (using
-//                    current_v_address from the cache) so that cap-relative
-//                    offset computation (v_addr - cap.base) is valid. Prefetch
-//                    addresses are converted back to PA for issuance. Cross-page
-//                    prefetches within the same object are detected but can only
-//                    be issued when the candidate falls on the same VA page as
-//                    the current access (same-page PA reconstruction). A private
-//                    TLB cache would lift this restriction.
-//
-// NOTE             : Requires adding to CACHE (inc/cache.h):
-//                      champsim::address current_v_address{};
-//                    And in cache.cc (try_hit, before impl_prefetcher_cache_operate):
-//                      current_v_address = handle_pkt.v_address;
-//=======================================================================================//
-
 #ifndef PREFETCHER_AMPM_CHERI_H
 #define PREFETCHER_AMPM_CHERI_H
 

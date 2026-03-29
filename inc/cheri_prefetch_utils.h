@@ -8,6 +8,7 @@
 #include "address.h"
 #include "capability_memory.h"
 #include "champsim.h"
+#include "msl/lru_table.h"
 
 namespace cheri {
 
@@ -31,6 +32,55 @@ inline bool has_store(uint32_t perms)    { return (perms & PERM_STORE) != 0; }
 inline bool has_execute(uint32_t perms)  { return (perms & PERM_EXECUTE) != 0; }
 inline bool has_load_cap(uint32_t perms) { return (perms & PERM_LOAD_CAPABILITY) != 0; }
 inline bool has_seal(uint32_t perms)     { return (perms & PERM_SEAL) != 0; }
+
+
+class TLBClone {
+  private:
+  static constexpr std::size_t TLB_SETS = 128;
+  static constexpr std::size_t TLB_WAYS = 16;
+
+    struct tlb_entry {
+      uint64_t vpn;
+      uint64_t ppn;
+
+      auto index() const { return vpn; }
+      auto tag() const   { return vpn; }
+    };
+
+  champsim::msl::lru_table<tlb_entry> table{TLB_SETS, TLB_WAYS};
+
+  public:
+    // adds or updates a translation in the TLB clone
+    void fill(uint64_t va, uint64_t pa) {
+      uint64_t vpn = va >> LOG2_PAGE_SIZE;
+      uint64_t ppn = pa >> LOG2_PAGE_SIZE;
+      table.fill({vpn, ppn});
+    }
+
+    // Translates a VA to PA if present in the TLB clone
+    std::optional<uint64_t> translate(uint64_t va) {
+      uint64_t vpn = va >> LOG2_PAGE_SIZE;
+      
+      auto hit = table.check_hit({vpn, 0});
+      
+      if (hit.has_value()) {
+        // Reconstruct the physical address using the PPN and the original page offset
+        uint64_t page_offset = va & ((1ull << LOG2_PAGE_SIZE) - 1);
+        return (hit->ppn << LOG2_PAGE_SIZE) | page_offset;
+      }
+      // TLB Miss
+      return std::nullopt;
+    }
+
+    // Overload for ChampSim address types
+    std::optional<champsim::address> translate(champsim::address va) {
+      auto pa_val = translate(va.to<uint64_t>());
+      if (pa_val.has_value()) {
+          return champsim::address{pa_val.value()};
+      }
+      return std::nullopt;
+    }
+};
 
 
 // Virtual address (base + offset)
