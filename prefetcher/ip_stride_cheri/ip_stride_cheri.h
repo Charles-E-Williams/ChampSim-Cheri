@@ -21,23 +21,6 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     auto tag() const { return cap_hash; }
   };
 
-  struct tracker_entry {
-    champsim::address ip{};
-    champsim::block_number last_cl_addr{};
-    champsim::block_number::difference_type last_stride{};
-    
-    auto index() const
-    {
-      using namespace champsim::data::data_literals;
-      return ip.slice_upper<2_b>();
-    }
-    auto tag() const
-    {
-      using namespace champsim::data::data_literals;
-      return ip.slice_upper<2_b>();
-    }
-  };
-
   struct lookahead_entry {
     champsim::address address{};
     champsim::address::difference_type stride{};

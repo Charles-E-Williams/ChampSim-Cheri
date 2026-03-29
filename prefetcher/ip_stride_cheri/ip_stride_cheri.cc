@@ -35,9 +35,8 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
     if (found.has_value()) {
       cap_table_hits++;
       int64_t stride = current_offset - found->last_offset_accessed;
-
- 
-      if (stride != 0) {
+      
+      if (stride != 0 && stride == found->last_stride) {
         // Issue K prefetches at D stride, bounded by capability
         active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
         
