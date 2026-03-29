@@ -162,8 +162,11 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
       if (trackers_l1[index].str_dir == 1)
         pf_address = (cl_addr + i + 1) << LOG2_BLOCK_SIZE;
-      else
+      else {
+        if (cl_addr < static_cast<uint64_t>(i + 1))
+          break;
         pf_address = (cl_addr - i - 1) << LOG2_BLOCK_SIZE;
+      }
 
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;

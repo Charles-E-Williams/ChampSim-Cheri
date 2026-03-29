@@ -18,6 +18,16 @@ sms_cheri::region_info sms_cheri::decompose(uint64_t pa, const champsim::capabil
 {
   region_info ri{};
 
+  if (!cheri::is_tag_valid(cap)) {
+    ri.region_id      = (pa >> REGION_SIZE_LOG) << REGION_SIZE_LOG;
+    ri.offset         = static_cast<uint32_t>((pa >> LOG2_BLOCK_SIZE) & (region_cls() - 1));
+    ri.cap_base       = ri.region_id;
+    ri.cap_top        = ri.region_id + REGION_SIZE;
+    ri.demand_pa_page = pa & ~((1ULL << LOG2_PAGE_SIZE) - 1);
+    ri.demand_va_page = ri.demand_pa_page;
+    return ri;
+  }
+
   uint64_t cap_base = cap.base.to<uint64_t>();
   uint64_t cap_len  = cap.length.to<uint64_t>();
   uint64_t cap_top  = cap_base + cap_len;

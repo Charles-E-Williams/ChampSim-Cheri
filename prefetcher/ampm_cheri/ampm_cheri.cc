@@ -23,7 +23,8 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
   champsim::address va = intern_->get_vaddr();
 
   stat_cap_lookups++;
-  stat_cap_hits++;
+  if (cheri::is_tag_valid(cap))
+    stat_cap_hits++;
 
   // Access map records in VA space (v_addr - cap.base is meaningful)
   add_to_map(va, cap, false);

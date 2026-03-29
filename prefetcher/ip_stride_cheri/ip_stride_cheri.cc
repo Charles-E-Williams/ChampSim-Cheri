@@ -80,9 +80,12 @@ void ip_stride_cheri::prefetcher_cycle_operate()
       active_lookahead.reset();
       return;
     }
+  } else if (!(intern_->virtual_prefetch || champsim::page_number{pf_address} == champsim::page_number{old_pf_address})) {
+    active_lookahead.reset();
+    return;
   }
- 
-  if (intern_->virtual_prefetch || champsim::page_number{pf_address} == champsim::page_number{old_pf_address}) {
+
+  {
     const bool mshr_under_light_load = intern_->get_mshr_occupancy_ratio() < 0.5;
     const bool success = prefetch_line(pf_address, mshr_under_light_load, 0);
  
@@ -97,8 +100,6 @@ void ip_stride_cheri::prefetcher_cycle_operate()
  
     if (active_lookahead->degree == 0)
       active_lookahead.reset();
-  } else {
-    active_lookahead.reset();
   }
 }
 
