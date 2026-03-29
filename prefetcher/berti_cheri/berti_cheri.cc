@@ -300,21 +300,32 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
       uint64_t pf_page_addr = pf_line_addr >> L1D_PAGE_BLOCKS_BITS;
       uint64_t pf_offset = pf_line_addr & L1D_PAGE_OFFSET_MASK;
  
-      if (!l1d_requested_offset_current_pages_table(index, pf_offset)
-          && (!match_confidence || (((uint64_t)1 << pf_offset) & u_vector))) {
-        bool in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
- 
-        if (in_bounds) {
-          bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
-          if (prefetched) {
-            l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
-            stat_pf_issued_berti++;
-            if (pf_page_addr != page_addr)
-              stat_cross_page_in_object++;
-          }
-        } else 
-            stat_pf_bounded_by_cap++;
-        
+      bool in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
+      bool is_same_page = (pf_page_addr == page_addr);
+
+      if (in_bounds) {
+        if (is_same_page || intern_->virtual_prefetch) {
+            if (!l1d_requested_offset_current_pages_table(index, pf_offset)
+                && (!match_confidence || (((uint64_t)1 << pf_offset) & u_vector))) {
+              
+              bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
+              if (prefetched) {
+                // Safely track in the current page's entry
+                l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                stat_pf_issued_berti++;
+              }
+            }
+        } else {
+            // CROSS-PAGE: It is CHERI-safe, so we can issue the prefetch.
+            // However, we DO NOT track it in `index` to avoid corrupting the bitmap.
+            bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
+            if (prefetched) {
+                stat_pf_issued_berti++;
+                stat_cross_page_in_object++;
+            }
+        }
+      } else {
+          stat_pf_bounded_by_cap++;
       }
     }
   }
@@ -330,7 +341,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
 
   //  CHERI: determine region for filled address 
-//  Page-relative offset for fill — matches page-chunked region scheme 
+  //  Page-relative offset for fill — matches page-chunked region scheme 
   uint64_t offset = (addr >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
 
   // Search entries: bounds-check first, then verify region_addr matches the

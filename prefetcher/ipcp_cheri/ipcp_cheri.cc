@@ -109,9 +109,43 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   bool same_object = (cap_base_val == trackers_l1[index].cap_base);
 
   if (same_object) {
+    // Normal stride calculation within the same object
     stride = cl_offset - trackers_l1[index].last_cl_offset;
   } else {
-    stride = 0;
+    trackers_l1[index].cap_base = cap_base_val;
+    trackers_l1[index].cap_length = cap_length_val;
+    trackers_l1[index].last_cl_offset = cl_offset;
+    trackers_l1[index].last_stride = 0; 
+    
+    int ghb_index = 0;
+    for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
+      if (cl_addr == ghb_l1[ghb_index])
+        break;
+    if (ghb_index == NUM_GHB_ENTRIES) {
+      for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
+        ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
+      ghb_l1[0] = cl_addr;
+    }
+    
+    return 0;
+  }
+
+  if (stride > 63 || stride < -63) {
+    // Update the offset for future accesses, but abort training for this large jump
+    trackers_l1[index].last_cl_offset = cl_offset;
+    trackers_l1[index].last_stride = 0; 
+    
+    // We optionally update the GHB here so stream detection still works on absolute addresses
+    int ghb_index = 0;
+    for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
+      if (cl_addr == ghb_l1[ghb_index])
+        break;
+    if (ghb_index == NUM_GHB_ENTRIES) {
+      for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
+        ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
+      ghb_l1[0] = cl_addr;
+    }
+    return 0;
   }
 
   if (stride == 0)

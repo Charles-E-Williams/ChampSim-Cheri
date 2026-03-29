@@ -1,5 +1,5 @@
 //=======================================================================================//
-// File             : sms/sms.cc
+// File             : ipcp/ipcp.cc
 // Author           : Rahul Bera, SAFARI Research Group (write2bera@gmail.com)
 // Date             : 29/SEP/2025
 // Description      : Implements IPCP, ISCA'20
