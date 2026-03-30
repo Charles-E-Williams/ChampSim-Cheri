@@ -78,6 +78,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   //   base_va   = VA cursor for cross-page capability arithmetic
   auto base_addr = addr;
   uint64_t base_va = demand_va;
+  int64_t cap_cl_cursor = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);  
   uint32_t lookahead_conf = 100, pf_q_head = 0, pf_q_tail = 0;
   uint8_t do_lookahead = 0;
  
@@ -160,9 +161,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
             stat_tlb_miss++;
  
             if constexpr (GHR_ON) {
-              GHR.update_entry(curr_sig, confidence_q[i],
-                               spp_cheri::offset_type{champsim::address{pf_va}},
-                               delta_q[i]);
+              GHR.update_entry(curr_sig, confidence_q[i], cap_cl_cursor + delta_q[i], delta_q[i]);
             }
  
             if constexpr (SPP_DEBUG_PRINT) {
@@ -185,6 +184,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
  
       base_addr += (la_delta << LOG2_BLOCK_SIZE);
       base_va   += (static_cast<int64_t>(la_delta) << LOG2_BLOCK_SIZE);
+      cap_cl_cursor += la_delta;
  
       uint64_t abs_delta = (la_delta < 0) ? (-la_delta) : la_delta;
       uint64_t folded_magnitude;
@@ -248,7 +248,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
   uint32_t set = static_cast<uint32_t>(get_hash(cap_base_val) % ST_SET);
  
   auto match = ST_WAY;
-  offset_type page_offset{addr};
   uint8_t ST_hit = 0;
   long sig_delta = 0;
  
@@ -287,7 +286,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
         sig[set][match] = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
         curr_sig = sig[set][match];
         last_cap_cl_offset[set][match] = cap_cl_offset;
-        last_offset[set][match] = page_offset;  // keep in sync for GHR
       } else {
         last_sig = 0;  // same cache line, no delta
       }
@@ -304,7 +302,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
         valid[set][match] = 1;
         sig[set][match] = 0;
         curr_sig = 0;
-        last_offset[set][match] = page_offset;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
         last_cap_cl_offset[set][match] = cap_cl_offset;
@@ -319,7 +316,6 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
       if (lru[set][match] == ST_WAY - 1) {
         sig[set][match] = 0;
         curr_sig = 0;
-        last_offset[set][match] = page_offset;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
         last_cap_cl_offset[set][match] = cap_cl_offset;
@@ -338,7 +334,7 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
   //  GHR bootstrap for new pages 
   if constexpr (GHR_ON) {
     if (ST_hit == 0) {
-      uint32_t GHR_found = _parent->GHR.check_entry(page_offset);
+      uint32_t GHR_found = _parent->GHR.check_entry(cap_cl_offset);
       if (GHR_found < MAX_GHR_ENTRY) {
         auto ghr_delta = _parent->GHR.delta[GHR_found];
         uint64_t abs_delta = (ghr_delta < 0) ? (-ghr_delta) : ghr_delta;
@@ -494,12 +490,12 @@ bool spp_cheri::PREFETCH_FILTER::check(champsim::address check_addr, FILTER_REQU
 
 
 void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confidence,
-                                               offset_type pf_offset, int64_t pf_delta)
-{
+                                               int64_t pf_cap_cl_off, int64_t pf_delta)
+{                                              
   uint32_t min_conf = 100, victim_way = MAX_GHR_ENTRY;
 
   for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
-    if (valid[i] && (offset[i] == pf_offset)) {
+    if (valid[i] && (cap_cl_offset[i] == pf_cap_cl_off)) {
       sig[i] = pf_sig;
       confidence[i] = pf_confidence;
       delta[i] = pf_delta;
@@ -519,15 +515,15 @@ void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confi
   valid[victim_way] = 1;
   sig[victim_way] = pf_sig;
   confidence[victim_way] = pf_confidence;
-  offset[victim_way] = pf_offset;
+  cap_cl_offset[victim_way] = pf_cap_cl_off;
   delta[victim_way] = pf_delta;
 }
 
-uint32_t spp_cheri::GLOBAL_REGISTER::check_entry(offset_type page_offset)
+uint32_t spp_cheri::GLOBAL_REGISTER::check_entry(int64_t demand_cap_cl_off)
 {
   uint32_t max_conf = 0, max_conf_way = MAX_GHR_ENTRY;
   for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
-    if ((offset[i] == page_offset) && (max_conf < confidence[i])) {
+    if ((cap_cl_offset[i] == demand_cap_cl_off) && (max_conf < confidence[i])) {
       max_conf = confidence[i];
       max_conf_way = i;
     }

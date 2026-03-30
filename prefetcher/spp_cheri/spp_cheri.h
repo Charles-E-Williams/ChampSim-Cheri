@@ -70,7 +70,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
     spp_cheri* _parent;
 
     bool valid[ST_SET][ST_WAY];
-    offset_type last_offset[ST_SET][ST_WAY];   // page-relative last offset
     uint32_t sig[ST_SET][ST_WAY];
     uint32_t lru[ST_SET][ST_WAY];
     uint64_t cap_base[ST_SET][ST_WAY];         // capability base for this entry
@@ -82,7 +81,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
       for (uint32_t set = 0; set < ST_SET; set++)
         for (uint32_t way = 0; way < ST_WAY; way++) {
           valid[set][way] = 0;
-          last_offset[set][way] = offset_type{};
           sig[set][way] = 0;
           lru[set][way] = way;
           cap_base[set][way] = 0;
@@ -152,7 +150,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
 
     uint8_t valid[MAX_GHR_ENTRY];
     uint32_t sig[MAX_GHR_ENTRY], confidence[MAX_GHR_ENTRY];
-    offset_type offset[MAX_GHR_ENTRY];
+    int64_t cap_cl_offset[MAX_GHR_ENTRY];
     int64_t delta[MAX_GHR_ENTRY];
 
     GLOBAL_REGISTER()
@@ -164,13 +162,13 @@ struct spp_cheri : public champsim::modules::prefetcher {
         valid[i] = 0;
         sig[i] = 0;
         confidence[i] = 0;
-        offset[i] = offset_type{};
+        cap_cl_offset[i] = 0;
         delta[i] = 0;
       }
     }
 
-    void update_entry(uint32_t pf_sig, uint32_t pf_confidence, offset_type pf_offset, int64_t pf_delta);
-    uint32_t check_entry(offset_type page_offset);
+    void update_entry(uint32_t pf_sig, uint32_t pf_confidence, int64_t pf_cap_cl_off, int64_t pf_delta);
+    uint32_t check_entry(int64_t demand_cap_cl_off);
   };
 
   SIGNATURE_TABLE ST;
