@@ -26,7 +26,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
   auto cap = intern_->get_authorizing_capability();
   if (!cheri::is_prefetchable(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
     return metadata_in;
-
+    
   uint64_t addr = address.to<uint64_t>();
   uint64_t pc = ip.to<uint64_t>();
 
@@ -35,7 +35,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
 
   tlb_clone.fill(ri.demand_va_page, ri.demand_pa_page);
 
-  std::vector<std::pair<uint64_t, bool>> pref_addr;
+  std::vector<uint64_t> pref_addr;
 
   auto at_index = search_acc_table(ri.region_id);
   if (at_index != acc_table.end()) {

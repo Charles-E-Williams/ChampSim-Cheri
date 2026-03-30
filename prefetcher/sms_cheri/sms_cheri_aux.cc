@@ -204,7 +204,7 @@ uint64_t sms_cheri::create_signature(uint64_t pc, uint32_t offset)
 
 std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
                                          const region_info& ri,
-                                         std::vector<std::pair<uint64_t, bool>>& pref_addr)
+                                         std::vector<uint64_t>& pref_addr)
 {
   uint64_t signature = create_signature(pc, ri.offset);
   uint32_t set = 0;
@@ -222,13 +222,12 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
 
     uint64_t target_va = region_va_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
 
-    bool fill_l1 = true;
     // capability bounds check.
     if (!cheri::in_bounds(champsim::address{target_va},
                       champsim::address{ri.cap_base},
                       champsim::address{ri.cap_top})){
       stat_pref_bounds_clip++;
-      fill_l1 = false;
+      continue;
     }
 
     // check if access is on the same page as the demand access
@@ -236,14 +235,12 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     if ((target_va & ~page_mask) == ri.demand_va_page) {
       // Same page as demand access
       target_pa = ri.demand_pa_page | (target_va & page_mask); 
-      // std::cout << "same page access\n";
     } else {
       // Cross-page access
       auto translated_pa = tlb_clone.translate(target_va);
       stat_tlb_clone_accesses++;
       if (translated_pa.has_value()) {
         target_pa = translated_pa.value();
-        // std::cout << std::hex << target_pa << std::dec << std::endl;
         stat_tlb_clone_hit++;
       } else {
         stat_pref_page_clip++;
@@ -251,7 +248,7 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
       }
     }
 
-    pref_addr.push_back({target_pa, fill_l1});
+    pref_addr.push_back(target_pa);
   }
 
   update_age_pht(set, it);
@@ -259,7 +256,7 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
 }
 
 
-void sms_cheri::buffer_prefetch(std::vector<std::pair<uint64_t, bool>> pref_addr)
+void sms_cheri::buffer_prefetch(std::vector<uint64_t> pref_addr)
 {
   for (uint32_t i = 0; i < pref_addr.size(); ++i) {
     if (pref_buffer.size() >= PREF_BUFFER_SIZE)
@@ -272,9 +269,8 @@ void sms_cheri::issue_prefetch()
 {
   uint32_t count = 0;
   while (!pref_buffer.empty() && count < PREF_DEGREE) {
-    champsim::address pf_addr{pref_buffer.front().first};
-    bool fill_l1 = pref_buffer.front().second;  
-    const bool success = prefetch_line(pf_addr, fill_l1, 0);
+    champsim::address pf_addr{pref_buffer.front()};
+    const bool success = prefetch_line(pf_addr, true, 0);
     if (!success)
       break;
     pref_buffer.pop_front();

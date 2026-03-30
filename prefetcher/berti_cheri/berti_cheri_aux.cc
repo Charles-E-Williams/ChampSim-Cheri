@@ -14,7 +14,7 @@ uint64_t berti_cheri::l1d_make_region_key(uint64_t cap_base, uint64_t cap_page_i
 
 uint64_t berti_cheri::l1d_get_latency(uint64_t cycle, uint64_t cycle_prev)
 {
-  return cycle - cycle_prev;
+  // return cycle - cycle_prev;
   uint64_t cycle_masked = cycle & L1D_TIME_MASK;
   uint64_t cycle_prev_masked = cycle_prev & L1D_TIME_MASK;
   if (cycle_prev_masked > cycle_masked) {

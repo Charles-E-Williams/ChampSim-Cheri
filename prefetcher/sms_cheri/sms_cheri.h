@@ -30,8 +30,8 @@ private:
   std::deque<FTEntry*> filter_table;
   std::deque<ATEntry*> acc_table;
   std::vector<std::deque<PHTEntry*>> pht;
-  std::deque<std::pair<uint64_t, bool>> pref_buffer;
-  
+  std::deque<uint64_t> pref_buffer;
+
   // Decomposes a demand into (region_id, offset, cap metadata) using
   // capability bounds when available, page boundaries otherwise.
   struct region_info {
@@ -73,9 +73,9 @@ private:
   // addresses are bounds-checked and same-page constrained.
   std::size_t generate_prefetch(uint64_t pc, uint64_t pa,
                                 const region_info& ri,
-                                std::vector<std::pair<uint64_t, bool>>& pref_addr);
+                                std::vector<uint64_t>& pref_addr);
 
-  void buffer_prefetch(std::vector<std::pair<uint64_t, bool>> pref_addr);
+  void buffer_prefetch(std::vector<uint64_t> pref_addr);
   void issue_prefetch();
 
   //  Statistics 
