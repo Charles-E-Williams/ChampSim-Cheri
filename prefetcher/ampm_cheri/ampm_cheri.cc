@@ -20,7 +20,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
                                               access_type type, uint32_t metadata_in)
 {
   auto cap = intern_->get_authorizing_capability();
-  if (!cheri::is_prefetchable(cap) || !cheri::has_load_permissions(cap.permissions))
+  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions))
     return metadata_in;
 
 
@@ -59,4 +59,5 @@ void ampm_cheri::prefetcher_final_stats()
   std::cout << "  Bounded by cap:           " << stat_pf_bounded_by_cap << std::endl;
   std::cout << "  Cross-page detected:      " << stat_cross_page_detected << std::endl;
   std::cout << "  Cross-page cant issue:    " << stat_cross_page_cant_issue << std::endl;
+  tlb.print_stats();
 }

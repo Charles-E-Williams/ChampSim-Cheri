@@ -22,7 +22,7 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
   if (cheri::has_load_permissions(cap.permissions)) {
  
     // Skip single-element objects (too small to prefetch into)
-    if (!cheri::is_prefetchable(cap)) {
+    if (!cheri::has_prefetchable_range(cap)) {
       too_small_filtered++;
       return metadata_in;
     }

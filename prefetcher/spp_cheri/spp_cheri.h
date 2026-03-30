@@ -180,9 +180,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
   uint64_t stat_pf_bounded_by_cap = 0;  // prefetches clipped by capability bounds
   uint64_t stat_cross_page_in_cap = 0;  // cross-page deltas within same capability
   uint64_t stat_cross_page_pf = 0;
-  uint64_t stat_tlb_miss = 0;
-  uint64_t stat_inter_object_pf = 0;
-
   using prefetcher::prefetcher;
   void prefetcher_initialize();
   void prefetcher_cycle_operate();

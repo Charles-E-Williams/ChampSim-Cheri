@@ -24,7 +24,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
                                              uint32_t metadata_in)
 {
   auto cap = intern_->get_authorizing_capability();
-  if (!cheri::is_prefetchable(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
+  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
     return metadata_in;
     
   uint64_t addr = address.to<uint64_t>();
@@ -74,7 +74,6 @@ void sms_cheri::prefetcher_final_stats()
 {
   std::cout << "  Prefetches clipped (bounds):  " << stat_pref_bounds_clip << std::endl;
   std::cout << "  Prefetches clipped (page):    " << stat_pref_page_clip << std::endl;
-  std::cout << "  TLB Clone Hits:    " << stat_tlb_clone_hit<< std::endl;
-  std::cout << "  TLB Clone Accesses:    " << stat_tlb_clone_accesses << std::endl;
+  tlb_clone.print_stats();
 
 }

@@ -238,10 +238,8 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     } else {
       // Cross-page access
       auto translated_pa = tlb_clone.translate(target_va);
-      stat_tlb_clone_accesses++;
       if (translated_pa.has_value()) {
         target_pa = translated_pa.value();
-        stat_tlb_clone_hit++;
       } else {
         stat_pref_page_clip++;
         continue;

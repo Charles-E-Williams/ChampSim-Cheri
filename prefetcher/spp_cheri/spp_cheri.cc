@@ -157,9 +157,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
               }
             }
           } else {
-            // tlb miss
-            stat_tlb_miss++;
- 
+            // tlb miss 
             if constexpr (GHR_ON) {
               GHR.update_entry(curr_sig, confidence_q[i], cap_cl_cursor + delta_q[i], delta_q[i]);
             }
@@ -539,5 +537,5 @@ void spp_cheri::prefetcher_final_stats()
   std::cout << "  Cross-page deltas in cap:        " << stat_cross_page_in_cap << std::endl;
   std::cout << "  Prefetches bounded by cap:       " << stat_pf_bounded_by_cap << std::endl;
   std::cout << "  Cross-page prefetches issued: " << stat_cross_page_pf << std::endl;
-  std::cout << "  TLB misses (cross-page):      " << stat_tlb_miss << std::endl;
+  tlb.print_stats();
 }
