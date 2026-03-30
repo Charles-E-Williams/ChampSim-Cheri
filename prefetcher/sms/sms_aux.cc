@@ -134,7 +134,7 @@ void sms::insert_pht_table(ATEntry* atentry)
     phtentry->pattern = atentry->pattern;
     phtentry->age = 0;
     for (uint32_t index = 0; index < pht[set].size(); ++index)
-      pht[set][index]->age = 0;
+      pht[set][index]->age++;
     pht[set].push_back(phtentry);
   }
 }

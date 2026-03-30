@@ -17,7 +17,7 @@ class ampm_cheri : public champsim::modules::prefetcher {
   static constexpr unsigned ZONE_BITS       = 12;
 
 public:
-
+  cheri::TLBClone tlb;
   static std::size_t lines_per_zone() { return (1u << ZONE_BITS) / BLOCK_SIZE; }
 
   struct key_extent : champsim::dynamic_extent {
@@ -44,8 +44,21 @@ public:
     auto operator()(const region_type& e) const { return e.key; }
   };
 
+  static constexpr std::size_t REVMAP_SETS = 128;
+  static constexpr std::size_t REVMAP_WAYS = 4;  
   static constexpr std::size_t REGION_SETS = 64;
   static constexpr std::size_t REGION_WAYS = 4;
+
+  struct revmap_entry {
+      champsim::address pa_block{};
+      region_key_type   zone_key{};
+      std::size_t       zone_offset = 0;
+
+      auto index() const { return pa_block; }
+      auto tag()   const { return pa_block; }
+  };
+
+champsim::msl::lru_table<revmap_entry> reverse_map{REVMAP_SETS, REVMAP_WAYS};
 
   champsim::msl::lru_table<region_type, region_indexer, region_indexer> regions{REGION_SETS, REGION_WAYS};
 
@@ -53,7 +66,7 @@ public:
 
   auto zone_key_and_offset(champsim::address v_addr, const champsim::capability& cap) const -> std::pair<region_key_type, std::size_t>;
 
-  void add_to_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch);
+  void add_to_map(champsim::address v_addr, champsim::address pa, const champsim::capability& cap, bool prefetch);
   bool check_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch);
 
   void do_prefetch(CACHE* cache, champsim::address pa, champsim::address va,

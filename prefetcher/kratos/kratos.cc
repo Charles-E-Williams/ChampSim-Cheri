@@ -109,7 +109,7 @@ uint32_t kratos::prefetcher_cache_operate(champsim::address addr, champsim::addr
 
     // Pointer discovery on demand miss to small pointer-bearing object
     if (is_miss && cap_length <= CAP_SMALL_MAX
-        && cheri::has_load_cap(cap->permissions)) {
+        && cheri::has_load_cap_permissions(cap->permissions)) {
       ptr_discover(va, ip_val, p_page, cl_offset, *cap);
     }
     return metadata_in;
@@ -123,7 +123,7 @@ uint32_t kratos::prefetcher_cache_operate(champsim::address addr, champsim::addr
     ft_evict(ft_it);
 
     if (is_miss && cap_length <= CAP_SMALL_MAX
-        && cheri::has_load_cap(cap->permissions)) {
+        && cheri::has_load_cap_permissions(cap->permissions)) {
       ptr_discover(va, ip_val, p_page, cl_offset, *cap);
     }
     return metadata_in;
@@ -159,7 +159,7 @@ uint32_t kratos::prefetcher_cache_operate(champsim::address addr, champsim::addr
 
   // Pointer discovery
   if (is_miss && cap_length <= CAP_SMALL_MAX
-      && cheri::has_load_cap(cap->permissions)) {
+      && cheri::has_load_cap_permissions(cap->permissions)) {
     ptr_discover(va, ip_val, p_page, cl_offset, *cap);
   }
 

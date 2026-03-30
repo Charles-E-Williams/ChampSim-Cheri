@@ -30,8 +30,8 @@ private:
   std::deque<FTEntry*> filter_table;
   std::deque<ATEntry*> acc_table;
   std::vector<std::deque<PHTEntry*>> pht;
-  std::deque<uint64_t> pref_buffer;
-
+  std::deque<std::pair<uint64_t, bool>> pref_buffer;
+  
   // Decomposes a demand into (region_id, offset, cap metadata) using
   // capability bounds when available, page boundaries otherwise.
   struct region_info {
@@ -42,6 +42,9 @@ private:
     uint64_t demand_pa_page;
     uint64_t demand_va_page;
   };
+
+  cheri::TLBClone tlb_clone;
+
   region_info decompose(uint64_t pa, const champsim::capability& cap) const;
 
   std::deque<FTEntry*>::iterator search_filter_table(uint64_t region_id);
@@ -70,14 +73,17 @@ private:
   // addresses are bounds-checked and same-page constrained.
   std::size_t generate_prefetch(uint64_t pc, uint64_t pa,
                                 const region_info& ri,
-                                std::vector<uint64_t>& pref_addr);
+                                std::vector<std::pair<uint64_t, bool>>& pref_addr);
 
-  void buffer_prefetch(std::vector<uint64_t> pref_addr);
+  void buffer_prefetch(std::vector<std::pair<uint64_t, bool>> pref_addr);
   void issue_prefetch();
 
   //  Statistics 
   uint64_t stat_pref_bounds_clip = 0; // prefetches suppressed by cap bounds
   uint64_t stat_pref_page_clip = 0;  // prefetches suppressed by same-page
+  uint64_t stat_tlb_clone_hit = 0; 
+  uint64_t stat_tlb_clone_accesses = 0; 
+
 
 public:
   using champsim::modules::prefetcher::prefetcher;

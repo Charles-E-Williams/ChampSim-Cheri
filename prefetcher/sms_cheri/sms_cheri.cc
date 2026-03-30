@@ -23,16 +23,19 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
                                              access_type type,
                                              uint32_t metadata_in)
 {
+  auto cap = intern_->get_authorizing_capability();
+  if (!cheri::is_prefetchable(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
+    return metadata_in;
+
   uint64_t addr = address.to<uint64_t>();
   uint64_t pc = ip.to<uint64_t>();
-
-  auto cap = intern_->get_authorizing_capability();
 
 
   region_info ri = decompose(addr, cap);
 
+  tlb_clone.fill(ri.demand_va_page, ri.demand_pa_page);
 
-  std::vector<uint64_t> pref_addr;
+  std::vector<std::pair<uint64_t, bool>> pref_addr;
 
   auto at_index = search_acc_table(ri.region_id);
   if (at_index != acc_table.end()) {
@@ -71,4 +74,7 @@ void sms_cheri::prefetcher_final_stats()
 {
   std::cout << "  Prefetches clipped (bounds):  " << stat_pref_bounds_clip << std::endl;
   std::cout << "  Prefetches clipped (page):    " << stat_pref_page_clip << std::endl;
+  std::cout << "  TLB Clone Hits:    " << stat_tlb_clone_hit<< std::endl;
+  std::cout << "  TLB Clone Accesses:    " << stat_tlb_clone_accesses << std::endl;
+
 }

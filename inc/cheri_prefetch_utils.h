@@ -27,11 +27,11 @@ constexpr uint32_t PERM_ACCESS_SYSTEM_REGISTERS   = (1u << 10);
 constexpr uint32_t PERM_SET_CID                   = (1u << 11);
 
 
-inline bool has_load(uint32_t perms)     { return (perms & PERM_LOAD) != 0; }
-inline bool has_store(uint32_t perms)    { return (perms & PERM_STORE) != 0; }
-inline bool has_execute(uint32_t perms)  { return (perms & PERM_EXECUTE) != 0; }
-inline bool has_load_cap(uint32_t perms) { return (perms & PERM_LOAD_CAPABILITY) != 0; }
-inline bool has_seal(uint32_t perms)     { return (perms & PERM_SEAL) != 0; }
+inline bool has_load_permissions(uint32_t perms)     { return (perms & PERM_LOAD) != 0; }
+inline bool has_store_permissions(uint32_t perms)    { return (perms & PERM_STORE) != 0; }
+inline bool has_execute_permissions(uint32_t perms)  { return (perms & PERM_EXECUTE) != 0; }
+inline bool has_load_cap_permissions(uint32_t perms) { return (perms & PERM_LOAD_CAPABILITY) != 0; }
+inline bool has_seal_bit(uint32_t perms)     { return (perms & PERM_SEAL) != 0; }
 
 
 class TLBClone {
@@ -86,6 +86,7 @@ class TLBClone {
 // Virtual address (base + offset)
 inline champsim::address capability_cursor(const champsim::capability& cap)
 {
+  assert(cap.offset.to<uint64_t>() <= UINT64_MAX - cap.base.to<uint64_t>());
   return champsim::address{cap.base.to<uint64_t>() + cap.offset.to<uint64_t>()};
 }
 
@@ -153,11 +154,9 @@ inline int remaining_lines(champsim::block_number block, int direction,
 }
 
 //computes the cache-line offset with respect to the capability 
-inline int lines_from_cap_base(champsim::address addr, const champsim::capability& cap)
+inline int lines_from_cap_base(const champsim::capability& cap)
 {
-  int64_t byte_offset = static_cast<int64_t>(addr.to<uint64_t>())
-                      - static_cast<int64_t>(cap.base.to<uint64_t>());
-  return static_cast<int>(byte_offset >> LOG2_BLOCK_SIZE);
+    return static_cast<int>(cap.offset.to<uint64_t>() >> LOG2_BLOCK_SIZE);
 }
 
 // Objects spanning at most one cache line have nothing useful to prefetch.
@@ -170,18 +169,20 @@ inline uint64_t hash_capability(const champsim::capability& cap)
 {
   uint64_t b = cap.base.to<uint64_t>();
   uint64_t l = cap.length.to<uint64_t>();
-  uint64_t h = b ^ (l << 3) ^ (l >> 7);
-  h ^= (h >> 16);
-  h ^= (h >> 8);
+  
+  uint64_t h = b ^ (l + 0x9e3779b9 + (b << 6) + (b >> 2));
+  h ^= (h >> 33);
+  h *= 0xff51afd7ed558ccd;
+  h ^= (h >> 33);
   return h;
 }
 
 inline bool prefetch_safe(champsim::address pf_addr, const champsim::capability& cap)
 {
-  if (!is_tag_valid(cap)) return false;
-  if (has_seal(cap.permissions)) return false;
+  if (!is_tag_valid(cap) || has_seal_bit(cap.permissions)) 
+    return false;
 
-  return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load(cap.permissions);
+  return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load_permissions(cap.permissions);
 }
 
 inline void print_cap(const champsim::capability& cap)

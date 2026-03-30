@@ -17,8 +17,6 @@ public:
   // Used later for bounds-checked prefetch generation.
   uint64_t cap_base;
   uint64_t cap_top;         // cap_base + cap_length
-  uint64_t demand_pa_page;  // physical page of the triggering demand (for VA->PA)
-  uint64_t demand_va_page;  // virtual page of the triggering demand
 
 public:
   void reset()
@@ -28,8 +26,7 @@ public:
     trigger_offset = 0;
     cap_base = 0;
     cap_top = 0;
-    demand_pa_page = 0;
-    demand_va_page = 0;
+
   }
   FTEntry() { reset(); }
   ~FTEntry() {}
@@ -46,8 +43,6 @@ public:
 
   uint64_t cap_base;
   uint64_t cap_top;
-  uint64_t demand_pa_page;
-  uint64_t demand_va_page;
 
 public:
   void reset()
@@ -58,8 +53,6 @@ public:
     age = 0;
     cap_base = 0;
     cap_top = 0;
-    demand_pa_page = 0;
-    demand_va_page = 0;
   }
   ATEntry() { reset(); }
   ~ATEntry() {}

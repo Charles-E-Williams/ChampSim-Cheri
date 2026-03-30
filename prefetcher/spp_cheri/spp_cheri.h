@@ -9,8 +9,10 @@
 #include "modules.h"
 #include "cheri_prefetch_utils.h"
 #include "msl/lru_table.h"
+#include "capability_memory.h"
 
 struct spp_cheri : public champsim::modules::prefetcher {
+
 
   
   // SPP functional knobs
@@ -50,7 +52,8 @@ struct spp_cheri : public champsim::modules::prefetcher {
   constexpr static uint32_t GLOBAL_COUNTER_MAX = ((1 << GLOBAL_COUNTER_BIT) - 1);
   constexpr static std::size_t MAX_GHR_ENTRY = 8;
 
-  // Page offset extraction (same as vanilla SPP)
+
+  cheri::TLBClone tlb;
   struct block_in_page_extent : champsim::dynamic_extent {
     block_in_page_extent() : dynamic_extent(champsim::data::bits{LOG2_PAGE_SIZE}, champsim::data::bits{LOG2_BLOCK_SIZE}) {}
   };
@@ -62,13 +65,9 @@ struct spp_cheri : public champsim::modules::prefetcher {
 
   class SIGNATURE_TABLE
   {
-    struct tag_extent : champsim::dynamic_extent {
-      tag_extent() : dynamic_extent(champsim::data::bits{ST_TAG_BIT + LOG2_PAGE_SIZE}, champsim::data::bits{LOG2_PAGE_SIZE}) {}
-    };
 
   public:
     spp_cheri* _parent;
-    using tag_type = champsim::address_slice<tag_extent>;
 
     bool valid[ST_SET][ST_WAY];
     offset_type last_offset[ST_SET][ST_WAY];   // page-relative last offset
@@ -182,6 +181,9 @@ struct spp_cheri : public champsim::modules::prefetcher {
   // CHERI statistics
   uint64_t stat_pf_bounded_by_cap = 0;  // prefetches clipped by capability bounds
   uint64_t stat_cross_page_in_cap = 0;  // cross-page deltas within same capability
+  uint64_t stat_cross_page_pf = 0;
+  uint64_t stat_tlb_miss = 0;
+  uint64_t stat_inter_object_pf = 0;
 
   using prefetcher::prefetcher;
   void prefetcher_initialize();

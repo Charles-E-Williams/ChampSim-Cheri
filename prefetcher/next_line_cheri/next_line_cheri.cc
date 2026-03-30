@@ -14,7 +14,6 @@ uint32_t next_line_cheri::prefetcher_cache_operate(champsim::address addr, champ
   }
   
   prefetch_line(next_line_addr, true, metadata_in);
-  prefetches_issued++;
   return metadata_in;
 }
 
@@ -25,6 +24,5 @@ uint32_t next_line_cheri::prefetcher_cache_fill(champsim::address addr, long set
 
 void next_line_cheri::prefetcher_final_stats() {
   std::cout << "Next-Line CHERI Prefetcher Stats:" << "\n";
-  std::cout << "Prefetches Issued: " << prefetches_issued << "\n";
   std::cout << "Prefetches Bounded by Bounds: " << prefetches_bounded << "\n";
 }

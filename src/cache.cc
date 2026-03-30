@@ -279,7 +279,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   auto metadata_thru = handle_pkt.pf_metadata;
   auth_capability = handle_pkt.cap;
-  vaddr = handle_pkt.v_address;
 
   if (should_activate_prefetcher(handle_pkt) && !module_is_instr(handle_pkt)) { // limiting only to data line hits
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
@@ -884,8 +883,6 @@ std::vector<double> CACHE::get_wq_occupancy_ratio() const { return ::occupancy_r
 std::vector<double> CACHE::get_pq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_pq_occupancy(), get_pq_size()); }
 
 champsim::capability CACHE::get_authorizing_capability() const {return auth_capability; }
-
-champsim::address CACHE::get_vaddr() const {return vaddr; }
 
 void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetcher_initialize(); }
 

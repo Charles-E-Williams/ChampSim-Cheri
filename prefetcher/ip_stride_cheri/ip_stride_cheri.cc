@@ -19,7 +19,7 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
                                                    access_type type, uint32_t metadata_in)
 {
   const auto& cap = intern_->get_authorizing_capability();
-  if (cheri::has_load(cap.permissions)) {
+  if (cheri::has_load_permissions(cap.permissions)) {
  
     // Skip single-element objects (too small to prefetch into)
     if (!cheri::is_prefetchable(cap)) {
@@ -27,10 +27,10 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
       return metadata_in;
     }
  
-    uint64_t ch = cheri::hash_capability(cap);
-    int64_t current_offset = cheri::lines_from_cap_base(addr, cap);
+    uint64_t cap_hash = cheri::hash_capability(cap);
+    int64_t current_offset = cheri::lines_from_cap_base(cap);
  
-    auto found = cap_table.check_hit({ch, current_offset, 0, 0});
+    auto found = cap_table.check_hit({cap_hash, current_offset, 0, 0});
  
     if (found.has_value()) {
       cap_table_hits++;
@@ -39,17 +39,15 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
       if (stride != 0 && stride == found->last_stride) {
         // Issue K prefetches at D stride, bounded by capability
         active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
-        
       }
  
-      // Update entry with current offset
-      cap_table.fill({ch, current_offset, found->last_offset_prefetched,
+      cap_table.fill({cap_hash, current_offset, found->last_offset_prefetched,
                        stride != 0 ? stride : found->last_stride});
  
     } else {
-      // First access through this capability -- seed the table
+      // first access through this capability 
       cap_table_misses++;
-      cap_table.fill({ch, current_offset, 0, 0});
+      cap_table.fill({cap_hash, current_offset, 0, 0});
     }
   }
  
@@ -81,8 +79,8 @@ void ip_stride_cheri::prefetcher_cycle_operate()
  
     if (success) { 
       active_lookahead = {pf_address, stride, degree - 1, cap};
-    }
- 
+    } 
+    
     if (active_lookahead->degree == 0)
       active_lookahead.reset();
   } else {
@@ -95,7 +93,6 @@ uint32_t ip_stride_cheri::prefetcher_cache_fill(champsim::address addr, long set
 {
   return metadata_in;
 }
-
 
 void ip_stride_cheri::prefetcher_final_stats()
 {

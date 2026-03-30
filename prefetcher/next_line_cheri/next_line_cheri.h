@@ -17,10 +17,6 @@ struct next_line_cheri : public champsim::modules::prefetcher {
   void prefetcher_final_stats();
 
   uint64_t prefetches_bounded = 0;
-  uint64_t prefetches_issued = 0;
-
-  uint64_t cap_lookups = 0;
-  uint64_t cap_hits = 0;
  
   // void prefetcher_initialize();
   // void prefetcher_branch_operate(champsim::address ip, uint8_t branch_type, champsim::address branch_target) {}

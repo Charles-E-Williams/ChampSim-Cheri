@@ -184,8 +184,6 @@ public:
   std::deque<mshr_type> inflight_writes;
 
   champsim::capability auth_capability{};
-  champsim::address vaddr{};
-
 
   long operate() final;
   void initialize() final;
@@ -219,8 +217,6 @@ public:
   [[nodiscard]] std::vector<double> get_pq_occupancy_ratio() const;
 
   [[nodiscard]] champsim::capability get_authorizing_capability() const;
-  [[nodiscard]] champsim::address get_vaddr() const;
-
 
   [[deprecated("Use get_set_index() instead.")]] [[nodiscard]] uint64_t get_set(uint64_t address) const;
   [[deprecated("This function should not be used to access the blocks directly.")]] [[nodiscard]] uint64_t get_way(uint64_t address, uint64_t set) const;
