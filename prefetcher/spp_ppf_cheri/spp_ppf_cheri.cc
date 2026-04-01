@@ -250,7 +250,8 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
                 pf_q_head++;
             }
 
-            // Lookahead
+            // Lookahead (stock SPP behavior): once a PT way is selected, update path state.
+            // Loop continuation is still controlled by do_lookahead in the surrounding do/while.
             if (lookahead_way < PT_WAY) {
                 uint32_t set = get_hash(curr_sig) % PT_SET;
                 base_addr += (PT.delta[set][lookahead_way] << LOG2_BLOCK_SIZE);
@@ -353,7 +354,10 @@ void spp_ppf_cheri::PPF_Module::SIGNATURE_TABLE::read_and_update_sig(champsim::p
                 curr_sig = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
                 last_offset[set][match] = page_offset;
                 sig[set][match] = curr_sig;
-            } else last_sig = 0; // Hitting the same cache line, delta is zero
+            } else {
+                // Hitting the same cache line, delta is zero.
+                last_sig = 0;
+            }
 
             if (SPP_DEBUG_PRINT) {
                 std::cout << "[ST] " << __func__ << " HIT set: " << set << " way: " << match;
@@ -488,7 +492,7 @@ void spp_ppf_cheri::PPF_Module::PATTERN_TABLE::update_pattern(uint32_t last_sig,
             std::cout << " delta: " << delta[set][victim_way] << " c_delta: " << c_delta[set][victim_way] << " c_sig: " << c_sig[set] << std::endl;
         }
 
-        if(SPP_SANITY_CHECK) {
+        if (SPP_SANITY_CHECK) {
             // Assertion
             if (victim_way == PT_WAY) {
                 std::cout << "[PT] Cannot find a replacement victim!" << std::endl;
@@ -1014,7 +1018,8 @@ void spp_ppf_cheri::PPF_Module::PERCEPTRON::perc_update(champsim::address base_a
         }
     }
     if (direction && sum > NEG_UPDT_THRESHOLD && sum < POS_UPDT_THRESHOLD) {
-        // Prediction correct
+        // Prediction correct with moderate confidence: reinforce only when sum is between
+        // NEG_UPDT_THRESHOLD and POS_UPDT_THRESHOLD (i.e., not strongly saturated).
         for (int i = 0; i < PERC_FEATURES; i++) {
             if (sum >= PERC_THRESHOLD_HI) {
                 if (perc_weights[perc_set[i]][i] < PERC_COUNTER_MAX)
