@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include "cache.h"
+#include "modules.h"
 using namespace std;
 
 struct ppf_dueling : public champsim::modules::prefetcher {
