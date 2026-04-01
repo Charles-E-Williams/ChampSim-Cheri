@@ -8,9 +8,6 @@
 #include "spp_ppf.h"
 
 
-
-
-
 void spp_ppf::PPF_Module::init(CACHE* cache)
 {
     cache_ = cache;
@@ -30,7 +27,7 @@ void spp_ppf::prefetcher_initialize()
     module_.init(intern_);
 }
 
-void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address ip, uint32_t cpu, uint8_t cache_hit, bool useful_prefetch, access_type type,
+void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
                                         uint32_t metadata_in, double confidence_modifier)
 {
 
@@ -143,7 +140,7 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
                             int32_t hist_index = perc_sum_shifted / 10;
                             FILTER.hist_tots[hist_index]++;
                             //[DO NOT TOUCH]:	
-                            cache_->prefetch_line(pf_addr, (fill_level == SPP_L2C_PREFETCH),cpu,ip,fill_level == SPP_L2C_PREFETCH ? SPP_L2C_TARGET_ID : SPP_LLC_TARGET_ID,false,false); // Use addr (not base_addr) to obey the same physical page boundary
+                            cache_->prefetch_line(pf_addr, (fill_level == SPP_L2C_PREFETCH), 0); // Use addr (not base_addr) to obey the same physical page boundary
                             num_pf++;
 
                             // Only for stats
@@ -210,14 +207,14 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
 	    depth_track[depth]++;
 }
 
-uint32_t spp_ppf::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, uint8_t cache_hit, bool useful_prefetch, access_type type,
+uint32_t spp_ppf::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
 										uint32_t metadata_in)
 {
-    module_.do_prefetch(addr, ip, cpu, cache_hit, useful_prefetch, type, metadata_in);
+    module_.do_prefetch(addr, ip,  cache_hit, useful_prefetch, type, metadata_in);
     return metadata_in;
 }
 
-void spp_ppf::PPF_Module::handle_fill(champsim::address addr, uint32_t cpu, bool useless, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+void spp_ppf::PPF_Module::handle_fill(champsim::address addr,  long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
 {
 
     //prefetch dropped
@@ -234,9 +231,9 @@ void spp_ppf::PPF_Module::handle_fill(champsim::address addr, uint32_t cpu, bool
     }
 }
 
-uint32_t spp_ppf::prefetcher_cache_fill(champsim::address addr, uint32_t cpu, bool useless, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+uint32_t spp_ppf::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
 {
-    module_.handle_fill(addr, cpu, useless, set, way, prefetch, evicted_addr, metadata_in);
+    module_.handle_fill(addr,  set, way, prefetch, evicted_addr, metadata_in);
     return metadata_in;
 }
 
