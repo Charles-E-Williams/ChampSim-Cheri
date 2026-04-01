@@ -5,7 +5,6 @@
 #include <iostream>
 #include <optional>
 
-#include "address.h"
 #include "capability_memory.h"
 #include "champsim.h"
 #include "msl/lru_table.h"
