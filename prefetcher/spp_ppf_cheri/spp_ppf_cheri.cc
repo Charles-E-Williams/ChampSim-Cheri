@@ -241,7 +241,7 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
                                           << " twice: page boundary crossing detected for GHR update" << std::endl;
                             }
                         }
-                        GHR.update_entry(curr_sig, confidence_q[pf_q_head], offset_type{pf_addr}, delta_q[pf_q_head]);
+                        GHR.update_entry(curr_sig, confidence_q[i], offset_type{pf_addr}, delta_q[i]);
                         GHR.depth_val = 1;
                     }
                 }
@@ -251,15 +251,14 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
             }
 
             // Lookahead
-            if (do_lookahead && (lookahead_way < PT_WAY)) {
-                champsim::address pf_addr{champsim::block_number{base_addr} + delta_q[lookahead_way]};
+            if (lookahead_way < PT_WAY) {
+                uint32_t set = get_hash(curr_sig) % PT_SET;
+                base_addr += (PT.delta[set][lookahead_way] << LOG2_BLOCK_SIZE);
+                prev_delta += PT.delta[set][lookahead_way];
 
-                base_addr = pf_addr;
-                prev_delta = train_delta + delta_q[lookahead_way];
-
-                int sig_delta = (PT.delta[spp_ppf_cheri::get_hash(curr_sig) % PT_SET][lookahead_way] < 0)
-                    ? (((-1) * PT.delta[spp_ppf_cheri::get_hash(curr_sig) % PT_SET][lookahead_way]) + (1 << (SIG_DELTA_BIT - 1)))
-                    : PT.delta[spp_ppf_cheri::get_hash(curr_sig) % PT_SET][lookahead_way];
+                int sig_delta = (PT.delta[set][lookahead_way] < 0)
+                    ? (((-1) * PT.delta[set][lookahead_way]) + (1 << (SIG_DELTA_BIT - 1)))
+                    : PT.delta[set][lookahead_way];
                 curr_sig = ((curr_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
             }
 
@@ -354,7 +353,7 @@ void spp_ppf_cheri::PPF_Module::SIGNATURE_TABLE::read_and_update_sig(champsim::p
                 curr_sig = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
                 last_offset[set][match] = page_offset;
                 sig[set][match] = curr_sig;
-            }
+            } else last_sig = 0; // Hitting the same cache line, delta is zero
 
             if (SPP_DEBUG_PRINT) {
                 std::cout << "[ST] " << __func__ << " HIT set: " << set << " way: " << match;
@@ -405,7 +404,7 @@ void spp_ppf_cheri::PPF_Module::SIGNATURE_TABLE::read_and_update_sig(champsim::p
                 sig[set][victim_way] = parent_->GHR.sig[GHR_entry];
                 last_sig = sig[set][victim_way];
 
-                auto ghr_delta = champsim::offset(parent_->GHR.offset[GHR_entry], page_offset);
+                auto ghr_delta = parent_->GHR.delta[GHR_entry];
                 if (ghr_delta) {
                     sig_delta = (ghr_delta < 0) ? (((-1) * ghr_delta) + (1 << (SIG_DELTA_BIT - 1))) : ghr_delta;
                     curr_sig = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
@@ -439,65 +438,61 @@ void spp_ppf_cheri::PPF_Module::SIGNATURE_TABLE::read_and_update_sig(champsim::p
 
 void spp_ppf_cheri::PPF_Module::PATTERN_TABLE::update_pattern(uint32_t last_sig, typename offset_type::difference_type curr_delta)
 {
-    uint32_t set = spp_ppf_cheri::get_hash(last_sig) % PT_SET;
+    // Update (sig, delta) correlation
+    uint32_t set = spp_ppf_cheri::get_hash(last_sig) % PT_SET,
+             match = 0;
 
     // Case 1: Hit
-    for (uint32_t way = 0; way < PT_WAY; way++) {
-        if (delta[set][way] == curr_delta) {
-            c_delta[set][way]++;
+    for (match = 0; match < PT_WAY; match++) {
+        if (delta[set][match] == curr_delta) {
+            c_delta[set][match]++;
             c_sig[set]++;
-
             if (c_sig[set] > C_SIG_MAX) {
-                for (uint32_t w = 0; w < PT_WAY; w++)
-                    c_delta[set][w] >>= 1;
+                for (uint32_t way = 0; way < PT_WAY; way++)
+                    c_delta[set][way] >>= 1;
                 c_sig[set] >>= 1;
             }
 
             if (SPP_DEBUG_PRINT) {
-                std::cout << "[PT] " << __func__ << " HIT sig: " << std::hex << last_sig << std::dec;
-                std::cout << " set: " << set << " way: " << way << " delta: " << curr_delta;
-                std::cout << " c_delta: " << c_delta[set][way] << " c_sig: " << c_sig[set] << std::endl;
+                std::cout << "[PT] " << __func__ << " hit sig: " << std::hex << last_sig << std::dec << " set: " << set << " way: " << match;
+                std::cout << " delta: " << delta[set][match] << " c_delta: " << c_delta[set][match] << " c_sig: " << c_sig[set] << std::endl;
             }
-            return;
+
+            break;
         }
     }
 
-    // Case 2: Miss — replace minimum c_delta entry
-    uint32_t victim_way = 0, min_c_delta = C_DELTA_MAX;
-    for (uint32_t way = 0; way < PT_WAY; way++) {
-        if (c_delta[set][way] < min_c_delta) {
-            min_c_delta = c_delta[set][way];
-            victim_way = way;
+    // Case 2: Miss
+    if (match == PT_WAY) {
+        uint32_t victim_way = PT_WAY,
+                 min_counter = C_SIG_MAX;
+
+        for (match = 0; match < PT_WAY; match++) {
+            if (c_delta[set][match] < min_counter) { // Select an entry with the minimum c_delta
+                victim_way = match;
+                min_counter = c_delta[set][match];
+            }
         }
-    }
 
-    if (c_sig[set]) {
-        if (c_delta[set][victim_way] == 0) {
-            delta[set][victim_way] = curr_delta;
-            c_delta[set][victim_way] = 0;
-            c_sig[set]++;
-            if (c_sig[set] > C_SIG_MAX) {
-                for (uint32_t w = 0; w < PT_WAY; w++)
-                    c_delta[set][w] >>= 1;
-                c_sig[set] >>= 1;
-            }
-        } else {
-            // Saturate
-            c_delta[set][victim_way] = 0;
-            c_sig[set] = 0;
+        delta[set][victim_way] = curr_delta;
+        c_delta[set][victim_way] = 0;
+        c_sig[set]++;
+        if (c_sig[set] > C_SIG_MAX) {
+            for (uint32_t way = 0; way < PT_WAY; way++)
+                c_delta[set][way] >>= 1;
+            c_sig[set] >>= 1;
+        }
 
-            delta[set][victim_way] = curr_delta;
-            c_delta[set][victim_way] = 0;
-            c_sig[set]++;
-            if (c_sig[set] > C_SIG_MAX) {
-                for (uint32_t w = 0; w < PT_WAY; w++)
-                    c_delta[set][w] >>= 1;
-                c_sig[set] >>= 1;
-            }
+        if (SPP_DEBUG_PRINT) {
+            std::cout << "[PT] " << __func__ << " miss sig: " << std::hex << last_sig << std::dec << " set: " << set << " way: " << victim_way;
+            std::cout << " delta: " << delta[set][victim_way] << " c_delta: " << c_delta[set][victim_way] << " c_sig: " << c_sig[set] << std::endl;
+        }
 
-            if (SPP_DEBUG_PRINT) {
-                std::cout << "[PT] " << __func__ << " MISS sig: " << std::hex << last_sig << std::dec;
-                std::cout << " set: " << set << " way: " << victim_way << " delta: " << curr_delta << std::endl;
+        if(SPP_SANITY_CHECK) {
+            // Assertion
+            if (victim_way == PT_WAY) {
+                std::cout << "[PT] Cannot find a replacement victim!" << std::endl;
+                assert(0);
             }
         }
     }
@@ -581,21 +576,27 @@ void spp_ppf_cheri::PPF_Module::PATTERN_TABLE::read_pattern(uint32_t curr_sig,
                               << " c_sig: " << c_sig[set] << std::endl;
                 }
             } else {
-                // Perceptron rejected this candidate
-                // Compute remaining_cls for the reject direction
-                // (already computed above as cheri_remaining_cls)
-                parent_->FILTER.check(champsim::address{champsim::block_number{base_addr} + delta[set][way]},
-                    train_addr, curr_ip, SPP_PERC_REJECT,
-                    train_delta + delta[set][way], last_sig, curr_sig, pf_conf, perc_sum, depth,
-                    cheri_size_class, cheri_offset_cl, cheri_remaining_cls);
-                parent_->GHR.perc_reject++;
-
                 if (SPP_DEBUG_PRINT) {
                     std::cout << "[PT] " << __func__ << " LOW CONF: " << pf_conf
                               << " sig: " << std::hex << curr_sig << std::dec
                               << " set: " << set << " way: " << way
                               << " delta: " << delta[set][way] << " c_delta: " << c_delta[set][way]
                               << " c_sig: " << c_sig[set] << std::endl;
+                }
+            }
+
+            // Recording Perc negatives
+            if (pf_conf && pf_q_tail < parent_->cache_->get_mshr_size() && (perc_sum < PERC_THRESHOLD_HI)) {
+                // Note: Using PERC_THRESHOLD_HI as the deciding factor for negative case
+                // Because 'trueness' of a prefetch is decided based on the feedback from L2C
+                // So even though LLC prefetches go through, they are treated as false wrt L2C in this case
+                champsim::address pf_addr{champsim::block_number{champsim::address{base_addr}} + delta[set][way]};
+
+                if (champsim::page_number{champsim::address{addr}} == champsim::page_number{pf_addr}) { // Prefetch request is in the same physical page
+                    parent_->FILTER.check(pf_addr, train_addr, curr_ip, SPP_PERC_REJECT,
+                                          train_delta + delta[set][way], last_sig, curr_sig, pf_conf, perc_sum, depth,
+                                          cheri_size_class, cheri_offset_cl, cheri_remaining_cls);
+                    parent_->GHR.perc_reject++;
                 }
             }
         }
@@ -720,27 +721,11 @@ bool spp_ppf_cheri::PPF_Module::PREFETCH_FILTER::check(champsim::address check_a
                 }
                 return false;
             } else {
-                // LLC prefetch: don't set valid (stock behavior)
-                useful[quotient] = 0;
-                remainder_tag[quotient] = remainder;
-
-                // Log stock perc features
-                delta[quotient] = cur_delta;
-                pc[quotient] = ip;
-                pc_1[quotient] = parent_->GHR.ip_1;
-                pc_2[quotient] = parent_->GHR.ip_2;
-                pc_3[quotient] = parent_->GHR.ip_3;
-                last_signature[quotient] = last_sig;
-                cur_signature[quotient] = curr_sig;
-                confidence[quotient] = conf;
-                address[quotient] = base_addr;
-                perc_sum[quotient] = sum;
-                la_depth[quotient] = depth;
-
-                // Log CHERI features
-                cheri_size_class_log[quotient] = cheri_sc;
-                cheri_offset_cl_log[quotient] = cheri_oc;
-                cheri_remaining_cls_log[quotient] = cheri_rem;
+                // NOTE: SPP_LLC_PREFETCH has relatively low confidence
+                // Therefore, it is safe to prefetch this cache line in the large LLC and save precious L2C capacity
+                // If this prefetch request becomes more confident and SPP eventually issues SPP_L2C_PREFETCH,
+                // we can get this cache line immediately from the LLC (not from DRAM)
+                // To allow this fast prefetch from LLC, SPP does not set the valid bit for SPP_LLC_PREFETCH
 
                 if (SPP_DEBUG_PRINT) {
                     std::cout << "[FILTER] " << __func__ << " don't set valid for check_addr: " << std::hex << check_addr << " cache_line: " << cache_line << std::dec;
@@ -1027,7 +1012,8 @@ void spp_ppf_cheri::PPF_Module::PERCEPTRON::perc_update(champsim::address base_a
             std::cout << " Direction is: " << direction << " and target is: " << PERC_THRESHOLD_HI
                       << " and diff is: " << differential << std::endl;
         }
-    } else {
+    }
+    if (direction && sum > NEG_UPDT_THRESHOLD && sum < POS_UPDT_THRESHOLD) {
         // Prediction correct
         for (int i = 0; i < PERC_FEATURES; i++) {
             if (sum >= PERC_THRESHOLD_HI) {
