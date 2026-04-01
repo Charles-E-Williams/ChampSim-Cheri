@@ -156,7 +156,6 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
 
             do_lookahead = 0;
             for (uint32_t i = pf_q_head; i < pf_q_tail; i++) {
-
                 champsim::address pf_addr{(champsim::block_number{base_addr} + delta_q[i])};
                 int32_t perc_sum = perc_sum_q[i];
 
@@ -175,6 +174,8 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
 
                     // Pre-filter: optional region map check
                     if (region_map_check_ && region_map_check_(pf_addr)) {
+                        do_lookahead = 1;
+                        pf_q_head++;
                         continue;
                     }
 
@@ -184,6 +185,8 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
                     uint64_t pf_va = demand_va + (static_cast<int64_t>(delta_q[i]) << LOG2_BLOCK_SIZE);
                     if (!cheri::prefetch_safe(champsim::address{pf_va}, cap)) {
                         stat_pf_bounded_by_cap++;
+                        do_lookahead = 1;
+                        pf_q_head++;
                         continue; // Suppress out-of-bounds prefetch
                     }
 
@@ -222,6 +225,7 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
                             if (fill_level == SPP_LLC_PREFETCH) GHR.pf_llc++;
 
                             GHR.perc_pass++;
+                            GHR.depth_val = 1;
                             num_pf++;
 
                             if (SPP_DEBUG_PRINT) {
@@ -242,10 +246,8 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
                             }
                         }
                         GHR.update_entry(curr_sig, confidence_q[i], offset_type{pf_addr}, delta_q[i]);
-                        GHR.depth_val = 1;
                     }
                 }
-
                 do_lookahead = 1;
                 pf_q_head++;
             }
