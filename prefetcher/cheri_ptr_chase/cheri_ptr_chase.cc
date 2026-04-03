@@ -27,7 +27,6 @@ uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champ
     pct_train(ip, true);
 
     if (target_cursor != 0) {
-      // 1. Prefetch the direct target
       champsim::address target_addr{target_cursor};
       if (!filter.test(target_addr)) {
         filter.add(target_addr);
