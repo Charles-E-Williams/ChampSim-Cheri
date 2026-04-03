@@ -88,6 +88,8 @@ class bulk_tracereader
   constexpr static std::size_t buffer_size = 128;
   constexpr static std::size_t refresh_thresh = 1;
   std::deque<ooo_model_instr> instr_buffer;
+  bool presimpoint_done = false;
+  uint64_t presimpoint_count = 0;
 
 public:
   ooo_model_instr operator()();
@@ -125,25 +127,34 @@ ooo_model_instr bulk_tracereader<T, F>::operator()()
     auto begin = std::begin(trace_read_buf);
     auto end = std::next(begin, bytes_read / sizeof(T));
 
+
     for (auto it = begin; it != end; ++it) {
       if constexpr (std::is_same_v<T, cheri_instr>) {
-        if (it->cap_op == static_cast<unsigned char>(champsim::cap_op_type::PRESIMPOINT)) {
-          for (const auto& dmem : it->destination_memory) {
-            if (dmem == 0) continue;
-            champsim::capability transferred{
-                champsim::address{it->cap_offset},
-                champsim::address{it->cap_base},
-                champsim::address{it->cap_length},
-                it->cap_perms,
-                static_cast<bool>(it->cap_tag)
-            };
-            if (transferred.tag)
-              champsim::cap_mem[cpu].store_capability(champsim::address{dmem}, transferred);
-            else
-              champsim::cap_mem[cpu].invalidate_tag(champsim::address{dmem});
+          if (it->cap_op == static_cast<unsigned char>(champsim::cap_op_type::PRESIMPOINT)) {
+              for (const auto& dmem : it->destination_memory) {
+                  if (dmem == 0) continue;
+                  champsim::capability transferred{
+                      champsim::address{it->cap_offset},
+                      champsim::address{it->cap_base},
+                      champsim::address{it->cap_length},
+                      it->cap_perms,
+                      static_cast<bool>(it->cap_tag)
+                  };
+                  if (transferred.tag)
+                      champsim::cap_mem[cpu].store_capability(champsim::address{dmem}, transferred);
+                  else
+                      champsim::cap_mem[cpu].invalidate_tag(champsim::address{dmem});
+              }
+              presimpoint_count++;
+              continue;
           }
-          continue;
-        }
+
+          if (!presimpoint_done) {
+              presimpoint_done = true;
+              fmt::print("[TRACE] CPU {} presimpoint phase complete: {} entries processed, "
+                        "cap_mem size: {}\n",
+                        cpu, presimpoint_count, champsim::cap_mem[cpu].size());
+          }
       }
       instr_buffer.push_back(ooo_model_instr{cpu, *it});
     }

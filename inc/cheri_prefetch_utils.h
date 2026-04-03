@@ -95,6 +95,8 @@ public:
               << "  hits: " << stat_hits
               << "  misses: " << misses
               << "  hit rate: " << hit_rate << "%\n";
+    double tlb_mpki = static_cast<double>(misses) / 1'000'000.0;
+    fmt::print("PCT TLBClone MPKI: {:.4f}\n", tlb_mpki);
   }
 };
 
