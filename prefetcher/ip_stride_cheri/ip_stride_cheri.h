@@ -17,7 +17,7 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     int64_t  last_offset_prefetched{};      // most recent offset prefetched 
     int64_t  last_stride{};                 // last observed stride
  
-    auto index() const { return cap_hash; }
+    auto index() const { return cap_hash & INT64_MAX; }
     auto tag() const { return cap_hash; }
   };
 

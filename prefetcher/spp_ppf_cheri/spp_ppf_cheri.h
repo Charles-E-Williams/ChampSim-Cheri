@@ -7,6 +7,8 @@
 #include "address.h"
 #include "champsim.h"
 #include "modules.h"
+#include "cheri_prefetch_utils.h" 
+#include "cache.h"
 
 using namespace std;
 
@@ -73,7 +75,7 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 
 	// Perceptron paramaters
 	constexpr static unsigned PERC_ENTRIES = 4096; //Upto 12-bit addressing in hashed perceptron
-	constexpr static unsigned PERC_FEATURES = 9; //Keep increasing based on new features
+	constexpr static unsigned PERC_FEATURES = 13; //Keep increasing based on new features
 	constexpr static unsigned PERC_COUNTER_MAX = 15; //-16 to +15: 5 bits counter 
 	constexpr static long PERC_THRESHOLD_HI = 75;
 	constexpr static long PERC_THRESHOLD_LO = -15;
@@ -82,7 +84,23 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 
 	enum FILTER_REQUEST {SPP_L2C_PREFETCH, SPP_LLC_PREFETCH, L2C_DEMAND, L2C_EVICT, SPP_PERC_REJECT}; // Request type for prefetch filter
 
-	static uint64_t get_hash(uint64_t key);
+	static uint64_t get_hash(uint64_t key) 
+	{
+    // Robert Jenkins' 32 bit mix function
+    key += (key << 12);
+    key ^= (key >> 22);
+    key += (key << 4);
+    key ^= (key >> 9);
+    key += (key << 10);
+    key ^= (key >> 2);
+    key += (key << 7);
+    key ^= (key >> 12);
+
+    // Knuth's multiplicative method
+    key = (key >> 3) * 2654435761;
+
+    return key;
+	}
 
 	struct block_in_page_extent : champsim::dynamic_extent {
     block_in_page_extent() : dynamic_extent(champsim::data::bits{LOG2_PAGE_SIZE}, champsim::data::bits{LOG2_BLOCK_SIZE}) {}
@@ -153,7 +171,20 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 			}
 
 			void update_pattern(uint32_t last_sig, typename offset_type::difference_type curr_delta),
-				read_pattern(uint32_t curr_sig, std::vector<typename offset_type::difference_type>& prefetch_delta, std::vector<uint32_t>& confidence_q, std::vector<int32_t>& perc_sum_q, uint32_t &lookahead_way, uint32_t &lookahead_conf, uint32_t &pf_q_tail, uint32_t &depth, champsim::address addr, champsim::address base_addr, champsim::address train_addr, champsim::address curr_ip, champsim::block_number::difference_type train_delta, uint32_t last_sig, uint32_t pq_occupancy, uint32_t pq_SIZE, uint32_t mshr_occupancy, uint32_t mshr_SIZE);
+			read_pattern(uint32_t curr_sig,
+				std::vector<typename offset_type::difference_type>& delta_q,
+				std::vector<uint32_t>& confidence_q,
+				std::vector<int32_t>& perc_sum_q,
+				uint32_t& lookahead_way, uint32_t& lookahead_conf,
+				uint32_t& pf_q_tail, uint32_t& depth,
+				champsim::address addr, champsim::address base_addr,
+				champsim::address train_addr, champsim::address curr_ip,
+				typename offset_type::difference_type train_delta,
+				uint32_t last_sig,
+				uint32_t pq_occupancy, uint32_t pq_SIZE,
+				uint32_t mshr_occupancy, uint32_t mshr_SIZE,
+				uint64_t cap_base_val, uint64_t cap_length_val,
+				uint64_t cap_offset_val); 
 		};
 
 		class PREFETCH_FILTER {
@@ -165,7 +196,7 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 					pc_2[FILTER_SET],
 					pc_3[FILTER_SET],
 					address[FILTER_SET];
-			bool     valid[FILTER_SET],  // Consider this as "prefetched"
+			bool    valid[FILTER_SET],  // Consider this as "prefetched"
 					useful[FILTER_SET]; // Consider this as "used"
 			typename offset_type::difference_type	 delta[FILTER_SET];
 			int32_t perc_sum[FILTER_SET];
@@ -173,6 +204,10 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 					confidence[FILTER_SET],
 					cur_signature[FILTER_SET],
 					la_depth[FILTER_SET];
+					//CHERI METADATA
+			uint64_t cap_base_pf[FILTER_SET],
+					cap_length_pf[FILTER_SET],
+					cap_offset_pf[FILTER_SET];
 
 			uint64_t remainder_tag_reject[FILTER_SET_REJ];
 			champsim::address pc_reject[FILTER_SET_REJ],
@@ -187,10 +222,11 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 					confidence_reject[FILTER_SET_REJ],
 					cur_signature_reject[FILTER_SET_REJ],
 					la_depth_reject[FILTER_SET_REJ];
+					//CHERI 
+			uint64_t cap_base_reject[FILTER_SET_REJ],
+					 cap_length_reject[FILTER_SET_REJ],
+					 cap_offset_reject[FILTER_SET_REJ];
 
-			// Tried the set-dueling idea which din't work out
-			uint32_t PSEL_1;
-			uint32_t PSEL_2;
 
 			// To enable / disable negative training using reject filter
 			// Set to 1 in the prefetcher file
@@ -219,7 +255,14 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 				train_neg = 0;
 			}
 
-			bool     check(champsim::address pf_addr,champsim::address base_addr, champsim::address ip, FILTER_REQUEST filter_request, champsim::block_number::difference_type cur_delta, uint32_t last_sign, uint32_t cur_sign, uint32_t confidence, int32_t sum, uint32_t depth);
+			bool  check(champsim::address pf_addr,
+					champsim::address base_addr, champsim::address ip,
+					FILTER_REQUEST filter_request,
+					champsim::block_number::difference_type cur_delta,
+					uint32_t last_sig, uint32_t curr_sig,
+					uint32_t confidence, int32_t sum, uint32_t depth,
+					uint64_t cap_base_val, uint64_t cap_length_val,
+					uint64_t cap_offset_val);
 		};
 
 		class PERCEPTRON {
@@ -249,6 +292,12 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 				PERC_DEPTH[7] = 2048;   //ip ^ sig_delta;
 				PERC_DEPTH[8] = 128;   	//confidence;
 
+				/*CHERI EXTENSIONS*/
+				PERC_DEPTH[9] = 4096;  // capability base;
+				PERC_DEPTH[10] = 128;  // size ^ confidence
+				PERC_DEPTH[11] = 128;   // position ^ depth
+				PERC_DEPTH[12] = 1024; // capability base ^ sig_delta
+
 				for (int i = 0; i < PERC_ENTRIES; i++) {
 					for (int j = 0;j < PERC_FEATURES; j++) {
 						perc_weights[i][j] = 0;
@@ -257,8 +306,24 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 				}
 			}
 
-			void	 perc_update(champsim::address check_addr, champsim::address ip, champsim::address ip_1, champsim::address ip_2, champsim::address ip_3, champsim::block_number::difference_type cur_delta, uint32_t last_sig, uint32_t curr_sig, uint32_t confidence, uint32_t depth, bool direction, int32_t perc_sum);
-			int32_t	perc_predict(champsim::address check_addr, champsim::address ip, champsim::address ip_1, champsim::address ip_2, champsim::address ip_3, champsim::block_number::difference_type cur_delta, uint32_t last_sig, uint32_t curr_sig, uint32_t confidence, uint32_t depth);
+				int32_t perc_predict(champsim::address check_addr,
+					champsim::address ip, champsim::address ip_1,
+					champsim::address ip_2, champsim::address ip_3,
+					champsim::block_number::difference_type cur_delta,
+					uint32_t last_sig, uint32_t curr_sig,
+					uint32_t confidence, uint32_t depth,
+					uint64_t cap_base_val, uint64_t cap_length_val,
+					uint64_t cap_offset_val);
+
+				void perc_update(champsim::address check_addr,
+					champsim::address ip, champsim::address ip_1,
+					champsim::address ip_2, champsim::address ip_3,
+					champsim::block_number::difference_type cur_delta,
+					uint32_t last_sig, uint32_t curr_sig,
+					uint32_t confidence, uint32_t depth,
+					bool direction, int32_t perc_sum,
+					uint64_t cap_base_val, uint64_t cap_length_val,
+					uint64_t cap_offset_val);
 		};
 
 		class GLOBAL_REGISTER {
@@ -294,6 +359,7 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 			long 	  perc_pass,
 					perc_reject,
 					reject_update;
+			uint64_t stat_pf_bounded_by_cap = 0;
 			// Stats
 
 			GLOBAL_REGISTER() {
@@ -338,10 +404,20 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 
 		int depth_track[30];
 
-		void get_perc_index(champsim::address base_addr, champsim::address ip, champsim::address ip_1,champsim::address ip_2, champsim::address ip_3, champsim::block_number::difference_type cur_delta, uint32_t last_sig, uint32_t curr_sig, uint32_t confidence, uint32_t depth, uint64_t* perc_set);
+		void get_perc_index(champsim::address base_addr,
+			champsim::address ip, champsim::address ip_1,
+			champsim::address ip_2, champsim::address ip_3,
+			typename offset_type::difference_type cur_delta,
+			uint32_t last_sig, uint32_t curr_sig,
+			uint32_t confidence, uint32_t depth,
+			uint64_t cap_base_val, uint64_t cap_length_val,
+			uint64_t cap_offset_val,
+			uint64_t* perc_set);
 
 		void init(CACHE* cache);
-		void do_prefetch(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in,
+		void do_prefetch(champsim::address addr, champsim::address ip, 
+						 uint8_t cache_hit, bool useful_prefetch, 
+						 access_type type, uint32_t metadata_in, champsim::capability& cap,
 		                 double confidence_modifier = 1.0);
 		void handle_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in);
 		void final_stats();
