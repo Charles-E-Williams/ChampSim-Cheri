@@ -27,7 +27,8 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
       return metadata_in;
     }
  
-    uint64_t cap_hash = cheri::hash_capability(cap);
+    uint64_t raw_hash = cheri::hash_capability(cap);
+    uint64_t cap_hash = raw_hash ^ (ip.to<uint64_t>() * 0x517cc1b727220a95ULL);
     int64_t current_offset = cheri::lines_from_cap_base(cap);
  
     auto found = cap_table.check_hit({cap_hash, current_offset, 0, 0});
