@@ -85,9 +85,11 @@ bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability&
   auto [key, offset] = zone_key_and_offset(v_addr, cap);
   auto region = regions.check_hit(region_type{key});
 
+  if (!region.has_value()) return false;
+
+
   if (global_access_cycle - region->age > STALE_THRESHOLD) return false; 
   
-  if (!region.has_value()) return false;
   return prefetch ? region->prefetch_map.at(offset) : region->access_map.at(offset);
 }
 

@@ -171,5 +171,5 @@
     "minor_fault_penalty": 200,
     "randomization": 1
   },
-  "executable_name": "champsim_cheri_ampm"
+  "executable_name": "champsim_no_pf"
 }

@@ -815,6 +815,9 @@ void spp_ppf_cheri::PPF_Module::get_perc_index(champsim::address base_addr,
 	auto sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
 	uint64_t  pre_hash[PERC_FEATURES];
 
+    uint32_t size_class = (cap_length_val > 0) ? static_cast<uint32_t>(63 - __builtin_clzll(cap_length_val)) : 0;
+    uint32_t position = (cap_offset_val > 0) ? static_cast<uint32_t>((cap_offset_val << 7) >> (63 - __builtin_clzll(cap_length_val | 1))) : 0;
+
 	pre_hash[0] = base_addr.to<uint64_t>();
 	pre_hash[1] = cache_line.to<uint64_t>();
 	pre_hash[2] = page_addr.to<uint64_t>();
@@ -825,8 +828,8 @@ void spp_ppf_cheri::PPF_Module::get_perc_index(champsim::address base_addr,
 	pre_hash[7] = ip.to<uint64_t>() ^ sig_delta;
 	pre_hash[8] = confidence;
     pre_hash[9] = cap_base_val;
-    pre_hash[10] = static_cast<uint32_t>(63 - __builtin_clzll(cap_length_val)) ^ confidence;
-    pre_hash[11] = static_cast<uint32_t>((cap_offset_val << 7) >> (63 - __builtin_clzll(cap_length_val | 1))) ^ sig_delta; 
+    pre_hash[10] = size_class ^ confidence;
+    pre_hash[11] = position ^ sig_delta; 
     pre_hash[12] = cap_base_val ^ sig_delta;
 
 	for (unsigned i = 0; i < PERC_FEATURES; i++) {
