@@ -33,9 +33,9 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
 
  
   //  Compute region identity and offset 
-  uint64_t cap_page_index = (addr - cap_base) >> LOG2_PAGE_SIZE;
+  uint64_t cap_page_index = (addr - cap_base) >> L1D_REGION_BITS;
   uint64_t region_addr = l1d_make_region_key(cap_base, cap_page_index);
-  uint64_t chunk_byte_offset = (addr - cap_base) - (cap_page_index << LOG2_PAGE_SIZE);
+  uint64_t chunk_byte_offset = (addr - cap_base) - (cap_page_index << L1D_REGION_BITS);
   uint64_t bitmap_offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
  
   uint64_t line_addr = addr >> LOG2_BLOCK_SIZE;
@@ -178,9 +178,9 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
             if ((int)i >= L1D_PAGE_BLOCKS)
               break;
   
-            uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+            uint64_t chunk_start = cap_base + (cap_page_index << L1D_REGION_BITS);
             uint64_t pf_addr = chunk_start + (i << LOG2_BLOCK_SIZE);
-            uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
+            uint64_t pf_page_addr = pf_addr >> L1D_REGION_BITS;
  
             if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, i)) {
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
@@ -209,9 +209,9 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
             if (i < 0)
               break;
   
-            uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+            uint64_t chunk_start = cap_base + (cap_page_index << L1D_REGION_BITS);
             uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
-            uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
+            uint64_t pf_page_addr = pf_addr >> L1D_REGION_BITS;
  
             if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, (uint64_t)i)) {
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
@@ -243,7 +243,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                i++, j = (int)((first_offset << 1) - i)) {
             // Dir ++
             if (i < L1D_PAGE_BLOCKS) {
-              uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+              uint64_t chunk_start = cap_base + (cap_page_index << L1D_REGION_BITS);
               uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
               uint64_t pf_offset = (uint64_t)i;
  
@@ -269,7 +269,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
             }
             // Dir --
             if (j >= 0) {
-              uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+              uint64_t chunk_start = cap_base + (cap_page_index << L1D_REGION_BITS);
               uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(j) << LOG2_BLOCK_SIZE);
               uint64_t pf_offset = (uint64_t)j;
  
@@ -302,14 +302,14 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
     //  Single berti-distance prefetch 
     if (b != 0) {
       uint64_t pf_addr = addr + (static_cast<int64_t>(b) << LOG2_BLOCK_SIZE);
-      uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
+      uint64_t pf_page_addr = pf_addr >> L1D_REGION_BITS;
 
       bool in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
       bool is_same_page = (pf_page_addr == page_addr);
 
       if (in_bounds) {
-        uint64_t pf_cap_page_index = (pf_addr - cap_base) >> LOG2_PAGE_SIZE;
-        uint64_t pf_chunk_byte_offset = (pf_addr - cap_base) - (pf_cap_page_index << LOG2_PAGE_SIZE);
+        uint64_t pf_cap_page_index = (pf_addr - cap_base) >> L1D_REGION_BITS;
+        uint64_t pf_chunk_byte_offset = (pf_addr - cap_base) - (pf_cap_page_index << L1D_REGION_BITS);
         uint64_t pf_offset = pf_chunk_byte_offset >> LOG2_BLOCK_SIZE;
         if (is_same_page || intern_->virtual_prefetch) {
             if (!l1d_requested_offset_current_pages_table(index, pf_offset)
@@ -359,7 +359,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
     uint64_t entry_cap_base = l1d_current_pages_table[i].cap_base;
     uint64_t cap_top = entry_cap_base + l1d_current_pages_table[i].cap_length;
     if (addr >= entry_cap_base && addr < cap_top) {
-      uint64_t cap_page_idx = (addr - entry_cap_base) >> LOG2_PAGE_SIZE;
+      uint64_t cap_page_idx = (addr - entry_cap_base) >> L1D_REGION_BITS;
       uint64_t expected_region = l1d_make_region_key(entry_cap_base, cap_page_idx);
       if (l1d_current_pages_table[i].region_addr == expected_region) {
         pointer_prev = i;
@@ -370,8 +370,8 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
 
   if (pointer_prev < L1D_CURRENT_PAGES_TABLE_ENTRIES) {
     uint64_t entry_cap_base = l1d_current_pages_table[pointer_prev].cap_base;
-    uint64_t cap_page_idx = (addr - entry_cap_base) >> LOG2_PAGE_SIZE;
-    uint64_t chunk_byte_offset = (addr - entry_cap_base) - (cap_page_idx << LOG2_PAGE_SIZE);
+    uint64_t cap_page_idx = (addr - entry_cap_base) >> L1D_REGION_BITS;
+    uint64_t chunk_byte_offset = (addr - entry_cap_base) - (cap_page_idx << L1D_REGION_BITS);
     uint64_t offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
 
     uint64_t entry_region_addr = l1d_current_pages_table[pointer_prev].region_addr;
@@ -403,7 +403,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
     uint64_t entry_cap_base = l1d_current_pages_table[i].cap_base;
     uint64_t cap_top = entry_cap_base + l1d_current_pages_table[i].cap_length;
     if (evicted_addr >= entry_cap_base && evicted_addr < cap_top) {
-      uint64_t cap_page_idx = (evicted_addr - entry_cap_base) >> LOG2_PAGE_SIZE;
+      uint64_t cap_page_idx = (evicted_addr - entry_cap_base) >> L1D_REGION_BITS;
       uint64_t expected_region = l1d_make_region_key(entry_cap_base, cap_page_idx);
       if (l1d_current_pages_table[i].region_addr == expected_region) {
         victim_index = i;

@@ -124,29 +124,32 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
     trackers_l1[index].cap_base = cap_base_val;
     trackers_l1[index].cap_length = cap_length_val;
-    trackers_l1[index].last_cl_offset = cl_offset;
 
     if (!restored) {
+      trackers_l1[index].last_cl_offset = cl_offset;
       trackers_l1[index].last_stride = 0;
       trackers_l1[index].signature = 0;
       trackers_l1[index].conf = 0;
       trackers_l1[index].str_valid = 0;
       trackers_l1[index].str_strength = 0;
       trackers_l1[index].str_dir = 0;
+
+      int ghb_index = 0;
+      for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
+        if (cl_offset == ghb_l1[ghb_index].cap_cl_offset && cap_base_val == ghb_l1[ghb_index].cap_base)
+          break;
+      if (ghb_index == NUM_GHB_ENTRIES) {
+        for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
+          ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
+        ghb_l1[0] = {cl_offset, cap_base_val};
+      }
+
+      check_for_region_stream_l1(index, cap_base_val, cl_offset);
+      return 0;  // No prior state, no prefetch
     }
 
-    int ghb_index = 0;
-    for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
-        break;
-    if (ghb_index == NUM_GHB_ENTRIES) {
-      for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
-        ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = {cl_offset, cap_base_val};
-    }
-
-    check_for_region_stream_l1(index, cap_base_val, cl_offset);
-    return 0;
+    // Restored: compute stride from where we left off in this object
+    stride = cl_offset - trackers_l1[index].last_cl_offset;
   }
 
   int64_t MAX_STRIDE = static_cast<int64_t>(cap_length_val >> LOG2_BLOCK_SIZE);
@@ -158,7 +161,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // We optionally update the GHB here so stream detection still works on absolute addresses
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
+      if (cl_offset == ghb_l1[ghb_index].cap_cl_offset && cap_base_val == ghb_l1[ghb_index].cap_base)
         break;
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
@@ -199,7 +202,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   // Update GHB (dedup-then-shift, matching stock IPCP)
   int ghb_index = 0;
   for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-    if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
+    if (cl_offset == ghb_l1[ghb_index].cap_cl_offset && cap_base_val == ghb_l1[ghb_index].cap_base)
       break;
   if (ghb_index == NUM_GHB_ENTRIES) {
     for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
