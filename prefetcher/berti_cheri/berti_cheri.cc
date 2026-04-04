@@ -31,7 +31,8 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
   //  Compute region identity and offset 
   uint64_t cap_page_index = (addr - cap_base) >> LOG2_PAGE_SIZE;
   uint64_t region_addr = l1d_make_region_key(cap_base, cap_page_index);
-  uint64_t bitmap_offset = (addr >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
+  uint64_t chunk_byte_offset = (addr - cap_base) - (cap_page_index << LOG2_PAGE_SIZE);
+  uint64_t bitmap_offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
  
   uint64_t line_addr = addr >> LOG2_BLOCK_SIZE;
   uint64_t page_addr = line_addr >> L1D_PAGE_BLOCKS_BITS;
@@ -54,7 +55,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
  
       //  Update berti distance from prefetch timing 
       if (cache_hit) {
-        uint64_t pref_latency = l1d_get_latency_prev_prefetches_table(index, bitmap_offset);
+        uint64_t pref_latency = l1d_get_latency_prev_prefetches_table(region_addr, bitmap_offset);
         if (pref_latency != 0) {
           int b[L1D_CURRENT_PAGES_TABLE_NUM_BERTI_PER_ACCESS];
           l1d_get_berti_prev_requests_table(index, bitmap_offset, current_core_cycle - pref_latency, b);
@@ -69,7 +70,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
           }
  
           // Eliminate prev prefetch entry since its latency has been consumed
-          l1d_reset_entry_prev_prefetches_table(index, bitmap_offset);
+          l1d_reset_entry_prev_prefetches_table(region_addr, bitmap_offset);
         }
       }
  
@@ -83,7 +84,8 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
       uint64_t victim_index = l1d_get_lru_current_pages_entry();
       assert(victim_index < L1D_CURRENT_PAGES_TABLE_ENTRIES);
       l1d_reset_pointer_prev_requests(victim_index);
-      l1d_reset_pointer_prev_prefetches(victim_index);
+      if (l1d_current_pages_table[victim_index].u_vector != 0)
+        l1d_reset_region_prev_prefetches(l1d_current_pages_table[victim_index].region_addr);
  
       // Record the old entry before overwriting
       l1d_record_current_page(victim_index);
@@ -171,10 +173,10 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
           for (uint64_t i = first_burst; i < bitmap_offset + (uint64_t)b; i++) {
             if ((int)i >= L1D_PAGE_BLOCKS)
               break;
- 
-            uint64_t pf_line_addr = (page_addr << L1D_PAGE_BLOCKS_BITS) | i;
-            uint64_t pf_addr = pf_line_addr << LOG2_BLOCK_SIZE;
-            uint64_t pf_page_addr = pf_line_addr >> L1D_PAGE_BLOCKS_BITS;
+  
+            uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+            uint64_t pf_addr = chunk_start + (i << LOG2_BLOCK_SIZE);
+            uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
  
             if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, i)) {
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
@@ -183,7 +185,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                 if (in_bounds) {
                   bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                   if (prefetched) {
-                    l1d_add_prev_prefetches_table(index, i, current_core_cycle);
+                    l1d_add_prev_prefetches_table(region_addr, i, current_core_cycle);
                     stat_pf_issued_burst++;
                     bursts++;
                     if (pf_page_addr != page_addr)
@@ -202,10 +204,10 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
           for (int64_t i = (int64_t)first_burst; i > ((int64_t)bitmap_offset) + b; i--) {
             if (i < 0)
               break;
- 
-            uint64_t pf_line_addr = (page_addr << L1D_PAGE_BLOCKS_BITS) | (uint64_t)i;
-            uint64_t pf_addr = pf_line_addr << LOG2_BLOCK_SIZE;
-            uint64_t pf_page_addr = pf_line_addr >> L1D_PAGE_BLOCKS_BITS;
+  
+            uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+            uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
+            uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
  
             if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, (uint64_t)i)) {
               if (pq_occupancy < pq_size && bursts < L1D_MAX_NUM_BURST_PREFETCHES) {
@@ -215,7 +217,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                 if (in_bounds) {
                   bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                   if (prefetched) {
-                    l1d_add_prev_prefetches_table(index, (uint64_t)i, current_core_cycle);
+                    l1d_add_prev_prefetches_table(region_addr, (uint64_t)i, current_core_cycle);
                     stat_pf_issued_burst++;
                     bursts++;
                     if (pf_page_addr != page_addr)
@@ -237,8 +239,8 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                i++, j = (int)((first_offset << 1) - i)) {
             // Dir ++
             if (i < L1D_PAGE_BLOCKS) {
-              uint64_t pf_line_addr = (page_addr << L1D_PAGE_BLOCKS_BITS) | (uint64_t)i;
-              uint64_t pf_addr = pf_line_addr << LOG2_BLOCK_SIZE;
+              uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+              uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
               uint64_t pf_offset = (uint64_t)i;
  
               if ((((uint64_t)1 << i) & u_vector) && !l1d_requested_offset_current_pages_table(index, pf_offset)) {
@@ -248,7 +250,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                     if (prefetched) {
-                      l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                      l1d_add_prev_prefetches_table(region_addr, pf_offset, current_core_cycle);
                       stat_pf_issued_burst++;
                       bursts++;
                     }
@@ -263,8 +265,8 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
             }
             // Dir --
             if (j >= 0) {
-              uint64_t pf_line_addr = (page_addr << L1D_PAGE_BLOCKS_BITS) | (uint64_t)j;
-              uint64_t pf_addr = pf_line_addr << LOG2_BLOCK_SIZE;
+              uint64_t chunk_start = cap_base + (cap_page_index << LOG2_PAGE_SIZE);
+              uint64_t pf_addr = chunk_start + (static_cast<uint64_t>(j) << LOG2_BLOCK_SIZE);
               uint64_t pf_offset = (uint64_t)j;
  
               if ((((uint64_t)1 << j) & u_vector) && !l1d_requested_offset_current_pages_table(index, pf_offset)) {
@@ -274,7 +276,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                     if (prefetched) {
-                      l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                      l1d_add_prev_prefetches_table(region_addr, pf_offset, current_core_cycle);
                       stat_pf_issued_burst++;
                       bursts++;
                     }
@@ -295,15 +297,16 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
  
     //  Single berti-distance prefetch 
     if (b != 0) {
-      uint64_t pf_line_addr = line_addr + b;
-      uint64_t pf_addr = pf_line_addr << LOG2_BLOCK_SIZE;
-      uint64_t pf_page_addr = pf_line_addr >> L1D_PAGE_BLOCKS_BITS;
-      uint64_t pf_offset = pf_line_addr & L1D_PAGE_OFFSET_MASK;
- 
+      uint64_t pf_addr = addr + (static_cast<int64_t>(b) << LOG2_BLOCK_SIZE);
+      uint64_t pf_page_addr = pf_addr >> LOG2_PAGE_SIZE;
+
       bool in_bounds = cheri::prefetch_safe(champsim::address{pf_addr}, cap);
       bool is_same_page = (pf_page_addr == page_addr);
 
       if (in_bounds) {
+        uint64_t pf_cap_page_index = (pf_addr - cap_base) >> LOG2_PAGE_SIZE;
+        uint64_t pf_chunk_byte_offset = (pf_addr - cap_base) - (pf_cap_page_index << LOG2_PAGE_SIZE);
+        uint64_t pf_offset = pf_chunk_byte_offset >> LOG2_BLOCK_SIZE;
         if (is_same_page || intern_->virtual_prefetch) {
             if (!l1d_requested_offset_current_pages_table(index, pf_offset)
                 && (!match_confidence || (((uint64_t)1 << pf_offset) & u_vector))) {
@@ -311,15 +314,16 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
               bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
               if (prefetched) {
                 // Safely track in the current page's entry
-                l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                uint64_t pf_region_addr = l1d_make_region_key(cap_base, pf_cap_page_index);
+                l1d_add_prev_prefetches_table(pf_region_addr, pf_offset, current_core_cycle);
                 stat_pf_issued_berti++;
               }
             }
         } else {
-            // CROSS-PAGE: It is CHERI-safe, so we can issue the prefetch.
-            // However, we DO NOT track it in `index` to avoid corrupting the bitmap.
             bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
             if (prefetched) {
+                uint64_t pf_region_addr = l1d_make_region_key(cap_base, pf_cap_page_index);
+                l1d_add_prev_prefetches_table(pf_region_addr, pf_offset, current_core_cycle);
                 stat_pf_issued_berti++;
                 stat_cross_page_in_object++;
             }
@@ -339,10 +343,6 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   uint64_t addr = address.to<uint64_t>();
   uint64_t evicted_addr = evicted_address.to<uint64_t>();
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
-
-  //  CHERI: determine region for filled address 
-  //  Page-relative offset for fill — matches page-chunked region scheme 
-  uint64_t offset = (addr >> LOG2_BLOCK_SIZE) & L1D_PAGE_OFFSET_MASK;
 
   // Search entries: bounds-check first, then verify region_addr matches the
   // correct page-chunk within the object. This correctly handles multi-page
@@ -365,7 +365,13 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   }
 
   if (pointer_prev < L1D_CURRENT_PAGES_TABLE_ENTRIES) {
-    uint64_t pref_latency = l1d_get_and_set_latency_prev_prefetches_table(pointer_prev, offset, current_core_cycle);
+    uint64_t entry_cap_base = l1d_current_pages_table[pointer_prev].cap_base;
+    uint64_t cap_page_idx = (addr - entry_cap_base) >> LOG2_PAGE_SIZE;
+    uint64_t chunk_byte_offset = (addr - entry_cap_base) - (cap_page_idx << LOG2_PAGE_SIZE);
+    uint64_t offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
+
+    uint64_t entry_region_addr = l1d_current_pages_table[pointer_prev].region_addr;
+    uint64_t pref_latency = l1d_get_and_set_latency_prev_prefetches_table(entry_region_addr, offset, current_core_cycle);
     uint64_t demand_latency = l1d_get_latency_prev_requests_table(pointer_prev, offset, current_core_cycle);
 
     if (pref_latency == 0)
@@ -403,6 +409,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   }
 
   if (victim_index < L1D_CURRENT_PAGES_TABLE_ENTRIES) {
+    l1d_reset_region_prev_prefetches(l1d_current_pages_table[victim_index].region_addr);
     l1d_record_current_page(victim_index);
     l1d_remove_current_table_entry(victim_index);
   }

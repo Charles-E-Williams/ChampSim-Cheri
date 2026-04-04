@@ -22,7 +22,11 @@ void ipcp_cheri::prefetcher_initialize()
   num_misses = 0;
 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++)
-    ghb_l1[i] = 0;
+    ghb_l1[i] = {0, 0};
+  for (int i = 0; i < NUM_IP_OBJECT_CTX_ENTRIES; i++)
+    object_state_l1[i] = {};
+  for (int i = 0; i < NUM_REGION_STREAM_ENTRIES; i++)
+    region_stream_l1[i] = {};
 }
 
 uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsim::address ip_addr,
@@ -89,7 +93,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     }
 
     // Next-line prefetch on new IP
-    uint64_t pf_address = ((addr >> LOG2_BLOCK_SIZE) + 1) << LOG2_BLOCK_SIZE;
+    uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(cl_offset + 1) << LOG2_BLOCK_SIZE);
     if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
       stat_pf_bounded_by_cap++;
       return 0;
@@ -112,25 +116,39 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // Normal stride calculation within the same object
     stride = cl_offset - trackers_l1[index].last_cl_offset;
   } else {
+    // Save outgoing object context and try restoring context for the incoming object.
+    save_object_state(ip, trackers_l1[index]);
+    bool restored = load_object_state(ip, cap_base_val, trackers_l1[index]);
+
     trackers_l1[index].cap_base = cap_base_val;
     trackers_l1[index].cap_length = cap_length_val;
     trackers_l1[index].last_cl_offset = cl_offset;
-    trackers_l1[index].last_stride = 0; 
-    
+
+    if (!restored) {
+      trackers_l1[index].last_stride = 0;
+      trackers_l1[index].signature = 0;
+      trackers_l1[index].conf = 0;
+      trackers_l1[index].str_valid = 0;
+      trackers_l1[index].str_strength = 0;
+      trackers_l1[index].str_dir = 0;
+    }
+
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_addr == ghb_l1[ghb_index])
+      if (cl_addr == ghb_l1[ghb_index].cl_addr)
         break;
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = cl_addr;
+      ghb_l1[0] = {cl_addr, cap_base_val};
     }
-    
+
+    check_for_region_stream_l1(index, cap_base_val, cl_offset);
     return 0;
   }
 
-  if (stride > 63 || stride < -63) {
+  int64_t MAX_STRIDE = static_cast<int64_t>((1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE)) - 1);
+  if (stride > MAX_STRIDE || stride < -MAX_STRIDE)  {
     // Update the offset for future accesses, but abort training for this large jump
     trackers_l1[index].last_cl_offset = cl_offset;
     trackers_l1[index].last_stride = 0; 
@@ -138,12 +156,12 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // We optionally update the GHB here so stream detection still works on absolute addresses
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_addr == ghb_l1[ghb_index])
+      if (cl_addr == ghb_l1[ghb_index].cl_addr)
         break;
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = cl_addr;
+      ghb_l1[0] = {cl_addr, cap_base_val};
     }
     return 0;
   }
@@ -166,23 +184,25 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   signature = update_sig_l1(last_signature, (int)stride);
   trackers_l1[index].signature = signature;
 
-  // Check stream in GHB
-  check_for_stream_l1(index, cl_addr);
+  // Check stream in GHB and region stream table.
+  check_for_stream_l1(index, cl_addr, cap_base_val);
+  check_for_region_stream_l1(index, cap_base_val, cl_offset);
 
   // Update stored state
   trackers_l1[index].last_cl_offset = cl_offset;
   trackers_l1[index].cap_base = cap_base_val;
   trackers_l1[index].cap_length = cap_length_val;
+  save_object_state(ip, trackers_l1[index]);
 
   // Update GHB (dedup-then-shift, matching stock IPCP)
   int ghb_index = 0;
   for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-    if (cl_addr == ghb_l1[ghb_index])
+    if (cl_addr == ghb_l1[ghb_index].cl_addr)
       break;
   if (ghb_index == NUM_GHB_ENTRIES) {
     for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
       ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-    ghb_l1[0] = cl_addr;
+    ghb_l1[0] = {cl_addr, cap_base_val};
   }
 
   // Prefetch boundary is always capability bounds.
@@ -192,11 +212,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     prefetch_degree = prefetch_degree * 2;
     for (int i = 0; i < prefetch_degree; i++) {
       uint64_t pf_address = 0;
-
-      if (trackers_l1[index].str_dir == 1)
-        pf_address = (cl_addr + i + 1) << LOG2_BLOCK_SIZE;
-      else
-        pf_address = (cl_addr - i - 1) << LOG2_BLOCK_SIZE;
+      int64_t stream_delta = (trackers_l1[index].str_dir == 1) ? (i + 1) : -(i + 1);
+      int64_t pf_cl_offset = cl_offset + stream_delta;
+      pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
 
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
@@ -212,7 +230,8 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   } else if (trackers_l1[index].conf > 1 && trackers_l1[index].last_stride != 0) {
     // Constant Stride IP
     for (int i = 0; i < prefetch_degree; i++) {
-      uint64_t pf_address = (cl_addr + (trackers_l1[index].last_stride * (i + 1))) << LOG2_BLOCK_SIZE;
+      int64_t pf_cl_offset = cl_offset + (trackers_l1[index].last_stride * (i + 1));
+      uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
 
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
@@ -230,7 +249,8 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     int pref_offset = 0;
     for (int i = 0; i < prefetch_degree; i++) {
       pref_offset += DPT_l1[signature].delta;
-      uint64_t pf_address = ((cl_addr + pref_offset) << LOG2_BLOCK_SIZE);
+      int64_t pf_cl_offset = cl_offset + pref_offset;
+      uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
 
       if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
         break;
@@ -252,7 +272,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   }
 
   if (num_prefs == 0 && spec_nl == 1) {
-    uint64_t pf_address = ((cl_addr + 1) << LOG2_BLOCK_SIZE);
+    uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(cl_offset + 1) << LOG2_BLOCK_SIZE);
 
     bool nl_ok = true;
     if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
@@ -283,7 +303,14 @@ void ipcp_cheri::prefetcher_cycle_operate() {}
 uint16_t ipcp_cheri::update_sig_l1(uint16_t old_sig, int delta)
 {
   uint16_t new_sig = 0;
-  int sig_delta = (delta < 0) ? (((-1) * delta) + (1 << 6)) : delta;
+  constexpr int SIG_MAGNITUDE_MASK = 0x3F;
+  constexpr int LARGE_STRIDE_FOLD_BIT = 0x20;
+  constexpr int SIG_MAX_MAGNITUDE = 63;
+  int abs_delta = (delta < 0) ? (-delta) : delta;
+  int magnitude = abs_delta & SIG_MAGNITUDE_MASK;
+  if (abs_delta > SIG_MAX_MAGNITUDE)
+    magnitude |= LARGE_STRIDE_FOLD_BIT;
+  int sig_delta = (delta < 0) ? (magnitude + (1 << 6)) : magnitude;
   new_sig = ((old_sig << 1) ^ sig_delta) & 0xFFF;
   return new_sig;
 }
@@ -301,7 +328,7 @@ uint32_t ipcp_cheri::encode_metadata(int stride, uint16_t type, int _spec_nl)
   return metadata;
 }
 
-void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr)
+void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr, uint64_t cap_base_val)
 {
   int pos_count = 0, neg_count = 0, count = 0;
   uint64_t check_addr = cl_addr;
@@ -309,7 +336,7 @@ void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr)
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
     check_addr--;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_addr == ghb_l1[j]) {
+      if (check_addr == ghb_l1[j].cl_addr && cap_base_val == ghb_l1[j].cap_base) {
         pos_count++;
         break;
       }
@@ -319,7 +346,7 @@ void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr)
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
     check_addr++;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_addr == ghb_l1[j]) {
+      if (check_addr == ghb_l1[j].cl_addr && cap_base_val == ghb_l1[j].cap_base) {
         neg_count++;
         break;
       }
@@ -341,6 +368,85 @@ void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr)
     if (trackers_l1[index].str_strength == 0)
       trackers_l1[index].str_valid = 0;
   }
+}
+
+void ipcp_cheri::check_for_region_stream_l1(int index, uint64_t cap_base_val, int64_t cl_offset)
+{
+  int region_index = static_cast<int>((cap_base_val >> LOG2_BLOCK_SIZE) & (NUM_REGION_STREAM_ENTRIES - 1));
+  auto& entry = region_stream_l1[region_index];
+
+  if (!entry.valid || entry.cap_base != cap_base_val) {
+    entry.valid = 1;
+    entry.cap_base = cap_base_val;
+    entry.last_cl_offset = cl_offset;
+    entry.run_length = 0;
+    entry.dir = 0;
+    return;
+  }
+
+  int64_t delta = cl_offset - entry.last_cl_offset;
+  if (delta == 1 || delta == -1) {
+    uint16_t new_dir = (delta == 1) ? 1 : 0;
+    if (entry.run_length == 0 || entry.dir == new_dir) {
+      entry.run_length++;
+    } else {
+      entry.run_length = 1;
+    }
+    entry.dir = new_dir;
+  } else {
+    entry.run_length = 0;
+  }
+
+  entry.last_cl_offset = cl_offset;
+
+  if (entry.run_length >= 4) {
+    trackers_l1[index].str_valid = 1;
+    trackers_l1[index].str_dir = entry.dir;
+    if (entry.run_length >= 8)
+      trackers_l1[index].str_strength = 1;
+  }
+}
+
+uint32_t ipcp_cheri::object_state_index(uint64_t ip, uint64_t cap_base_val)
+{
+  // Knuth multiplicative hashing constant for 64-bit key mixing.
+  constexpr uint64_t HASH_MULTIPLIER = 11400714819323198485ull;
+  uint64_t mixed = (ip * HASH_MULTIPLIER) ^ (cap_base_val >> LOG2_BLOCK_SIZE);
+  return static_cast<uint32_t>(mixed & (NUM_IP_OBJECT_CTX_ENTRIES - 1));
+}
+
+bool ipcp_cheri::load_object_state(uint64_t ip, uint64_t cap_base_val, IP_TABLE_L1_CHERI& tracker)
+{
+    uint32_t idx = object_state_index(ip, cap_base_val);
+    auto& st = object_state_l1[idx];
+    if (!(st.valid && st.ip == ip && st.cap_base == cap_base_val))
+      return false;
+
+    tracker.cap_base = st.cap_base;
+    tracker.last_cl_offset = st.last_cl_offset;
+    tracker.last_stride = st.last_stride;
+    tracker.signature = st.signature;
+    tracker.conf = st.conf;
+    tracker.str_dir = st.str_dir;
+    tracker.str_valid = st.str_valid;
+    tracker.str_strength = st.str_strength;
+    return true;
+}
+
+void ipcp_cheri::save_object_state(uint64_t ip, const IP_TABLE_L1_CHERI& tracker)
+{
+    uint32_t idx = object_state_index(ip, tracker.cap_base);
+    auto& st = object_state_l1[idx];
+    st.valid = 1;
+    st.ip = ip;
+    st.cap_base = tracker.cap_base;
+    st.last_cl_offset = tracker.last_cl_offset;
+    st.last_stride = tracker.last_stride;
+    st.signature = tracker.signature;
+    st.conf = tracker.conf;
+    st.str_dir = tracker.str_dir;
+    st.str_valid = tracker.str_valid;
+    st.str_strength = tracker.str_strength;
 }
 
 int ipcp_cheri::update_conf(int stride, int pred_stride, int conf)

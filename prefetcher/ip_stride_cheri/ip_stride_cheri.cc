@@ -31,7 +31,7 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
     uint64_t cap_hash = raw_hash ^ (ip.to<uint64_t>() * 0x517cc1b727220a95ULL);
     int64_t current_offset = cheri::lines_from_cap_base(cap);
  
-    auto found = cap_table.check_hit({cap_hash, current_offset, 0, 0});
+    auto found = cap_table.check_hit({cap_hash, current_offset, 0});
  
     if (found.has_value()) {
       cap_table_hits++;
@@ -42,13 +42,12 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
         active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
       }
  
-      cap_table.fill({cap_hash, current_offset, found->last_offset_prefetched,
-                       stride != 0 ? stride : found->last_stride});
+      cap_table.fill({cap_hash, current_offset,stride != 0 ? stride : found->last_stride});
  
     } else {
       // first access through this capability 
       cap_table_misses++;
-      cap_table.fill({cap_hash, current_offset, 0, 0});
+      cap_table.fill({cap_hash, current_offset, 0});
     }
   }
  

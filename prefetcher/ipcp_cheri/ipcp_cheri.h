@@ -52,11 +52,68 @@ public:
   };
 };
 
+struct ghb_entry {
+  uint64_t cl_addr;
+  uint64_t cap_base;
+};
+
+class IP_OBJECT_STATE_CHERI
+{
+public:
+  uint64_t ip;
+  uint64_t cap_base;
+  uint16_t valid;
+  int64_t last_cl_offset;
+  int64_t last_stride;
+  uint16_t signature;
+  int conf;
+  uint16_t str_dir;
+  uint16_t str_valid;
+  uint16_t str_strength;
+
+  IP_OBJECT_STATE_CHERI()
+  {
+    ip = 0;
+    cap_base = 0;
+    valid = 0;
+    last_cl_offset = 0;
+    last_stride = 0;
+    signature = 0;
+    conf = 0;
+    str_dir = 0;
+    str_valid = 0;
+    str_strength = 0;
+  };
+};
+
+class REGION_STREAM_TABLE_CHERI
+{
+public:
+  uint64_t cap_base;
+  int64_t last_cl_offset;
+  uint16_t valid;
+  uint16_t dir;
+  uint16_t run_length;
+
+  REGION_STREAM_TABLE_CHERI()
+  {
+    cap_base = 0;
+    last_cl_offset = 0;
+    valid = 0;
+    dir = 0;
+    run_length = 0;
+  };
+};
+
 struct ipcp_cheri : public champsim::modules::prefetcher {
 private:
+  static constexpr int NUM_IP_OBJECT_CTX_ENTRIES = 2048;
+  static constexpr int NUM_REGION_STREAM_ENTRIES = 64;
   IP_TABLE_L1_CHERI trackers_l1[NUM_IP_TABLE_L1_ENTRIES];
+  IP_OBJECT_STATE_CHERI object_state_l1[NUM_IP_OBJECT_CTX_ENTRIES];
   DELTA_PRED_TABLE_CHERI DPT_l1[4096];
-  uint64_t ghb_l1[NUM_GHB_ENTRIES];
+  ghb_entry ghb_l1[NUM_GHB_ENTRIES];
+  REGION_STREAM_TABLE_CHERI region_stream_l1[NUM_REGION_STREAM_ENTRIES];
   int64_t prev_cpu_cycle;
   uint64_t num_misses;
   float mpkc = {0};
@@ -71,7 +128,11 @@ private:
 
   uint16_t update_sig_l1(uint16_t old_sig, int delta);
   uint32_t encode_metadata(int stride, uint16_t type, int spec_nl);
-  void check_for_stream_l1(int index, uint64_t cl_addr);
+  void check_for_stream_l1(int index, uint64_t cl_addr, uint64_t cap_base_val);
+  void check_for_region_stream_l1(int index, uint64_t cap_base_val, int64_t cl_offset);
+  uint32_t object_state_index(uint64_t ip, uint64_t cap_base_val);
+  bool load_object_state(uint64_t ip, uint64_t cap_base_val, IP_TABLE_L1_CHERI& tracker);
+  void save_object_state(uint64_t ip, const IP_TABLE_L1_CHERI& tracker);
   int update_conf(int stride, int pred_stride, int conf);
 
 
