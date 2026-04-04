@@ -341,7 +341,6 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   uint64_t addr = address.to<uint64_t>();
   uint64_t evicted_addr = evicted_address.to<uint64_t>();
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
-  uint64_t offset = 0;
 
   // Search entries: bounds-check first, then verify region_addr matches the
   // correct page-chunk within the object. This correctly handles multi-page
@@ -367,7 +366,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
     uint64_t entry_cap_base = l1d_current_pages_table[pointer_prev].cap_base;
     uint64_t cap_page_idx = (addr - entry_cap_base) >> LOG2_PAGE_SIZE;
     uint64_t chunk_byte_offset = (addr - entry_cap_base) - (cap_page_idx << LOG2_PAGE_SIZE);
-    offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
+    uint64_t offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
 
     uint64_t pref_latency = l1d_get_and_set_latency_prev_prefetches_table(pointer_prev, offset, current_core_cycle);
     uint64_t demand_latency = l1d_get_latency_prev_requests_table(pointer_prev, offset, current_core_cycle);

@@ -283,10 +283,13 @@ void ipcp_cheri::prefetcher_cycle_operate() {}
 uint16_t ipcp_cheri::update_sig_l1(uint16_t old_sig, int delta)
 {
   uint16_t new_sig = 0;
+  constexpr int kSigMagnitudeMask = 0x3F;
+  constexpr int kLargeStrideFoldBit = 0x20;
+  constexpr int kSigMaxMagnitude = 63;
   int abs_delta = (delta < 0) ? (-delta) : delta;
-  int magnitude = abs_delta & 0x3F;
-  if (abs_delta > 63)
-    magnitude |= 0x20;
+  int magnitude = abs_delta & kSigMagnitudeMask;
+  if (abs_delta > kSigMaxMagnitude)
+    magnitude |= kLargeStrideFoldBit;
   int sig_delta = (delta < 0) ? (magnitude + (1 << 6)) : magnitude;
   new_sig = ((old_sig << 1) ^ sig_delta) & 0xFFF;
   return new_sig;
