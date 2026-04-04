@@ -163,20 +163,30 @@ inline int lines_from_cap_base(const champsim::capability& cap)
 }
 
 // Objects spanning at most one cache line have nothing useful to prefetch.
+inline bool has_prefetchable_range_forward(const champsim::capability& cap)
+{
+    uint64_t cursor = capability_cursor(cap).to<uint64_t>();
+    uint64_t top    = capability_top(cap).to<uint64_t>();
+    return (top > cursor) && (top - cursor > BLOCK_SIZE);
+}
+
+inline bool has_prefetchable_range_backward(const champsim::capability& cap)
+{
+    uint64_t base   = cap.base.to<uint64_t>();
+    uint64_t cursor = capability_cursor(cap).to<uint64_t>();
+    return (cursor > base) && (cursor - base > BLOCK_SIZE);
+}
+
 inline bool has_prefetchable_range(const champsim::capability& cap)
 {
-  uint64_t cursor = capability_cursor(cap).to<uint64_t>();
-  uint64_t top    = capability_top(cap).to<uint64_t>();
-
-  return (top > cursor) && (top - cursor > BLOCK_SIZE);
+    return has_prefetchable_range_forward(cap) || 
+           has_prefetchable_range_backward(cap);
 }
 
 // True if issuing a prefetch for pf_addr is safe under cap:
 // tag valid, not sealed, has load permission, and address within bounds.
 inline bool prefetch_safe(champsim::address pf_addr, const champsim::capability& cap)
 {
-  if (!is_tag_valid(cap) || has_seal_bit(cap.permissions))
-    return false;
   return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load_permissions(cap.permissions);
 }
 

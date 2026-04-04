@@ -35,7 +35,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 {
   uint64_t addr = address.to<uint64_t>();
   uint64_t ip = ip_addr.to<uint64_t>();
-  // uint64_t cl_offset = addr >> LOG2_BLOCK_SIZE;
 
   auto cap = intern_->get_authorizing_capability();
   if (!cheri::is_tag_valid(cap)) 

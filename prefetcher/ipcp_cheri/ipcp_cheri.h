@@ -85,7 +85,7 @@ public:
     str_strength = 0;
   };
 };
-
+ 
 class REGION_STREAM_TABLE_CHERI
 {
 public:
