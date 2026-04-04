@@ -46,6 +46,9 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
  
   auto cap = intern_->get_authorizing_capability();
  
+  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
+    return metadata_in;
+    
   uint64_t cap_base_val   = cap.base.to<uint64_t>();
   uint64_t cap_length_val = cap.length.to<uint64_t>();
   uint64_t cap_offset_val = cap.offset.to<uint64_t>();

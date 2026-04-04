@@ -20,9 +20,8 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
                                               access_type type, uint32_t metadata_in)
 {
   auto cap = intern_->get_authorizing_capability();
-  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions))
+  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
     return metadata_in;
-
 
   champsim::address va = cheri::capability_cursor(cap); // virtual address
 
