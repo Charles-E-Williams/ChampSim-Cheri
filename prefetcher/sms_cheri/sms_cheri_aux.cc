@@ -234,8 +234,8 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     if ((target_va & ~page_mask) == ri.demand_va_page) {
       // Same page as demand access
       target_pa = ri.demand_pa_page | (target_va & page_mask); 
+      pref_addr.push_back(target_pa);
     } 
-    pref_addr.push_back(target_pa);
   }
 
   update_age_pht(set, it);
