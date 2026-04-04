@@ -43,8 +43,6 @@ private:
     uint64_t demand_va_page;
   };
 
-  cheri::TLBClone tlb_clone;
-
   region_info decompose(uint64_t pa, const champsim::capability& cap) const;
 
   std::deque<FTEntry*>::iterator search_filter_table(uint64_t region_id);
@@ -80,7 +78,6 @@ private:
 
   //  Statistics 
   uint64_t stat_pref_bounds_clip = 0; // prefetches suppressed by cap bounds
-  uint64_t stat_pref_page_clip = 0;  // prefetches suppressed by same-page
 
 
 public:

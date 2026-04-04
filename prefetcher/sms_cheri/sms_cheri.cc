@@ -1,7 +1,6 @@
 //=======================================================================================//
 // File             : sms_cheri/sms_cheri.cc
 // Description      : CHERI-aware Spatial Memory Streaming prefetcher.
-//                    Top-level ChampSim interface methods.
 //=======================================================================================//
 
 #include "sms_cheri.h"
@@ -32,8 +31,6 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
 
 
   region_info ri = decompose(addr, cap);
-
-  tlb_clone.fill(ri.demand_va_page, ri.demand_pa_page);
 
   std::vector<uint64_t> pref_addr;
 
@@ -73,7 +70,4 @@ uint32_t sms_cheri::prefetcher_cache_fill(champsim::address addr, long set,
 void sms_cheri::prefetcher_final_stats()
 {
   std::cout << "  Prefetches clipped (bounds):  " << stat_pref_bounds_clip << std::endl;
-  std::cout << "  Prefetches clipped (page):    " << stat_pref_page_clip << std::endl;
-  tlb_clone.print_stats();
-
 }

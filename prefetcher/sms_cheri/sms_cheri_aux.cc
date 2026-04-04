@@ -35,7 +35,6 @@ sms_cheri::region_info sms_cheri::decompose(uint64_t pa, const champsim::capabil
   return ri;
 }
 
-
 std::deque<FTEntry*>::iterator sms_cheri::search_filter_table(uint64_t region_id)
 {
   return std::find_if(filter_table.begin(), filter_table.end(),
@@ -235,17 +234,7 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     if ((target_va & ~page_mask) == ri.demand_va_page) {
       // Same page as demand access
       target_pa = ri.demand_pa_page | (target_va & page_mask); 
-    } else {
-      // Cross-page access
-      auto translated_pa = tlb_clone.translate(target_va);
-      if (translated_pa.has_value()) {
-        target_pa = translated_pa.value();
-      } else {
-        stat_pref_page_clip++;
-        continue;
-      }
-    }
-
+    } 
     pref_addr.push_back(target_pa);
   }
 

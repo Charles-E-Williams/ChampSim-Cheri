@@ -25,7 +25,6 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr, champsim::
 
 
   champsim::address va = cheri::capability_cursor(cap); // virtual address
-  tlb.fill(va.to<uint64_t>(), addr.to<uint64_t>()); // populate TLB clone with current VA to PA mapping
 
   // access map records in VA space
   add_to_map(va, addr, cap, false);
@@ -39,25 +38,11 @@ uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, long set, lon
                                            bool prefetch, champsim::address evicted_addr,
                                            uint32_t metadata_in)
 {
-  if (evicted_addr != champsim::address{}) {
-    auto hit = reverse_map.check_hit({evicted_addr, {}, 0});
-    if (hit.has_value()) {
-      auto region = regions.check_hit(region_type{hit->zone_key});
-      if (region.has_value()) {
-        region->access_map.at(hit->zone_offset) = false;
-        region->prefetch_map.at(hit->zone_offset) = false;
-        regions.fill(region.value());
-      }
-    }
-  }
   return metadata_in;
 }
 
 void ampm_cheri::prefetcher_final_stats()
 {
   std::cout << "\n=== AMPM-CHERI Final Stats ===" << std::endl;
-  std::cout << "  Bounded by cap:           " << stat_pf_bounded_by_cap << std::endl;
-  std::cout << "  Cross-page detected:      " << stat_cross_page_detected << std::endl;
-  std::cout << "  Cross-page cant issue:    " << stat_cross_page_cant_issue << std::endl;
-  tlb.print_stats();
+  std::cout << "  Bounded by cap:           " << stat_pf_bounded << std::endl;
 }

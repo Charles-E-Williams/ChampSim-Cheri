@@ -67,7 +67,6 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa,
     regions.fill(nr);
   }
 
-  reverse_map.fill({pa, key, offset});
 }
 
 bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch)
@@ -93,11 +92,13 @@ void ampm_cheri::do_prefetch(CACHE* cache, champsim::address pa, champsim::addre
       const auto neg_2step = va_block - (direction * 2 * i);
 
       champsim::address va_candidate{pos_step};
+      uint64_t va_cand_val = va_candidate.to<uint64_t>();
 
-      if (!cheri::prefetch_safe(va_candidate, cap)) {
-        stat_pf_bounded_by_cap++;
+      if (!cheri::prefetch_safe(va_candidate, cap)) 
         break;
-      }
+
+      if (((va_cand_val ^ va_val) >> LOG2_PAGE_SIZE) != 0)
+        break;
 
       if (check_map(champsim::address{neg_step}, cap, false) &&
           check_map(champsim::address{neg_2step}, cap, false) &&
@@ -105,22 +106,15 @@ void ampm_cheri::do_prefetch(CACHE* cache, champsim::address pa, champsim::addre
           !check_map(va_candidate, cap, true)) {
 
         if (va_block != champsim::block_number{pos_step}) {
-          uint64_t va_cand_val = va_candidate.to<uint64_t>();
+          uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
 
-          auto pa_opt = tlb.translate(va_cand_val);
-          if (pa_opt.has_value()) {
-            bool same_page = ((va_cand_val ^ va_val) >> LOG2_PAGE_SIZE) == 0;
-            if (!same_page)
-              stat_cross_page_detected++;
+          // Reconstruct PA
+          uint64_t pf_pa = (pa.to<uint64_t>() & ~page_mask) | (va_cand_val & page_mask);
+          champsim::address pf_addr{pf_pa};
 
-            champsim::address pf_addr{pa_opt.value()};
-            if (cache->prefetch_line(pf_addr, two_level, metadata_in)) {
-              add_to_map(va_candidate, pf_addr, cap, true);
-              pf_count++;
-            }
-          } else {
-            stat_cross_page_detected++;
-            stat_cross_page_cant_issue++;
+          if (cache->prefetch_line(pf_addr, two_level, metadata_in)) {
+            add_to_map(va_candidate, pf_addr, cap, true);
+            pf_count++;
           }
         }
       }

@@ -53,7 +53,6 @@ struct spp_cheri : public champsim::modules::prefetcher {
   constexpr static std::size_t MAX_GHR_ENTRY = 8;
 
 
-  cheri::TLBClone tlb;
   struct block_in_page_extent : champsim::dynamic_extent {
     block_in_page_extent() : dynamic_extent(champsim::data::bits{LOG2_PAGE_SIZE}, champsim::data::bits{LOG2_BLOCK_SIZE}) {}
   };

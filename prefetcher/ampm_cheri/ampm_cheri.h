@@ -17,7 +17,7 @@ class ampm_cheri : public champsim::modules::prefetcher {
   static constexpr unsigned ZONE_BITS       = 12;
 
 public:
-  cheri::TLBClone tlb;
+
   static std::size_t lines_per_zone() { return (1u << ZONE_BITS) / BLOCK_SIZE; }
 
   struct key_extent : champsim::dynamic_extent {
@@ -49,17 +49,7 @@ public:
   static constexpr std::size_t REGION_SETS = 64;
   static constexpr std::size_t REGION_WAYS = 4;
 
-  struct revmap_entry {
-      champsim::address pa_block{};
-      region_key_type   zone_key{};
-      std::size_t       zone_offset = 0;
-
-      auto index() const { return pa_block; }
-      auto tag()   const { return pa_block; }
-  };
-
-champsim::msl::lru_table<revmap_entry> reverse_map{REVMAP_SETS, REVMAP_WAYS};
-
+  
   champsim::msl::lru_table<region_type, region_indexer, region_indexer> regions{REGION_SETS, REGION_WAYS};
 
   static uint64_t make_zone_key(uint64_t cap_base, uint64_t cap_zone_id);
@@ -73,9 +63,7 @@ champsim::msl::lru_table<revmap_entry> reverse_map{REVMAP_SETS, REVMAP_WAYS};
                    const champsim::capability& cap, uint32_t metadata_in,
                    int degree, bool two_level);
 
-  uint64_t stat_pf_bounded_by_cap        = 0;
-  uint64_t stat_cross_page_detected      = 0;
-  uint64_t stat_cross_page_cant_issue    = 0;  
+  uint64_t stat_pf_bounded = 0;
 
   using prefetcher::prefetcher;
   void prefetcher_initialize();

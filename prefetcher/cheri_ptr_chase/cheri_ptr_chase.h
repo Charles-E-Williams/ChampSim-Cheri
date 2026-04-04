@@ -21,7 +21,7 @@ struct cheri_ptr_chase : public champsim::modules::prefetcher {
   constexpr static uint8_t     MAX_DEPTH     = 16;     // hard ceiling on chase hops
   constexpr static uint8_t     DEPTH_PROMOTE = 5;     // conf threshold to add a hop
   constexpr static uint8_t     DEPTH_DEMOTE  = 1;     // conf threshold to remove a hop
-  constexpr static unsigned PTR_MAP_SIZE = 4096*2;
+  constexpr static unsigned PTR_MAP_SIZE = 4096;
 
   constexpr static bool        DEBUG_PRINT = false;
 
@@ -62,6 +62,7 @@ struct cheri_ptr_chase : public champsim::modules::prefetcher {
   uint64_t stat_null_or_loop    = 0;
   uint64_t stat_conf_too_low    = 0;
   uint64_t stat_map_miss        = 0;
+  uint64_t stat_page_crossings  = 0; 
 
 
   // Update confidence for this IP based on whether cap_mem had a pointer.

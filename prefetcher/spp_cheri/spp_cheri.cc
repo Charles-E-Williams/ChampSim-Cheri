@@ -54,8 +54,6 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   uint64_t demand_va = cheri::capability_cursor(cap).to<uint64_t>();
   uint64_t cap_top   = cheri::capability_top(cap).to<uint64_t>();
  
-  // Seed TLB clone with this demand's VA → PA mapping
-  tlb.fill(demand_va, addr.to<uint64_t>());
  
   if constexpr (SPP_DEBUG_PRINT) {
     std::cout << std::endl << "[SPP-CHERI] " << __func__ << " addr: " << addr
@@ -129,47 +127,10 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
             }
           }
         } else {
-          //  Cross-page access
-          auto translated = tlb.translate(pf_va);
- 
-          if (translated.has_value()) {
-            champsim::address cross_pf_addr{*translated};
- 
-            if (FILTER.check(cross_pf_addr, ((confidence_q[i] >= FILL_THRESHOLD)
-                                                 ? spp_cheri::SPP_L2C_PREFETCH
-                                                 : spp_cheri::SPP_LLC_PREFETCH))) {
-              prefetch_line(cross_pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0);
- 
-              if (confidence_q[i] >= FILL_THRESHOLD) {
-                GHR.pf_issued++;
-                if (GHR.pf_issued > GLOBAL_COUNTER_MAX) {
-                  GHR.pf_issued >>= 1;
-                  GHR.pf_useful >>= 1;
-                }
-              }
-              stat_cross_page_pf++;
-              if constexpr (SPP_DEBUG_PRINT) {
-                std::cout << "[SPP-CHERI] cross-page pf_va: 0x" << std::hex << pf_va
-                          << " pf_pa: " << cross_pf_addr << std::dec
-                          << " delta: " << delta_q[i]
-                          << " conf: " << confidence_q[i]
-                          << " depth: " << depth << std::endl;
-              }
-            }
-          } else {
-            // tlb miss 
             if constexpr (GHR_ON) {
               GHR.update_entry(curr_sig, confidence_q[i], cap_cl_cursor + delta_q[i], delta_q[i]);
             }
- 
-            if constexpr (SPP_DEBUG_PRINT) {
-              std::cout << "[SPP-CHERI] cross-page TLB miss pf_va: 0x" << std::hex
-                        << pf_va << std::dec
-                        << " delta: " << delta_q[i] << std::endl;
-            }
-          }
-        }
- 
+          } 
         do_lookahead = 1;
         pf_q_head++;
       }
@@ -534,8 +495,5 @@ void spp_cheri::prefetcher_final_stats()
 {
   std::cout << std::endl;
   std::cout << "spp_cheri final stats" << std::endl;
-  std::cout << "  Cross-page deltas in cap:        " << stat_cross_page_in_cap << std::endl;
   std::cout << "  Prefetches bounded by cap:       " << stat_pf_bounded_by_cap << std::endl;
-  std::cout << "  Cross-page prefetches issued: " << stat_cross_page_pf << std::endl;
-  tlb.print_stats();
 }
