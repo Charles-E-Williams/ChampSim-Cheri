@@ -52,11 +52,16 @@ public:
   };
 };
 
+struct ghb_entry {
+  uint64_t cl_addr;
+  uint64_t cap_base;
+};
+
 struct ipcp_cheri : public champsim::modules::prefetcher {
 private:
   IP_TABLE_L1_CHERI trackers_l1[NUM_IP_TABLE_L1_ENTRIES];
   DELTA_PRED_TABLE_CHERI DPT_l1[4096];
-  uint64_t ghb_l1[NUM_GHB_ENTRIES];
+  ghb_entry ghb_l1[NUM_GHB_ENTRIES];
   int64_t prev_cpu_cycle;
   uint64_t num_misses;
   float mpkc = {0};
@@ -71,7 +76,7 @@ private:
 
   uint16_t update_sig_l1(uint16_t old_sig, int delta);
   uint32_t encode_metadata(int stride, uint16_t type, int spec_nl);
-  void check_for_stream_l1(int index, uint64_t cl_addr);
+  void check_for_stream_l1(int index, uint64_t cl_addr, uint64_t cap_base_val);
   int update_conf(int stride, int pred_stride, int conf);
 
 
