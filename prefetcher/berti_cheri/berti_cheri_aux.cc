@@ -234,49 +234,49 @@ void berti_cheri::l1d_init_prev_prefetches_table()
 {
   l1d_prev_prefetches_table_head = 0;
   for (int i = 0; i < L1D_PREV_PREFETCHES_TABLE_ENTRIES; i++) {
-    l1d_prev_prefetches_table[i].page_addr_pointer = L1D_PREV_PREFETCHES_TABLE_NULL_POINTER;
+    l1d_prev_prefetches_table[i].region_addr = 0;
   }
 }
 
-uint64_t berti_cheri::l1d_find_prev_prefetch_entry(uint64_t pointer, uint64_t offset)
+uint64_t berti_cheri::l1d_find_prev_prefetch_entry(uint64_t region_addr, uint64_t offset)
 {
   for (int i = 0; i < L1D_PREV_PREFETCHES_TABLE_ENTRIES; i++) {
-    if (l1d_prev_prefetches_table[i].page_addr_pointer == pointer && l1d_prev_prefetches_table[i].offset == offset)
+    if (l1d_prev_prefetches_table[i].region_addr == region_addr && l1d_prev_prefetches_table[i].offset == offset)
       return i;
   }
   return L1D_PREV_PREFETCHES_TABLE_ENTRIES;
 }
 
-void berti_cheri::l1d_add_prev_prefetches_table(uint64_t pointer, uint64_t offset, uint64_t cycle)
+void berti_cheri::l1d_add_prev_prefetches_table(uint64_t region_addr, uint64_t offset, uint64_t cycle)
 {
-  if (l1d_find_prev_prefetch_entry(pointer, offset) != L1D_PREV_PREFETCHES_TABLE_ENTRIES)
+  if (l1d_find_prev_prefetch_entry(region_addr, offset) != L1D_PREV_PREFETCHES_TABLE_ENTRIES)
     return;
 
-  l1d_prev_prefetches_table[l1d_prev_prefetches_table_head].page_addr_pointer = pointer;
+  l1d_prev_prefetches_table[l1d_prev_prefetches_table_head].region_addr = region_addr;
   l1d_prev_prefetches_table[l1d_prev_prefetches_table_head].offset = offset;
   l1d_prev_prefetches_table[l1d_prev_prefetches_table_head].time_lat = cycle & L1D_TIME_MASK;
   l1d_prev_prefetches_table[l1d_prev_prefetches_table_head].completed = false;
   l1d_prev_prefetches_table_head = (l1d_prev_prefetches_table_head + 1) & L1D_PREV_PREFETCHES_TABLE_MASK;
 }
 
-void berti_cheri::l1d_reset_pointer_prev_prefetches(uint64_t pointer)
+void berti_cheri::l1d_reset_region_prev_prefetches(uint64_t region_addr)
 {
   for (int i = 0; i < L1D_PREV_PREFETCHES_TABLE_ENTRIES; i++) {
-    if (l1d_prev_prefetches_table[i].page_addr_pointer == pointer)
-      l1d_prev_prefetches_table[i].page_addr_pointer = L1D_PREV_PREFETCHES_TABLE_NULL_POINTER;
+    if (l1d_prev_prefetches_table[i].region_addr == region_addr)
+      l1d_prev_prefetches_table[i].region_addr = 0;
   }
 }
 
-void berti_cheri::l1d_reset_entry_prev_prefetches_table(uint64_t pointer, uint64_t offset)
+void berti_cheri::l1d_reset_entry_prev_prefetches_table(uint64_t region_addr, uint64_t offset)
 {
-  uint64_t index = l1d_find_prev_prefetch_entry(pointer, offset);
+  uint64_t index = l1d_find_prev_prefetch_entry(region_addr, offset);
   if (index != L1D_PREV_PREFETCHES_TABLE_ENTRIES)
-    l1d_prev_prefetches_table[index].page_addr_pointer = L1D_PREV_PREFETCHES_TABLE_NULL_POINTER;
+    l1d_prev_prefetches_table[index].region_addr = 0;
 }
 
-uint64_t berti_cheri::l1d_get_and_set_latency_prev_prefetches_table(uint64_t pointer, uint64_t offset, uint64_t cycle)
+uint64_t berti_cheri::l1d_get_and_set_latency_prev_prefetches_table(uint64_t region_addr, uint64_t offset, uint64_t cycle)
 {
-  uint64_t index = l1d_find_prev_prefetch_entry(pointer, offset);
+  uint64_t index = l1d_find_prev_prefetch_entry(region_addr, offset);
   if (index == L1D_PREV_PREFETCHES_TABLE_ENTRIES)
     return 0;
 
@@ -289,9 +289,9 @@ uint64_t berti_cheri::l1d_get_and_set_latency_prev_prefetches_table(uint64_t poi
   return lat;
 }
 
-uint64_t berti_cheri::l1d_get_latency_prev_prefetches_table(uint64_t pointer, uint64_t offset)
+uint64_t berti_cheri::l1d_get_latency_prev_prefetches_table(uint64_t region_addr, uint64_t offset)
 {
-  uint64_t index = l1d_find_prev_prefetch_entry(pointer, offset);
+  uint64_t index = l1d_find_prev_prefetch_entry(region_addr, offset);
   if (index == L1D_PREV_PREFETCHES_TABLE_ENTRIES)
     return 0;
 

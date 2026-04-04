@@ -55,7 +55,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
  
       //  Update berti distance from prefetch timing 
       if (cache_hit) {
-        uint64_t pref_latency = l1d_get_latency_prev_prefetches_table(index, bitmap_offset);
+        uint64_t pref_latency = l1d_get_latency_prev_prefetches_table(region_addr, bitmap_offset);
         if (pref_latency != 0) {
           int b[L1D_CURRENT_PAGES_TABLE_NUM_BERTI_PER_ACCESS];
           l1d_get_berti_prev_requests_table(index, bitmap_offset, current_core_cycle - pref_latency, b);
@@ -70,7 +70,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
           }
  
           // Eliminate prev prefetch entry since its latency has been consumed
-          l1d_reset_entry_prev_prefetches_table(index, bitmap_offset);
+          l1d_reset_entry_prev_prefetches_table(region_addr, bitmap_offset);
         }
       }
  
@@ -84,7 +84,8 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
       uint64_t victim_index = l1d_get_lru_current_pages_entry();
       assert(victim_index < L1D_CURRENT_PAGES_TABLE_ENTRIES);
       l1d_reset_pointer_prev_requests(victim_index);
-      l1d_reset_pointer_prev_prefetches(victim_index);
+      if (l1d_current_pages_table[victim_index].u_vector != 0)
+        l1d_reset_region_prev_prefetches(l1d_current_pages_table[victim_index].region_addr);
  
       // Record the old entry before overwriting
       l1d_record_current_page(victim_index);
@@ -184,7 +185,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                 if (in_bounds) {
                   bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                   if (prefetched) {
-                    l1d_add_prev_prefetches_table(index, i, current_core_cycle);
+                    l1d_add_prev_prefetches_table(region_addr, i, current_core_cycle);
                     stat_pf_issued_burst++;
                     bursts++;
                     if (pf_page_addr != page_addr)
@@ -216,7 +217,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                 if (in_bounds) {
                   bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                   if (prefetched) {
-                    l1d_add_prev_prefetches_table(index, (uint64_t)i, current_core_cycle);
+                    l1d_add_prev_prefetches_table(region_addr, (uint64_t)i, current_core_cycle);
                     stat_pf_issued_burst++;
                     bursts++;
                     if (pf_page_addr != page_addr)
@@ -249,7 +250,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                     if (prefetched) {
-                      l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                      l1d_add_prev_prefetches_table(region_addr, pf_offset, current_core_cycle);
                       stat_pf_issued_burst++;
                       bursts++;
                     }
@@ -275,7 +276,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
                   if (in_bounds) {
                     bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
                     if (prefetched) {
-                      l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                      l1d_add_prev_prefetches_table(region_addr, pf_offset, current_core_cycle);
                       stat_pf_issued_burst++;
                       bursts++;
                     }
@@ -313,15 +314,16 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
               bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
               if (prefetched) {
                 // Safely track in the current page's entry
-                l1d_add_prev_prefetches_table(index, pf_offset, current_core_cycle);
+                uint64_t pf_region_addr = l1d_make_region_key(cap_base, pf_cap_page_index);
+                l1d_add_prev_prefetches_table(pf_region_addr, pf_offset, current_core_cycle);
                 stat_pf_issued_berti++;
               }
             }
         } else {
-            // CROSS-PAGE: It is CHERI-safe, so we can issue the prefetch.
-            // However, we DO NOT track it in `index` to avoid corrupting the bitmap.
             bool prefetched = intern_->prefetch_line(champsim::address{pf_addr}, true, 0);
             if (prefetched) {
+                uint64_t pf_region_addr = l1d_make_region_key(cap_base, pf_cap_page_index);
+                l1d_add_prev_prefetches_table(pf_region_addr, pf_offset, current_core_cycle);
                 stat_pf_issued_berti++;
                 stat_cross_page_in_object++;
             }
@@ -368,7 +370,8 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
     uint64_t chunk_byte_offset = (addr - entry_cap_base) - (cap_page_idx << LOG2_PAGE_SIZE);
     uint64_t offset = chunk_byte_offset >> LOG2_BLOCK_SIZE;
 
-    uint64_t pref_latency = l1d_get_and_set_latency_prev_prefetches_table(pointer_prev, offset, current_core_cycle);
+    uint64_t entry_region_addr = l1d_current_pages_table[pointer_prev].region_addr;
+    uint64_t pref_latency = l1d_get_and_set_latency_prev_prefetches_table(entry_region_addr, offset, current_core_cycle);
     uint64_t demand_latency = l1d_get_latency_prev_requests_table(pointer_prev, offset, current_core_cycle);
 
     if (pref_latency == 0)
@@ -406,6 +409,7 @@ uint32_t berti_cheri::prefetcher_cache_fill(champsim::address address, long set,
   }
 
   if (victim_index < L1D_CURRENT_PAGES_TABLE_ENTRIES) {
+    l1d_reset_region_prev_prefetches(l1d_current_pages_table[victim_index].region_addr);
     l1d_record_current_page(victim_index);
     l1d_remove_current_table_entry(victim_index);
   }

@@ -41,7 +41,7 @@ typedef struct __l1d_cheri_prev_request_entry {
 
 
 typedef struct __l1d_cheri_prev_prefetch_entry {
-  uint64_t page_addr_pointer;
+  uint64_t region_addr;
   uint64_t offset;
   uint64_t time_lat;
   bool completed;
@@ -98,12 +98,12 @@ private:
   void l1d_get_berti_prev_requests_table(uint64_t pointer, uint64_t offset, uint64_t cycle, int* berti);
 
   void l1d_init_prev_prefetches_table();
-  uint64_t l1d_find_prev_prefetch_entry(uint64_t pointer, uint64_t offset);
-  void l1d_add_prev_prefetches_table(uint64_t pointer, uint64_t offset, uint64_t cycle);
-  void l1d_reset_pointer_prev_prefetches(uint64_t pointer);
-  void l1d_reset_entry_prev_prefetches_table(uint64_t pointer, uint64_t offset);
-  uint64_t l1d_get_and_set_latency_prev_prefetches_table(uint64_t pointer, uint64_t offset, uint64_t cycle);
-  uint64_t l1d_get_latency_prev_prefetches_table(uint64_t pointer, uint64_t offset);
+  uint64_t l1d_find_prev_prefetch_entry(uint64_t region_addr, uint64_t offset);
+  void l1d_add_prev_prefetches_table(uint64_t region_addr, uint64_t offset, uint64_t cycle);
+  void l1d_reset_region_prev_prefetches(uint64_t region_addr);
+  void l1d_reset_entry_prev_prefetches_table(uint64_t region_addr, uint64_t offset);
+  uint64_t l1d_get_and_set_latency_prev_prefetches_table(uint64_t region_addr, uint64_t offset, uint64_t cycle);
+  uint64_t l1d_get_latency_prev_prefetches_table(uint64_t region_addr, uint64_t offset);
 
   void l1d_init_record_pages_table();
   uint64_t l1d_get_lru_record_pages_entry();
