@@ -153,7 +153,7 @@ struct spp_ppf : public champsim::modules::prefetcher {
 			}
 
 			void update_pattern(uint32_t last_sig, typename offset_type::difference_type curr_delta),
-				read_pattern(uint32_t curr_sig, std::vector<typename offset_type::difference_type>& prefetch_delta, std::vector<uint32_t>& confidence_q, std::vector<int32_t>& perc_sum_q, uint32_t &lookahead_way, uint32_t &lookahead_conf, uint32_t &pf_q_tail, uint32_t &depth, champsim::address addr, champsim::address base_addr, champsim::address train_addr, champsim::address curr_ip, champsim::block_number::difference_type train_delta, uint32_t last_sig, uint32_t pq_occupancy, uint32_t pq_SIZE, uint32_t mshr_occupancy, uint32_t mshr_SIZE);
+				read_pattern(uint32_t curr_sig, std::vector<typename offset_type::difference_type>& prefetch_delta, std::vector<uint32_t>& confidence_q, std::vector<int32_t>& perc_sum_q, uint32_t &lookahead_way, uint32_t &lookahead_conf, uint32_t &pf_q_tail, uint32_t &depth, champsim::address addr, champsim::address base_addr, champsim::address train_addr, champsim::address curr_ip, champsim::block_number::difference_type train_delta, uint32_t last_sig, uint64_t pq_occupancy, uint64_t pq_SIZE, uint64_t mshr_occupancy, uint64_t mshr_SIZE);
 		};
 
 		class PREFETCH_FILTER {
@@ -249,8 +249,8 @@ struct spp_ppf : public champsim::modules::prefetcher {
 				PERC_DEPTH[7] = 2048;   //ip ^ sig_delta;
 				PERC_DEPTH[8] = 128;   	//confidence;
 
-				for (int i = 0; i < PERC_ENTRIES; i++) {
-					for (int j = 0;j < PERC_FEATURES; j++) {
+				for (unsigned int i = 0; i < PERC_ENTRIES; i++) {
+					for (unsigned int j = 0;j < PERC_FEATURES; j++) {
 						perc_weights[i][j] = 0;
 						perc_touched[i][j] = 0;
 					}

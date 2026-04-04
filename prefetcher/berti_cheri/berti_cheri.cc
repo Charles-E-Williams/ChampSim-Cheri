@@ -25,8 +25,12 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address address, champs
   auto current_core_cycle = intern_->current_time.time_since_epoch() / intern_->clock_period;
  
   auto cap = intern_->get_authorizing_capability();
+  if (!cheri::is_tag_valid(cap)) 
+    return metadata_in;
   uint64_t cap_base = cap.base.to<uint64_t>();
   uint64_t cap_length = cap.length.to<uint64_t>();
+
+
  
   //  Compute region identity and offset 
   uint64_t cap_page_index = (addr - cap_base) >> LOG2_PAGE_SIZE;

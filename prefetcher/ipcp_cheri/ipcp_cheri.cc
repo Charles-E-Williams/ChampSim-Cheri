@@ -35,9 +35,12 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 {
   uint64_t addr = address.to<uint64_t>();
   uint64_t ip = ip_addr.to<uint64_t>();
-  uint64_t cl_addr = addr >> LOG2_BLOCK_SIZE;
+  // uint64_t cl_offset = addr >> LOG2_BLOCK_SIZE;
 
   auto cap = intern_->get_authorizing_capability();
+  if (!cheri::is_tag_valid(cap)) 
+    return metadata_in;
+
   uint64_t cap_base_val = cap.base.to<uint64_t>();
   uint64_t cap_length_val = cap.length.to<uint64_t>();
 
@@ -135,19 +138,19 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
 
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_addr == ghb_l1[ghb_index].cl_addr)
+      if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
         break;
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = {cl_addr, cap_base_val};
+      ghb_l1[0] = {cl_offset, cap_base_val};
     }
 
     check_for_region_stream_l1(index, cap_base_val, cl_offset);
     return 0;
   }
 
-  int64_t MAX_STRIDE = static_cast<int64_t>((1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE)) - 1);
+  int64_t MAX_STRIDE = static_cast<int64_t>(cap_length_val >> LOG2_BLOCK_SIZE);
   if (stride > MAX_STRIDE || stride < -MAX_STRIDE)  {
     // Update the offset for future accesses, but abort training for this large jump
     trackers_l1[index].last_cl_offset = cl_offset;
@@ -156,12 +159,12 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // We optionally update the GHB here so stream detection still works on absolute addresses
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-      if (cl_addr == ghb_l1[ghb_index].cl_addr)
+      if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
         break;
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = {cl_addr, cap_base_val};
+      ghb_l1[0] = {cl_offset, cap_base_val};
     }
     return 0;
   }
@@ -185,7 +188,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   trackers_l1[index].signature = signature;
 
   // Check stream in GHB and region stream table.
-  check_for_stream_l1(index, cl_addr, cap_base_val);
+  check_for_stream_l1(index, cap_base_val);
   check_for_region_stream_l1(index, cap_base_val, cl_offset);
 
   // Update stored state
@@ -197,12 +200,12 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   // Update GHB (dedup-then-shift, matching stock IPCP)
   int ghb_index = 0;
   for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
-    if (cl_addr == ghb_l1[ghb_index].cl_addr)
+    if (cl_offset == ghb_l1[ghb_index].cap_cl_offset)
       break;
   if (ghb_index == NUM_GHB_ENTRIES) {
     for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
       ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-    ghb_l1[0] = {cl_addr, cap_base_val};
+    ghb_l1[0] = {cl_offset, cap_base_val};
   }
 
   // Prefetch boundary is always capability bounds.
@@ -211,10 +214,15 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // Stream IP
     prefetch_degree = prefetch_degree * 2;
     for (int i = 0; i < prefetch_degree; i++) {
-      uint64_t pf_address = 0;
       int64_t stream_delta = (trackers_l1[index].str_dir == 1) ? (i + 1) : -(i + 1);
       int64_t pf_cl_offset = cl_offset + stream_delta;
-      pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
+  
+      if (pf_cl_offset < 0) {
+        stat_pf_bounded_by_cap++;
+        break;
+      }
+
+      uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
 
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
@@ -231,6 +239,10 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // Constant Stride IP
     for (int i = 0; i < prefetch_degree; i++) {
       int64_t pf_cl_offset = cl_offset + (trackers_l1[index].last_stride * (i + 1));
+      if (pf_cl_offset < 0) {
+        stat_pf_bounded_by_cap++;
+        break;
+      }
       uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
 
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
@@ -250,7 +262,14 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     for (int i = 0; i < prefetch_degree; i++) {
       pref_offset += DPT_l1[signature].delta;
       int64_t pf_cl_offset = cl_offset + pref_offset;
+
+      if (pf_cl_offset < 0) {
+        stat_pf_bounded_by_cap++;
+        break;
+      }
+
       uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
+
 
       if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
         break;
@@ -328,25 +347,27 @@ uint32_t ipcp_cheri::encode_metadata(int stride, uint16_t type, int _spec_nl)
   return metadata;
 }
 
-void ipcp_cheri::check_for_stream_l1(int index, uint64_t cl_addr, uint64_t cap_base_val)
+void ipcp_cheri::check_for_stream_l1(int index, uint64_t cap_base_val)
 {
+int64_t cur_offset = trackers_l1[index].last_cl_offset;
+
   int pos_count = 0, neg_count = 0, count = 0;
-  uint64_t check_addr = cl_addr;
+  int64_t check_off = cur_offset;
 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
-    check_addr--;
+    check_off--;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_addr == ghb_l1[j].cl_addr && cap_base_val == ghb_l1[j].cap_base) {
+      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base) {
         pos_count++;
         break;
       }
   }
 
-  check_addr = cl_addr;
+  check_off = cur_offset;
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
-    check_addr++;
+    check_off++;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_addr == ghb_l1[j].cl_addr && cap_base_val == ghb_l1[j].cap_base) {
+      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base) {
         neg_count++;
         break;
       }

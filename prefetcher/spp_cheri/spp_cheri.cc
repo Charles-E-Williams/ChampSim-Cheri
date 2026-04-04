@@ -45,10 +45,9 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued) : 0;
  
   auto cap = intern_->get_authorizing_capability();
- 
-  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
+  if (!cheri::is_tag_valid(cap)) 
     return metadata_in;
-    
+     
   uint64_t cap_base_val   = cap.base.to<uint64_t>();
   uint64_t cap_length_val = cap.length.to<uint64_t>();
   uint64_t cap_offset_val = cap.offset.to<uint64_t>();
@@ -454,7 +453,7 @@ bool spp_cheri::PREFETCH_FILTER::check(champsim::address check_addr, FILTER_REQU
 void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confidence,
                                                int64_t pf_cap_cl_off, int64_t pf_delta)
 {                                              
-  uint32_t min_conf = 100, victim_way = MAX_GHR_ENTRY;
+  uint32_t min_conf = 100, victim_way = 0;
 
   for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
     if (valid[i] && (cap_cl_offset[i] == pf_cap_cl_off)) {

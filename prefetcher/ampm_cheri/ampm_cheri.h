@@ -15,6 +15,8 @@ class ampm_cheri : public champsim::modules::prefetcher {
 
   static constexpr int      PREFETCH_DEGREE = 2;
   static constexpr unsigned ZONE_BITS       = 12;
+  static constexpr uint64_t STALE_THRESHOLD = 4096;  // tunable: clear after N accesses
+  uint64_t global_access_cycle              = 0;
 
 public:
 
@@ -30,6 +32,7 @@ public:
     std::vector<bool> access_map;
     std::vector<bool> prefetch_map;
 
+    uint64_t age = 0;
     uint64_t cap_base = 0;
     uint64_t cap_top  = 0;
 

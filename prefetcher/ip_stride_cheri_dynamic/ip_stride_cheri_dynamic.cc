@@ -1,4 +1,4 @@
-#include "ip_stride_cheri.h"
+#include "ip_stride_cheri_dynamic.h"
 
 #include <algorithm>
 #include <cassert>
@@ -6,7 +6,7 @@
 
 #include "cache.h"
 
-void ip_stride_cheri::prefetcher_initialize()
+void ip_stride_cheri_dynamic::prefetcher_initialize()
 {
   cap_prefetches_bounded = 0;
   cap_table_hits = 0;
@@ -14,7 +14,7 @@ void ip_stride_cheri::prefetcher_initialize()
   too_small_filtered = 0;
 }
 
-uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
+uint32_t ip_stride_cheri_dynamic::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
                                                    uint8_t cache_hit, bool useful_prefetch,
                                                    access_type type, uint32_t metadata_in)
 {
@@ -41,11 +41,29 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
       cap_table_hits++;
       int64_t stride = current_offset - found->last_offset_accessed;
       
-      if (stride != 0 && stride == found->last_stride) {
-        // Issue K prefetches at D stride, bounded by capability
-        active_lookahead = lookahead_entry{addr, stride, PREFETCH_DEGREE, cap};
-      }
- 
+        if (stride != 0 && stride == found->last_stride) {
+            int direction = (stride > 0) ? 1 : -1;
+            int64_t remaining = cheri::remaining_lines(champsim::block_number{addr}, direction, cap.base, cheri::capability_top(cap));
+            int abs_stride = static_cast<int>(std::abs(stride));
+            int max_useful = (abs_stride > 0) ? static_cast<int>(remaining / abs_stride) : 0;
+
+            if (max_useful > 0) {
+                int degree = std::clamp(max_useful, MIN_PREFETCH_DEGREE, MAX_PREFETCH_DEGREE);
+
+                if (degree < MAX_PREFETCH_DEGREE) 
+                    cap_degree_reduced++;
+                if (degree > 4) 
+                    cap_degree_increased++;  // above old fixed degree
+
+                total_degree_sum += degree;
+                total_degree_count++;
+
+                active_lookahead = lookahead_entry{addr, stride, degree, cap};
+            } else {
+                cap_prefetches_bounded++;
+            }
+        }
+        
       cap_table.fill({cap_hash, current_offset,stride != 0 ? stride : found->last_stride});
  
     } else {
@@ -58,7 +76,7 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
   return metadata_in;
 }
 
-void ip_stride_cheri::prefetcher_cycle_operate()
+void ip_stride_cheri_dynamic::prefetcher_cycle_operate()
 {
   if (!active_lookahead.has_value())
     return;
@@ -92,20 +110,27 @@ void ip_stride_cheri::prefetcher_cycle_operate()
   }
 }
 
-uint32_t ip_stride_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr,
+uint32_t ip_stride_cheri_dynamic::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr,
                                                 uint32_t metadata_in)
 {
   return metadata_in;
 }
 
-void ip_stride_cheri::prefetcher_final_stats()
+void ip_stride_cheri_dynamic::prefetcher_final_stats()
 {
-  std::cout << "\nip_stride_cheri final stats" << std::endl;
+  std::cout << "\nip_stride_cheri_dynamic final stats" << std::endl;
   if (cap_table_hits + cap_table_misses > 0) {
     double hit_rate = 100.0 * static_cast<double>(cap_table_hits)
                     / static_cast<double>(cap_table_hits + cap_table_misses);
-    std::cout << "  Cap table hit rate:          " << hit_rate << "%" << std::endl;
+    std::cout << "  Cap table hit rate:              " << hit_rate << "%" << std::endl;
   }
-  std::cout << "  Single object filtered prefetch:         " << too_small_filtered << std::endl;
-  std::cout << "  Cap prefetches bounded:      " << cap_prefetches_bounded << std::endl;
+  std::cout << "  Single object filtered prefetch:  " << too_small_filtered << std::endl;
+  std::cout << "  Cap prefetches bounded:           " << cap_prefetches_bounded << std::endl;
+  std::cout << "  Degree reduced (< MAX):           " << cap_degree_reduced << std::endl;
+  std::cout << "  Degree increased (> 4):           " << cap_degree_increased << std::endl;
+  if (total_degree_count > 0) {
+    double avg = static_cast<double>(total_degree_sum)
+               / static_cast<double>(total_degree_count);
+    std::cout << "  Avg dynamic degree:              " << avg << std::endl;
+  }
 }

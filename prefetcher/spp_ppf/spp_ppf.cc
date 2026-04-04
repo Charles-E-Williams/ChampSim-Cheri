@@ -50,7 +50,7 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
     confidence_q[0] = std::max(1u, static_cast<uint32_t>(std::round(100.0 * bounded_modifier)));
     GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued)  : 0;
    	
-	for (int i = PAGES_TRACKED-1; i>0; i--) { // N down to 1
+	for (unsigned i = PAGES_TRACKED-1; i>0; i--) { // N down to 1
 		GHR.page_tracker[i] = GHR.page_tracker[i-1];
 	}
 
@@ -58,8 +58,8 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
 
 	int distinct_pages = 0;
 	uint8_t num_pf = 0;
-	for (int i=0; i < PAGES_TRACKED; i++) {
-		int j;
+	for (unsigned i=0; i < PAGES_TRACKED; i++) {
+		unsigned j;
 		for (j=0; j<i; j++) {
 			if (GHR.page_tracker[i] == GHR.page_tracker[j])
 				break;
@@ -103,7 +103,7 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
 	GHR.ip_2 = GHR.ip_1;
 	GHR.ip_1 = GHR.ip_0;
 	GHR.ip_0 = ip;
-
+ 
     if(LOOKAHEAD_ON) {
         do {
             uint32_t lookahead_way = PT_WAY;
@@ -183,11 +183,11 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
             if (lookahead_way < PT_WAY) {
                 uint32_t set = get_hash(curr_sig) % PT_SET;
                 base_addr += (PT.delta[set][lookahead_way] << LOG2_BLOCK_SIZE);
-                prev_delta += PT.delta[set][lookahead_way]; 
+                prev_delta += static_cast<int32_t>(PT.delta[set][lookahead_way]);
 
                 // PT.delta uses a 7-bit sign magnitude representation to generate sig_delta
-                //int sig_delta = (PT.delta[set][lookahead_way] < 0) ? ((((-1) * PT.delta[set][lookahead_way]) & 0x3F) + 0x40) : PT.delta[set][lookahead_way];
-                int sig_delta = (PT.delta[set][lookahead_way] < 0) ? (((-1) * PT.delta[set][lookahead_way]) + (1 << (SIG_DELTA_BIT - 1))) : PT.delta[set][lookahead_way];
+                //auto sig_delta = (PT.delta[set][lookahead_way] < 0) ? ((((-1) * PT.delta[set][lookahead_way]) & 0x3F) + 0x40) : PT.delta[set][lookahead_way];
+                auto sig_delta = (PT.delta[set][lookahead_way] < 0) ? (((-1) * PT.delta[set][lookahead_way]) + (1 << (SIG_DELTA_BIT - 1))) : PT.delta[set][lookahead_way];
                 curr_sig = ((curr_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
             }
 
@@ -253,9 +253,9 @@ void spp_ppf::PPF_Module::final_stats()
 			fmt::print("Printing all the perceptron weights to: {}\n",fname);
 
 			std::string row = "base_addr,cache_line,page_addr,confidence^page_addr,curr_sig^sig_delta,ip_1^ip_2^ip_3,ip^depth,ip^sig_delta,confidence,\n"; 
-			for (int i = 0; i < PERC_ENTRIES; i++) {
+			for (unsigned i = 0; i < PERC_ENTRIES; i++) {
 				//row = row + "Entry#: " + std::to_string(i) + ",";
-				for (int j = 0; j < PERC_FEATURES; j++) {
+				for (unsigned j = 0; j < PERC_FEATURES; j++) {
 					if (PERC.perc_touched[i][j]) {
 						row = row + std::to_string(PERC.perc_weights[i][j]) + ",";
 					}
@@ -277,7 +277,7 @@ void spp_ppf::PPF_Module::final_stats()
             /*
         fmt::print("\n\n****HISTOGRAMMING STATS****\n");
         fmt::print("\tIndex\t\t hist_tots \t\t hist_hits \t\t hist_ratio\n");
-        for (int i = 0; i < 55; i++) {
+        for (unsigned i = 0; i < 55; i++) {
             float hist_ratio = 0;
             if (FILTER.hist_tots[i] != 0)
                 hist_ratio = FILTER.hist_hits[i] / FILTER.hist_tots[i];
@@ -327,7 +327,7 @@ uint64_t spp_ppf::get_hash(uint64_t key)
 
 void spp_ppf::PPF_Module::SIGNATURE_TABLE::read_and_update_sig(champsim::page_number page, offset_type page_offset, uint32_t &last_sig, uint32_t &curr_sig, typename offset_type::difference_type &delta)
 {
-    uint32_t set = spp_ppf::get_hash(page.to<uint64_t>()) % ST_SET, match = ST_WAY;
+    uint32_t set = static_cast<uint32_t>(spp_ppf::get_hash(page.to<uint64_t>()) % ST_SET), match = ST_WAY;
     tag_type partial_page{champsim::address{page}};
     uint8_t  ST_hit = 0;
     long sig_delta{0};
@@ -502,7 +502,7 @@ void spp_ppf::PPF_Module::PATTERN_TABLE::update_pattern(uint32_t last_sig, typen
     }
 }
 
-void spp_ppf::PPF_Module::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<typename offset_type::difference_type>& delta_q, std::vector<uint32_t>& confidence_q, std::vector<int32_t>& perc_sum_q, uint32_t &lookahead_way, uint32_t &lookahead_conf, uint32_t &pf_q_tail, uint32_t &depth, champsim::address addr, champsim::address base_addr, champsim::address train_addr, champsim::address curr_ip, typename offset_type::difference_type train_delta, uint32_t last_sig, uint32_t pq_occupancy, uint32_t pq_SIZE, uint32_t mshr_occupancy, uint32_t mshr_SIZE)
+void spp_ppf::PPF_Module::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<typename offset_type::difference_type>& delta_q, std::vector<uint32_t>& confidence_q, std::vector<int32_t>& perc_sum_q, uint32_t &lookahead_way, uint32_t &lookahead_conf, uint32_t &pf_q_tail, uint32_t &depth, champsim::address addr, champsim::address base_addr, champsim::address train_addr, champsim::address curr_ip, typename offset_type::difference_type train_delta, uint32_t last_sig, uint64_t pq_occupancy, uint64_t pq_SIZE, uint64_t mshr_occupancy, uint64_t mshr_SIZE)
 {
     // Update (sig, delta) correlation
     uint32_t set = spp_ppf::get_hash(curr_sig) % PT_SET,
@@ -517,7 +517,7 @@ void spp_ppf::PPF_Module::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::ve
         for (uint32_t way = 0; way < PT_WAY; way++) {
 
             local_conf = (100 * c_delta[set][way]) / c_sig[set];
-            pf_conf = depth ? (parent_->GHR.global_accuracy * c_delta[set][way] / c_sig[set] * lookahead_conf / 100) : local_conf;
+            pf_conf = static_cast<uint32_t>(depth ? (parent_->GHR.global_accuracy * c_delta[set][way] / c_sig[set] * lookahead_conf / 100) : local_conf);
 
 			int32_t perc_sum = parent_->PERC.perc_predict(train_addr, curr_ip, parent_->GHR.ip_1, parent_->GHR.ip_2, parent_->GHR.ip_3, train_delta + delta[set][way], last_sig, curr_sig, pf_conf, depth);
 			bool do_pf = (perc_sum >= PERC_THRESHOLD_LO) ? 1 : 0;
@@ -784,7 +784,7 @@ void spp_ppf::PPF_Module::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_
     // NOTE: GHR implementation is slightly different from the original paper
     // Instead of matching (last_offset + delta), GHR simply stores and matches the pf_offset
     uint32_t min_conf = 100,
-             victim_way = MAX_GHR_ENTRY;
+             victim_way = 0;
 
     if(SPP_DEBUG_PRINT) {
         std::cout << "[GHR] Crossing the page boundary pf_sig: " << std::hex << pf_sig << std::dec;
@@ -853,7 +853,7 @@ void spp_ppf::PPF_Module::get_perc_index(champsim::address base_addr, champsim::
     champsim::block_number cache_line{base_addr};
     champsim::page_number page_addr{base_addr};
 
-	int sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
+	auto sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
 	uint64_t  pre_hash[PERC_FEATURES];
 
 	pre_hash[0] = base_addr.to<uint64_t>();
@@ -866,7 +866,7 @@ void spp_ppf::PPF_Module::get_perc_index(champsim::address base_addr, champsim::
 	pre_hash[7] = ip.to<uint64_t>() ^ sig_delta;
 	pre_hash[8] = confidence;
 
-	for (int i = 0; i < PERC_FEATURES; i++) {
+	for (unsigned i = 0; i < PERC_FEATURES; i++) {
 		perc_set[i] = (pre_hash[i]) % PERC.PERC_DEPTH[i]; // Variable depths
 		if(SPP_DEBUG_PRINT) std::cout << "  Perceptron Set Index#: " << i << " = " <<  perc_set[i];
 	}
@@ -876,7 +876,7 @@ void spp_ppf::PPF_Module::get_perc_index(champsim::address base_addr, champsim::
 int32_t	spp_ppf::PPF_Module::PERCEPTRON::perc_predict(champsim::address base_addr, champsim::address ip, champsim::address ip_1, champsim::address ip_2, champsim::address ip_3, typename offset_type::difference_type cur_delta, uint32_t last_sig, uint32_t curr_sig, uint32_t confidence, uint32_t depth)
 {
 	if(SPP_DEBUG_PRINT) {
-		int sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
+		auto sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
 		std::cout << "[PERC_PRED] Current IP: " << ip << "  and  Memory Adress: " << std::hex << base_addr << std::endl;
 		std::cout << " Last Sig: " << last_sig << " Curr Sig: " << curr_sig << std::dec << std::endl;
 		std::cout << " Cur Delta: " << cur_delta << " Sign Delta: " << sig_delta << " Confidence: " << confidence<< std::endl;
@@ -888,7 +888,7 @@ int32_t	spp_ppf::PPF_Module::PERCEPTRON::perc_predict(champsim::address base_add
 	parent_->get_perc_index(base_addr, ip, ip_1, ip_2, ip_3, cur_delta, last_sig, curr_sig, confidence, depth, perc_set);
 	
 	int32_t sum = 0;
-	for (int i = 0; i < PERC_FEATURES; i++) {
+	for (unsigned i = 0; i < PERC_FEATURES; i++) {
 		sum += perc_weights[perc_set[i]][i];	
 		// Calculate Sum
 	}
@@ -900,7 +900,7 @@ int32_t	spp_ppf::PPF_Module::PERCEPTRON::perc_predict(champsim::address base_add
 void spp_ppf::PPF_Module::PERCEPTRON::perc_update(champsim::address base_addr, champsim::address ip, champsim::address ip_1, champsim::address ip_2, champsim::address ip_3, typename offset_type::difference_type cur_delta, uint32_t last_sig, uint32_t curr_sig, uint32_t confidence, uint32_t depth, bool direction, int32_t perc_sum)
 {
 	if(SPP_DEBUG_PRINT) {
-		int sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
+		auto sig_delta = (cur_delta < 0) ? (((-1) * cur_delta) + (1 << (SIG_DELTA_BIT - 1))) : cur_delta;
 		std::cout << "[PERC_UPD] (Recorded) IP: " << ip << "  and  Memory Adress: " << std::hex << base_addr << std::endl;
 		std::cout << " Last Sig: " << last_sig << " Curr Sig: " << curr_sig << std::dec << std::endl;
 		std::cout << " Cur Delta: " << cur_delta << " Sign Delta: " << sig_delta << " Confidence: "<< confidence << " Update Direction: " << direction << std::endl;
@@ -912,7 +912,7 @@ void spp_ppf::PPF_Module::PERCEPTRON::perc_update(champsim::address base_addr, c
 	parent_->get_perc_index(base_addr, ip, ip_1, ip_2, ip_3, cur_delta, last_sig, curr_sig, confidence, depth, perc_set);
 	
 	int32_t sum = 0;
-	for (int i = 0; i < PERC_FEATURES; i++) {
+	for (unsigned i = 0; i < PERC_FEATURES; i++) {
 		// Marking the weights as touched for final dumping in the csv
 		perc_touched[perc_set[i]][i] = 1;	
 	}
@@ -921,15 +921,15 @@ void spp_ppf::PPF_Module::PERCEPTRON::perc_update(champsim::address base_addr, c
 	
 	if (!direction) { // direction = 1 means the sum was in the correct direction, 0 means it was in the wrong direction
 		// Prediction wrong
-		for (int i = 0; i < PERC_FEATURES; i++) {
+		for (unsigned i = 0; i < PERC_FEATURES; i++) {
 			if (sum >= PERC_THRESHOLD_HI) {
 				// Prediction was to prefectch -- so decrement counters
-				if (perc_weights[perc_set[i]][i] > -1*(PERC_COUNTER_MAX+1) )
+				if (perc_weights[perc_set[i]][i] > -1*(static_cast<int32_t>(PERC_COUNTER_MAX) + 1))
 					perc_weights[perc_set[i]][i]--;
 			}
 			if (sum < PERC_THRESHOLD_HI) {
 				// Prediction was to not prefetch -- so increment counters
-				if (perc_weights[perc_set[i]][i] < PERC_COUNTER_MAX)
+				if (perc_weights[perc_set[i]][i] < static_cast<int32_t>(PERC_COUNTER_MAX))
 					perc_weights[perc_set[i]][i]++;
 			}
 		}
@@ -939,17 +939,17 @@ void spp_ppf::PPF_Module::PERCEPTRON::perc_update(champsim::address base_addr, c
 			std::cout << " Overall Differential: " << differential << std::endl;
         }
 	}
-	if (direction && sum > NEG_UPDT_THRESHOLD && sum < POS_UPDT_THRESHOLD) {
+	if (direction && sum > NEG_UPDT_THRESHOLD && sum < static_cast<int32_t>(POS_UPDT_THRESHOLD)) {
 		// Prediction correct but sum not 'saturated' enough
-		for (int i = 0; i < PERC_FEATURES; i++) {
+		for (unsigned i = 0; i < PERC_FEATURES; i++) {
 			if (sum >= PERC_THRESHOLD_HI) {
 				// Prediction was to prefetch -- so increment counters
-				if (perc_weights[perc_set[i]][i] < PERC_COUNTER_MAX)
+				if (perc_weights[perc_set[i]][i] < static_cast<int32_t>(PERC_COUNTER_MAX))
 					perc_weights[perc_set[i]][i]++;
 			}
 			if (sum < PERC_THRESHOLD_HI) {
 				// Prediction was to not prefetch -- so decrement counters
-				if (perc_weights[perc_set[i]][i] > -1*(PERC_COUNTER_MAX+1) )
+				if (perc_weights[perc_set[i]][i] > -1*(static_cast<int32_t>(PERC_COUNTER_MAX) + 1))
 					perc_weights[perc_set[i]][i]--;
 			}
 		}

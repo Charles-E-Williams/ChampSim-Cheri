@@ -181,8 +181,8 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 				champsim::address train_addr, champsim::address curr_ip,
 				typename offset_type::difference_type train_delta,
 				uint32_t last_sig,
-				uint32_t pq_occupancy, uint32_t pq_SIZE,
-				uint32_t mshr_occupancy, uint32_t mshr_SIZE,
+				uint64_t pq_occupancy, uint64_t pq_SIZE,
+				uint64_t mshr_occupancy, uint64_t mshr_SIZE,
 				uint64_t cap_base_val, uint64_t cap_length_val,
 				uint64_t cap_offset_val); 
 		};
@@ -298,8 +298,8 @@ struct spp_ppf_cheri : public champsim::modules::prefetcher {
 				PERC_DEPTH[11] = 128;   // position ^ depth
 				PERC_DEPTH[12] = 1024; // capability base ^ sig_delta
 
-				for (int i = 0; i < PERC_ENTRIES; i++) {
-					for (int j = 0;j < PERC_FEATURES; j++) {
+				for (unsigned i = 0; i < PERC_ENTRIES; i++) {
+					for (unsigned j = 0;j < PERC_FEATURES; j++) {
 						perc_weights[i][j] = 0;
 						perc_touched[i][j] = 0;
 					}

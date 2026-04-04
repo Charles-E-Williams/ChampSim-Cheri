@@ -6,6 +6,14 @@ uint32_t next_line_cheri::prefetcher_cache_operate(champsim::address addr, champ
 
   auto auth_cap = intern_->get_authorizing_capability();
 
+  if (!cheri::is_tag_valid(auth_cap)) 
+    return metadata_in;
+
+  if (!cheri::has_prefetchable_range_forward(auth_cap)) {
+    prefetches_bounded++;
+    return metadata_in;
+  }
+
   champsim::block_number pf_block{addr};
   champsim::address next_line_addr{pf_block + 1};
   if (!cheri::prefetch_safe(next_line_addr, auth_cap)) { //no prefetch if the address is outside the bounds of the capability

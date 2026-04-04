@@ -23,7 +23,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
                                              uint32_t metadata_in)
 {
   auto cap = intern_->get_authorizing_capability();
-  if (!cheri::has_prefetchable_range(cap) || !cheri::has_load_permissions(cap.permissions)|| !cheri::is_tag_valid(cap))
+  if (!cheri::is_tag_valid(cap)) 
     return metadata_in;
     
   uint64_t addr = address.to<uint64_t>();

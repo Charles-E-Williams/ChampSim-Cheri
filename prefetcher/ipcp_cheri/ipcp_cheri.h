@@ -53,7 +53,7 @@ public:
 };
 
 struct ghb_entry {
-  uint64_t cl_addr;
+  int64_t cap_cl_offset;
   uint64_t cap_base;
 };
 
@@ -128,7 +128,7 @@ private:
 
   uint16_t update_sig_l1(uint16_t old_sig, int delta);
   uint32_t encode_metadata(int stride, uint16_t type, int spec_nl);
-  void check_for_stream_l1(int index, uint64_t cl_addr, uint64_t cap_base_val);
+  void check_for_stream_l1(int index, uint64_t cap_base_val);
   void check_for_region_stream_l1(int index, uint64_t cap_base_val, int64_t cl_offset);
   uint32_t object_state_index(uint64_t ip, uint64_t cap_base_val);
   bool load_object_state(uint64_t ip, uint64_t cap_base_val, IP_TABLE_L1_CHERI& tracker);

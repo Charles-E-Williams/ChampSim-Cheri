@@ -55,9 +55,9 @@ void spp_ppf_cheri::PPF_Module::final_stats()
 			fmt::print("Printing all the perceptron weights to: {}\n",fname);
 
 			std::string row = "base_addr,cache_line,page_addr,confidence^page_addr,curr_sig^sig_delta,ip_1^ip_2^ip_3,ip^depth,ip^sig_delta,confidence,\n"; 
-			for (int i = 0; i < PERC_ENTRIES; i++) {
+			for (unsigned int i = 0; i < PERC_ENTRIES; i++) {
 				//row = row + "Entry#: " + std::to_string(i) + ",";
-				for (int j = 0; j < PERC_FEATURES; j++) {
+				for (unsigned int j = 0; j < PERC_FEATURES; j++) {
 					if (PERC.perc_touched[i][j]) {
 						row = row + std::to_string(PERC.perc_weights[i][j]) + ",";
 					}
