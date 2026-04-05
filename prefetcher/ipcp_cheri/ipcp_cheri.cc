@@ -262,6 +262,10 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     // Complex Stride IP
     int pref_offset = 0;
     for (int i = 0; i < prefetch_degree; i++) {
+
+      if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
+        break;
+      
       pref_offset += DPT_l1[signature].delta;
       int64_t pf_cl_offset = cl_offset + pref_offset;
 
@@ -271,11 +275,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       }
 
       uint64_t pf_address = cap_base_val + (static_cast<uint64_t>(pf_cl_offset) << LOG2_BLOCK_SIZE);
-
-
-      if (DPT_l1[signature].conf == -1 || DPT_l1[signature].delta == 0)
-        break;
-
       if (!cheri::prefetch_safe(champsim::address{pf_address}, cap)) {
         stat_pf_bounded_by_cap++;
         break;

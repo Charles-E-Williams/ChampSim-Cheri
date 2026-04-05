@@ -26,7 +26,7 @@
       "dispatch_latency": 2,
       "schedule_latency": 5,
       "execute_latency": 1,
-      "branch_predictor": "hashed_perceptron",
+      "branch_predictor": "tage_sc",
       "btb": "basic_btb"
     }
   ],
