@@ -54,7 +54,8 @@ uint32_t berti::prefetcher_cache_operate(champsim::address address, champsim::ad
         return 0;
 
       uint64_t first_ip = l1d_update_demand_current_pages_table(index, offset);
-      assert(l1d_ip_table[first_ip & L1D_IP_TABLE_INDEX_MASK] != L1D_IP_TABLE_NULL_POINTER);
+      if (l1d_ip_table[first_ip & L1D_IP_TABLE_INDEX_MASK] == L1D_IP_TABLE_NULL_POINTER)
+        return 0;
 
       // Update berti
       if (cache_hit) {

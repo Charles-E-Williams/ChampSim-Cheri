@@ -1,5 +1,5 @@
 //=======================================================================================//
-// File             : berti/berti_helper.h
+// File             : berti/berti.h
 // Author           : Rahul Bera, SAFARI Research Group (write2bera@gmail.com)
 // Date             : 12/OCT/2025
 // Description      : Implements Berti
