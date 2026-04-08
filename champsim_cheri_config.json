@@ -66,8 +66,8 @@
     "prefetcher": "ip_stride_cheri"
   },
   "L2C": {
-    "sets": 1280,
-    "ways": 16,
+    "sets": 2048,
+    "ways": 10,
     "rq_size": 64,
     "wq_size": 48,
     "pq_size": 64,
@@ -132,12 +132,12 @@
   },
   "LLC": {
     "frequency": 4000,
-    "sets": 2560,
-    "ways": 16,
+    "sets": 4096,
+    "ways": 12,
     "rq_size": 192,
     "wq_size": 192,
     "pq_size": 64,
-    "mshr_size": 40,
+    "mshr_size": 48,
     "latency": 45,
     "max_tag_check": 1,
     "max_fill": 1,

@@ -29,7 +29,7 @@ base_config = {
       "dispatch_latency": 2,
       "schedule_latency": 5,
       "execute_latency": 1,
-      "branch_predictor": "hashed_perceptron",
+      "branch_predictor": "tage_sc",
       "btb": "basic_btb"
     }
   ],
@@ -51,7 +51,7 @@ base_config = {
     "prefetch_as_load": False,
     "virtual_prefetch": True,
     "prefetch_activate": "LOAD,PREFETCH",
-    "prefetcher": "next_line"
+    "prefetcher": "no"
   },
   "L1D": {
     "sets": 64,
@@ -66,11 +66,11 @@ base_config = {
     "prefetch_as_load": False,
     "virtual_prefetch": True,
     "prefetch_activate": "LOAD,PREFETCH",
-    "prefetcher": "cheri_ptr_chase"
+    "prefetcher": "no"
   },
   "L2C": {
-    "sets": 1280,
-    "ways": 16,
+    "sets": 2048,
+    "ways": 10,
     "rq_size": 64,
     "wq_size": 48,
     "pq_size": 64,
@@ -135,12 +135,12 @@ base_config = {
   },
   "LLC": {
     "frequency": 4000,
-    "sets": 2560,
-    "ways": 16,
+    "sets":  4096,
+    "ways": 12,
     "rq_size": 192,
     "wq_size": 192,
     "pq_size": 64,
-    "mshr_size": 40,
+    "mshr_size": 48,
     "latency": 45,
     "max_tag_check": 1,
     "max_fill": 1,
