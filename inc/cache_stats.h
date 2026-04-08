@@ -15,7 +15,8 @@ enum class cap_size_coverage_events : uint8_t {
   B_128B_4KB,   // 128B–4KB
   B_4KB_64KB,   // 4KB–64KB
   B_64KB_1MB,   // 64KB–1MB
-  B_1MB_1GB,    // 1MB–1GB
+  B_1MB_2MB,    // 1MB–2MB
+  B_2MB_1GB,    // 2MB-1GB
   B_GT_1GB,     // > 1GB
   UNTAGGED,      
   NUM_coverage_events
@@ -24,17 +25,19 @@ enum class cap_size_coverage_events : uint8_t {
 inline constexpr std::size_t NUM_CAP_SIZE_coverage_events = static_cast<std::size_t>(cap_size_coverage_events::UNTAGGED);
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(cap_size_coverage_events::NUM_coverage_events)> cap_size_coverage_events_names{{
-    "0-128B", "128B-4KB", "4KB-64KB", "64KB-1MB", "1MB-1GB", ">1GB", "UNTAGGED"
+    "0-128B", "128B-4KB", "4KB-64KB", "64KB-1MB", "1MB-2MB", "2MB-1GB", ">1GB", "UNTAGGED"
 }};
 
-inline constexpr std::array<cap_size_coverage_events, 6> cap_size_coverage_events_all{{
+inline constexpr std::array<cap_size_coverage_events, 7> cap_size_coverage_events_all{{
     cap_size_coverage_events::B_0_128B, cap_size_coverage_events::B_128B_4KB, cap_size_coverage_events::B_4KB_64KB,
-    cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_1GB, cap_size_coverage_events::B_GT_1GB
+    cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_2MB, cap_size_coverage_events::B_2MB_1GB, 
+    cap_size_coverage_events::B_GT_1GB
 }};
 
-inline constexpr std::array<cap_size_coverage_events, 7> cap_size_coverage_events_with_untagged{{
+inline constexpr std::array<cap_size_coverage_events, 8> cap_size_coverage_events_with_untagged{{
     cap_size_coverage_events::B_0_128B, cap_size_coverage_events::B_128B_4KB, cap_size_coverage_events::B_4KB_64KB,
-    cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_1GB, cap_size_coverage_events::B_GT_1GB,
+    cap_size_coverage_events::B_64KB_1MB, cap_size_coverage_events::B_1MB_2MB, cap_size_coverage_events::B_2MB_1GB,
+    cap_size_coverage_events::B_GT_1GB,
     cap_size_coverage_events::UNTAGGED
 }};
 
@@ -48,8 +51,10 @@ inline cap_size_coverage_events classify_cap_size(uint64_t length)
     return cap_size_coverage_events::B_4KB_64KB;
   if (length <= 1048576)
     return cap_size_coverage_events::B_64KB_1MB;
+  if (length <= 2097152)
+    return cap_size_coverage_events::B_1MB_2MB;
   if (length <= 1073741824ULL)
-    return cap_size_coverage_events::B_1MB_1GB;
+    return cap_size_coverage_events::B_2MB_1GB;
   return cap_size_coverage_events::B_GT_1GB;
 }
 
