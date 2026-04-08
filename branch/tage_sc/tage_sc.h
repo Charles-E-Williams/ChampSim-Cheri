@@ -50,10 +50,10 @@ struct tage_sc : champsim::modules::branch_predictor {
         std::fprintf(stderr, "  SC:    %7d bits  (%6.1f KB)\n", sc_bits, sc_bits / 8192.0);
     #endif
 
-        std::fprintf(stderr, "  TOTAL: %7d bits  (%6.1f KB)  target=%3.0f KB  util=%.1f%%\n", total, total / 8192.0, target_kb, 100.0 * total / target_bits);
+        std::fprintf(stderr, "  TOTAL: %7d bits  (%6.1f KB)  target=%3.0f KB  util=%.1f%%\n\n", total, total / 8192.0, target_kb, 100.0 * total / target_bits);
 
         if (total > target_bits)
-            std::fprintf(stderr, "[TAGE-SC] WARNING: OVER BUDGET by %.1f KB\n", (total - target_bits) / 8192.0);
+            std::fprintf(stderr, "[TAGE-SC] WARNING: OVER BUDGET by %.1f KB\n\n", (total - target_bits) / 8192.0);
     }
 };
 
