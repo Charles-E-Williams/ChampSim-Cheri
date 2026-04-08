@@ -390,11 +390,16 @@ void berti::l1d_init_ip_table()
 //------------------------------------------//
 void berti::l1d_record_current_page(uint64_t index_current)
 {
-  if (l1d_current_pages_table[index_current].u_vector) { // Valid entry
+  if (l1d_current_pages_table[index_current].u_vector) { // valid entry
     uint64_t record_index = l1d_ip_table[l1d_current_pages_table[index_current].ip & L1D_IP_TABLE_INDEX_MASK];
-    assert(record_index < L1D_RECORD_PAGES_TABLE_ENTRIES);
+    if (record_index == L1D_IP_TABLE_NULL_POINTER || record_index >= L1D_RECORD_PAGES_TABLE_ENTRIES) {
+      record_index = l1d_get_lru_record_pages_entry();
+      l1d_ip_table[l1d_current_pages_table[index_current].ip & L1D_IP_TABLE_INDEX_MASK] = record_index;
+    }
     uint64_t confidence;
-    l1d_add_record_pages_table(record_index, l1d_current_pages_table[index_current].page_addr, l1d_current_pages_table[index_current].u_vector,
-                               l1d_current_pages_table[index_current].first_offset, l1d_get_berti_current_pages_table(index_current, confidence));
+    l1d_add_record_pages_table(record_index, l1d_current_pages_table[index_current].page_addr,
+                               l1d_current_pages_table[index_current].u_vector,
+                               l1d_current_pages_table[index_current].first_offset,
+                               l1d_get_berti_current_pages_table(index_current, confidence));
   }
 }

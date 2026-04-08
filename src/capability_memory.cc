@@ -82,8 +82,8 @@ void capability_memory::finalize()
 
   finalized_ = true;
 
-  double entry_mb = presimpoint_entries_.size() * sizeof(presimpoint_entry) / (1024.0 * 1024.0);
-  double table_mb = cap_table_.size() * sizeof(cap_descriptor) / (1024.0 * 1024.0);
+  double entry_mb = static_cast<double>(presimpoint_entries_.size() * sizeof(presimpoint_entry) / (1024.0 * 1024.0));
+  double table_mb = static_cast<double>(cap_table_.size() * sizeof(cap_descriptor) / (1024.0 * 1024.0));
 
   fmt::print("[CAP_MEM] finalize: {} entries, {} unique caps "
              "(entries: {:.1f} MB, caps: {:.1f} MB, total: {:.1f} MB)\n",
