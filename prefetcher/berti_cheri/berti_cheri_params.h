@@ -1,54 +1,111 @@
-#ifndef BERTI_CHERI_PARAMS_H
-#define BERTI_CHERI_PARAMS_H
+# ifndef _BERTI_CHERI_PARAMETERS_H_
+# define _BERTI_CHERI_PARAMETERS_H_
 
+namespace berti_cheri_space
+{
+  /*
+   * Berti: an Accurate Local-Delta Data Prefetcher
+   *  
+   * 55th ACM/IEEE International Conference on Microarchitecture (MICRO 2022),
+   * October 1-5, 2022, Chicago, Illinois, USA.
+   * 
+   * @Authors: Agustín Navarro-Torres, Biswabandan Panda, J. Alastruey-Benedé, 
+   *           Pablo Ibáñez, Víctor Viñals-Yúfera, and Alberto Ros
+   * @Manteiners: Agustín Navarro -Torres
+   * @Email: agusnt@unizar.es
+   * @Date: 22/11/2022
+   * 
+   * This code is an update from the original code to work with the new version
+   * of ChampSim: https://github.com/agusnt/Berti-Artifact
+   * 
+   * Maybe fine-tuning is required to get the optimal performance/accuracy.
+   * 
+   * Please note that this version of ChampSim has noticeable differences with 
+   * the used for the paper, so results can varies.
+   * 
+   * Cite this:
+   * 
+   * A. Navarro-Torres, B. Panda, J. Alastruey-Benedé, P. Ibáñez, 
+   * V. Viñals-Yúfera and A. Ros, 
+   * "Berti: an Accurate Local-Delta Data Prefetcher," 
+   * 2022 55th IEEE/ACM International Symposium on Microarchitecture (MICRO), 
+   * 2022, pp. 975-991, doi: 10.1109/MICRO56248.2022.00072.
+   * 
+   * @INPROCEEDINGS{9923806,  author={Navarro-Torres, Agustín and Panda, 
+   * Biswabandan and Alastruey-Benedé, Jesús and Ibáñez, Pablo and Viñals-Yúfera,
+   * Víctor and Ros, Alberto},  booktitle={2022 55th IEEE/ACM International 
+   * Symposium on Microarchitecture (MICRO)},   title={Berti: an Accurate 
+   * Local-Delta Data Prefetcher},   year={2022},  volume={},  number={},  
+   * pages={975-991},  doi={10.1109/MICRO56248.2022.00072}}
+   */
+  
+  /*****************************************************************************
+   *                              SIZES                                        *
+   *****************************************************************************/
+  // BERTI
+  # define BERTI_TABLE_SIZE             (64) // Big enough to fit all entries
+  # define BERTI_TABLE_DELTA_SIZE       (16)
+  
+  // HISTORY
+  # define HISTORY_TABLE_SETS           (8)
+  # define HISTORY_TABLE_WAYS           (16)
 
-// #define L1D_PAGE_BLOCKS_BITS (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE)
-// #define L1D_PAGE_BLOCKS (1 << L1D_PAGE_BLOCKS_BITS)
-// #define L1D_PAGE_OFFSET_MASK (L1D_PAGE_BLOCKS - 1)
-
-
-#define L1D_REGION_BITS 12   // 4KB regions
-#define L1D_PAGE_BLOCKS_BITS (L1D_REGION_BITS - LOG2_BLOCK_SIZE)
-#define L1D_PAGE_BLOCKS (1 << L1D_PAGE_BLOCKS_BITS)
-#define L1D_PAGE_OFFSET_MASK (L1D_PAGE_BLOCKS - 1)
-
-#define L1D_MAX_NUM_BURST_PREFETCHES 3
-#define L1D_BERTI_CTR_MED_HIGH_CONFIDENCE 2
-
-// TIME AND OVERFLOWS
-#define L1D_TIME_BITS 16
-#define L1D_TIME_OVERFLOW ((uint64_t)1 << L1D_TIME_BITS)
-#define L1D_TIME_MASK (L1D_TIME_OVERFLOW - 1)
-
-// CURRENT PAGES TABLE
-#define L1D_CURRENT_PAGES_TABLE_INDEX_BITS 6
-#define L1D_CURRENT_PAGES_TABLE_ENTRIES ((1 << L1D_CURRENT_PAGES_TABLE_INDEX_BITS) - 1)
-#define L1D_CURRENT_PAGES_TABLE_NUM_BERTI 10
-#define L1D_CURRENT_PAGES_TABLE_NUM_BERTI_PER_ACCESS 7
-
-// PREVIOUS REQUESTS TABLE
-#define L1D_PREV_REQUESTS_TABLE_INDEX_BITS 10
-#define L1D_PREV_REQUESTS_TABLE_ENTRIES (1 << L1D_PREV_REQUESTS_TABLE_INDEX_BITS)
-#define L1D_PREV_REQUESTS_TABLE_MASK (L1D_PREV_REQUESTS_TABLE_ENTRIES - 1)
-#define L1D_PREV_REQUESTS_TABLE_NULL_POINTER L1D_CURRENT_PAGES_TABLE_ENTRIES
-
-// PREVIOUS PREFETCHES TABLE
-#define L1D_PREV_PREFETCHES_TABLE_INDEX_BITS 9
-#define L1D_PREV_PREFETCHES_TABLE_ENTRIES (1 << L1D_PREV_PREFETCHES_TABLE_INDEX_BITS)
-#define L1D_PREV_PREFETCHES_TABLE_MASK (L1D_PREV_PREFETCHES_TABLE_ENTRIES - 1)
-#define L1D_PREV_PREFETCHES_TABLE_NULL_POINTER L1D_CURRENT_PAGES_TABLE_ENTRIES
-
-// RECORD PAGES TABLE
-#define L1D_RECORD_PAGES_TABLE_ENTRIES (((1 << 10) + (1 << 8) + (1 << 7)) - 1)
-#define L1D_TRUNCATED_PAGE_ADDR_BITS 32
-#define L1D_TRUNCATED_PAGE_ADDR_MASK (((uint64_t)1 << L1D_TRUNCATED_PAGE_ADDR_BITS) - 1)
-
-// IP TABLE
-#define L1D_IP_TABLE_INDEX_BITS 10
-#define L1D_IP_TABLE_ENTRIES (1 << L1D_IP_TABLE_INDEX_BITS)
-#define L1D_IP_TABLE_INDEX_MASK (L1D_IP_TABLE_ENTRIES - 1)
-#define L1D_IP_TABLE_NULL_POINTER L1D_RECORD_PAGES_TABLE_ENTRIES
-
-#define L1D_CHERI_REGION_HASH_MULT 0x9e3779b97f4a7c15ULL
-
-#endif
+  // Hash Function
+  //#define HASH_FN
+  //# define HASH_ORIGINAL
+  //# define THOMAS_WANG_HASH_1
+  //# define THOMAS_WANG_HASH_2
+  //# define THOMAS_WANG_HASH_3
+  //# define THOMAS_WANG_HASH_4
+  //# define THOMAS_WANG_HASH_5
+  //# define THOMAS_WANG_HASH_6
+  //# define THOMAS_WANG_HASH_7
+  //# define THOMAS_WANG_NEW_HASH
+  //# define THOMAS_WANG_HASH_HALF_AVALANCHE
+  //# define THOMAS_WANG_HASH_FULL_AVALANCHE
+  //# define THOMAS_WANG_HASH_INT_1
+  //# define THOMAS_WANG_HASH_INT_2
+  # define ENTANGLING_HASH
+  //# define FOLD_HASH
+ 
+  /*****************************************************************************
+   *                              MASKS                                        *
+   *****************************************************************************/
+  # define SIZE_IP_MASK (64)
+  # define IP_MASK                      (0xFFFF)
+  # define TIME_MASK                    (0xFFFF)
+  # define LAT_MASK                     (0xFFF)
+  # define ADDR_MASK                    (0xFFFFFF)
+  # define DELTA_MASK                   (12)
+  # define TABLE_SET_MASK               (0x7)
+  
+  /*****************************************************************************
+   *                      CONFIDENCE VALUES                                    *
+   *****************************************************************************/
+  # define CONFIDENCE_MAX               (16) // 6 bits
+  # define CONFIDENCE_INC               (1) // 6 bits
+  # define CONFIDENCE_INIT              (1) // 6 bits
+   
+  # define CONFIDENCE_L1                (10) // 6 bits
+  # define CONFIDENCE_L2                (8) // 6 bits
+  # define CONFIDENCE_L2R               (6) // 6 bits
+  
+  # define CONFIDENCE_MIDDLE_L1         (14) // 6 bits
+  # define CONFIDENCE_MIDDLE_L2         (12) // 6 bits
+  # define LAUNCH_MIDDLE_CONF           (8)
+  
+  /*****************************************************************************
+   *                              LIMITS                                       *
+   *****************************************************************************/
+  # define MAX_HISTORY_IP               (8)
+  # define MSHR_LIMIT                   (70)
+  
+  /*****************************************************************************
+   *                              CONSTANT PARAMETERS                          *
+   *****************************************************************************/
+  # define BERTI_R                      (0x0)
+  # define BERTI_L1                     (0x1)
+  # define BERTI_L2                     (0x2)
+  # define BERTI_L2R                    (0x3)
+};
+# endif
