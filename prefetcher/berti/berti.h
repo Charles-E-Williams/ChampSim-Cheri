@@ -113,7 +113,7 @@ class berti : public champsim::modules::prefetcher {
         {
             latencyt = new latency_table[size];
         }
-        ~LatencyTable() { delete latencyt;}
+        ~LatencyTable() { delete []latencyt;}
     
         uint8_t  add(uint64_t addr, uint64_t tag, bool pf, uint64_t cycle);
         uint64_t get(uint64_t addr);
@@ -123,13 +123,13 @@ class berti : public champsim::modules::prefetcher {
     
     class ShadowCache
     {
-        /* Shadow cache simulate the modified L1D Cache */
+        /* Shadow cache: mirrors L1D to track prefetch status and latency. */
         private:
         struct shadow_cache {
-            uint64_t addr = 0; // Addr
-            uint64_t lat  = 0;  // Latency
-            bool     pf   = false;   // Is a prefetch 
-        }; // This struct is the vberti table
+            uint64_t addr = 0;
+            uint64_t lat  = 0;
+            bool     pf   = false;
+        };
     
         int sets;
         int ways;
@@ -139,23 +139,23 @@ class berti : public champsim::modules::prefetcher {
         uint64_t aliased_cache_hits = 0;
         ShadowCache(const int sets, const int ways)
         {
-            scache = new shadow_cache*[sets];
-            for (int i = 0; i < sets; i++) scache[i] = new shadow_cache[ways];
-    
             this->sets = sets;
             this->ways = ways;
+            scache = new shadow_cache*[sets];
+            for (int i = 0; i < sets; i++)
+                scache[i] = new shadow_cache[ways];
         }
-    
         ~ShadowCache()
         {
-            for (int i = 0; i < sets; i++) delete scache[i];
-            delete scache;
+            for (int i = 0; i < sets; i++)
+                delete[] scache[i];
+            delete[] scache;
         }
     
         bool add(long set, long way, uint64_t addr, bool pf, uint64_t lat);
-        bool get(uint64_t addr);
-        void set_pf(uint64_t addr, bool pf);
         bool is_pf(uint64_t addr);
+        void set_pf(uint64_t addr, bool pf);
+        bool get(uint64_t addr);
         uint64_t get_latency(uint64_t addr);
     };
     
@@ -189,10 +189,10 @@ class berti : public champsim::modules::prefetcher {
     
         ~HistoryTable()
         {
-            for (int i = 0; i < sets; i++) delete historyt[i];
-            delete historyt;
+            for (int i = 0; i < sets; i++) delete []historyt[i];
+            delete []historyt;
     
-            delete history_pointers;
+            delete []history_pointers;
         }
     
         int get_ways();
