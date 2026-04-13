@@ -11,13 +11,10 @@
 #include "modules.h"
 #include "msl/lru_table.h"
 
-class ampm_cheri : public champsim::modules::prefetcher {
 
+class ampm_cheri : public champsim::modules::prefetcher {
   static constexpr int      PREFETCH_DEGREE = 2;
   static constexpr unsigned ZONE_BITS       = 12;
-  static constexpr uint64_t STALE_THRESHOLD = 4096;  // tunable: clear after N accesses
-  uint64_t global_access_cycle              = 0;
-
 public:
 
   static std::size_t lines_per_zone() { return (1u << ZONE_BITS) / BLOCK_SIZE; }
@@ -32,7 +29,6 @@ public:
     std::vector<bool> access_map;
     std::vector<bool> prefetch_map;
 
-    uint64_t age = 0;
     uint64_t cap_base = 0;
     uint64_t cap_top  = 0;
 
@@ -47,8 +43,6 @@ public:
     auto operator()(const region_type& e) const { return e.key; }
   };
 
-  static constexpr std::size_t REVMAP_SETS = 128;
-  static constexpr std::size_t REVMAP_WAYS = 4;  
   static constexpr std::size_t REGION_SETS = 64;
   static constexpr std::size_t REGION_WAYS = 4;
 
@@ -67,15 +61,13 @@ public:
                    int degree, bool two_level);
 
   uint64_t stat_pf_bounded = 0;
+  uint64_t stat_small_cap = 0;
+
 
   using prefetcher::prefetcher;
   void prefetcher_initialize();
-  uint32_t prefetcher_cache_operate(champsim::address addr, champsim::address ip,
-                                    bool cache_hit, bool useful_prefetch,
-                                    access_type type, uint32_t metadata_in);
-  uint32_t prefetcher_cache_fill(champsim::address addr, long set, long way,
-                                 bool prefetch, champsim::address evicted_addr,
-                                 uint32_t metadata_in);
+  uint32_t prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in);
+  uint32_t prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap);
   void prefetcher_final_stats();
 };
 

@@ -198,7 +198,7 @@ void spp_ppf_cheri::PPF_Module::do_prefetch(champsim::address addr, champsim::ad
 }
 
 
-void spp_ppf_cheri::PPF_Module::handle_fill(champsim::address addr,  long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+void spp_ppf_cheri::PPF_Module::handle_fill(champsim::address addr,  long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
 
     //prefetch dropped

@@ -170,9 +170,7 @@ uint32_t kratos::prefetcher_cache_operate(champsim::address addr, champsim::addr
 // prefetcher_cache_fill — called when a miss is filled in the L2
 // =========================================================================
 
-uint32_t kratos::prefetcher_cache_fill(champsim::address addr, long set, long way,
-                                       uint8_t prefetch, champsim::address evicted_addr,
-                                       uint32_t metadata_in)
+uint32_t kratos::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   // Currently minimal — feedback is handled via useful_prefetch in cache_operate.
   // Future: track eviction of prefetched lines for negative feedback.

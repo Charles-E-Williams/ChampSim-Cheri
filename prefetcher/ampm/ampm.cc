@@ -63,7 +63,7 @@ uint32_t ampm::prefetcher_cache_operate(champsim::address addr, champsim::addres
   return metadata_in;
 }
 
-uint32_t ampm::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+uint32_t ampm::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   if(evicted_addr != champsim::address{}) {
     engine.remove_from_pagemap(evicted_addr,false);

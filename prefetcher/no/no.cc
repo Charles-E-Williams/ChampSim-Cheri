@@ -7,7 +7,7 @@ uint32_t no::prefetcher_cache_operate(champsim::address addr, champsim::address 
   return metadata_in;
 }
 
-uint32_t no::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+uint32_t no::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   return metadata_in;
 }

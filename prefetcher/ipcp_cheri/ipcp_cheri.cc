@@ -310,9 +310,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   return 0;
 }
 
-uint32_t ipcp_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way,
-                                           uint8_t prefetch, champsim::address evicted_addr,
-                                           uint32_t metadata_in)
+uint32_t ipcp_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   return 0;
 }

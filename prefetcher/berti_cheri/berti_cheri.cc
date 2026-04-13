@@ -775,8 +775,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address addr, champsim:
     }
 
     // Reconstruct target VA from cap base + offset
-    uint64_t target_va = cap_base_val +
-        (static_cast<uint64_t>(target_offset) << LOG2_BLOCK_SIZE);
+    uint64_t target_va = cap_base_val + (static_cast<uint64_t>(target_offset) << LOG2_BLOCK_SIZE);
     champsim::address p_addr{target_va};
     champsim::block_number p_b_addr{p_addr};
 
@@ -837,9 +836,7 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address addr, champsim:
   return metadata_in;
 }
 
-uint32_t berti_cheri::prefetcher_cache_fill(champsim::address addr, long set,
-    long way, uint8_t prefetch, champsim::address evicted_addr,
-    uint32_t metadata_in)
+uint32_t berti_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   LatencyTable* tlatencyt = latencyt[me];
   ShadowCache* tscache    = scache[me];

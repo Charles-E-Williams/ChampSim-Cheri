@@ -56,7 +56,7 @@ uint32_t sms::prefetcher_cache_operate(champsim::address address, champsim::addr
   
 void sms::prefetcher_cycle_operate() { issue_prefetch(); }
 
-uint32_t sms::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+uint32_t sms::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
 {
   return 0;
 }

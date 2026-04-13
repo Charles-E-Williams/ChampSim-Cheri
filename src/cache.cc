@@ -224,14 +224,16 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
   }
 
   champsim::address evicting_address{};
+  champsim::capability evicted_cap{};
   if (way != set_end && way->valid) {
     evicting_address = module_address(*way);
+    evicted_cap = way->auth_cap;
   }
 
   auto metadata_thru = fill_mshr.data_promise->pf_metadata;
   if (!module_is_instr(fill_mshr)) {  // limiting only for data line fills
     metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx, (fill_mshr.type == access_type::PREFETCH), 
-                                               evicting_address, fill_mshr.data_promise->pf_metadata);
+                                               evicting_address, fill_mshr.data_promise->pf_metadata, evicted_cap);
   }
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
                               fill_mshr.type);
@@ -893,9 +895,9 @@ uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::
 }
 
 uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr,
-                                           uint32_t metadata_in) const
+                                           uint32_t metadata_in, champsim::capability evicted_cap) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, metadata_in);
+  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, metadata_in, evicted_cap);
 }
 
 void CACHE::impl_prefetcher_cycle_operate() const { pref_module_pimpl->impl_prefetcher_cycle_operate(); }

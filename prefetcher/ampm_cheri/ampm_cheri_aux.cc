@@ -21,7 +21,7 @@ auto ampm_cheri::zone_key_and_offset(champsim::address v_addr, const champsim::c
 
     // out of bounds
     if (va < base || va >= top) 
-        return {region_key_type{0}, 0};
+      return {region_key_type{0}, 0};
     
     uint64_t obj_cl      = (va - base) >> LOG2_BLOCK_SIZE;
     uint64_t lpz         = lines_per_zone();
@@ -42,17 +42,9 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa,
     return;
   }
 
-  global_access_cycle++;
-
   auto existing_region = regions.check_hit(region_type{key});
 
   if (existing_region.has_value()) {
-
-    if (global_access_cycle - existing_region->age > STALE_THRESHOLD) {
-      std::fill(existing_region->access_map.begin(), existing_region->access_map.end(), false);
-      std::fill(existing_region->prefetch_map.begin(), existing_region->prefetch_map.end(), false);
-    }
-    existing_region->age = global_access_cycle;
 
     if (prefetch) 
         existing_region->prefetch_map.at(offset) = true;
@@ -74,7 +66,6 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa,
 
     new_region.cap_base = cap.base.to<uint64_t>();
     new_region.cap_top  = cap.base.to<uint64_t>() + cap.length.to<uint64_t>();
-    new_region.age = global_access_cycle;
     regions.fill(new_region);
   }
 
@@ -86,9 +77,6 @@ bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability&
   auto region = regions.check_hit(region_type{key});
 
   if (!region.has_value()) return false;
-
-
-  if (global_access_cycle - region->age > STALE_THRESHOLD) return false; 
   
   return prefetch ? region->prefetch_map.at(offset) : region->access_map.at(offset);
 }
