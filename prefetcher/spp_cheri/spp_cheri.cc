@@ -78,7 +78,8 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   //   base_va   = VA cursor for cross-page capability arithmetic
   auto base_addr = addr;
   uint64_t base_va = demand_va;
-  int64_t cap_cl_cursor = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);  
+  uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
+  int64_t cap_cl_cursor = static_cast<int64_t>((cap_offset_val & page_mask) >> LOG2_BLOCK_SIZE);
   uint32_t lookahead_conf = 100, pf_q_head = 0, pf_q_tail = 0;
   uint8_t do_lookahead = 0;
  
@@ -130,7 +131,9 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
           }
         } else {
             if constexpr (GHR_ON) {
-              GHR.update_entry(curr_sig, confidence_q[i], cap_cl_cursor + delta_q[i], delta_q[i]);
+              int64_t cls_per_cap_page = static_cast<int64_t>(1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE));
+              int64_t target_cap_page_cl = ((cap_cl_cursor + delta_q[i]) % cls_per_cap_page + cls_per_cap_page) % cls_per_cap_page;
+              GHR.update_entry(curr_sig, confidence_q[i], target_cap_page_cl, delta_q[i]);
             }
           } 
         do_lookahead = 1;
@@ -147,16 +150,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
       base_va   += (static_cast<int64_t>(la_delta) << LOG2_BLOCK_SIZE);
       cap_cl_cursor += la_delta;
  
-      uint64_t abs_delta = (la_delta < 0) ? (-la_delta) : la_delta;
-      uint64_t folded_magnitude;
-      if (abs_delta < (1ULL << (SIG_DELTA_BIT - 1))) {
-        folded_magnitude = abs_delta;
-      } else {
-        folded_magnitude = (abs_delta ^ (abs_delta >> 6) ^ (abs_delta >> 12)) & ((1ULL << (SIG_DELTA_BIT - 1)) - 1);
-        folded_magnitude |= (1ULL << (SIG_DELTA_BIT - 2)); 
-      }
-      
-      auto sig_delta = (la_delta < 0) ? (folded_magnitude + (1 << (SIG_DELTA_BIT - 1))) : folded_magnitude;
+      auto sig_delta = (la_delta < 0) ? (((-1) * la_delta) + (1 << (SIG_DELTA_BIT - 1))) : la_delta;
       curr_sig = ((curr_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
     }
  
@@ -204,57 +198,42 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
                                                      uint64_t cap_offset_val,
                                                      uint64_t cap_length_val)
 {
-  uint32_t set = static_cast<uint32_t>(get_hash(cap_base_val) % ST_SET);
- 
+  uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
+  uint64_t cur_cap_page_id = cap_offset_val >> LOG2_PAGE_SIZE;
+
+  int64_t cap_page_cl_offset = static_cast<int64_t>((cap_offset_val & page_mask) >> LOG2_BLOCK_SIZE);
+
+  uint64_t st_key = cap_base_val ^ (cur_cap_page_id * 0x9e3779b97f4a7c15ULL);
+  uint32_t set = static_cast<uint32_t>(get_hash(st_key) % ST_SET);
+
   auto match = ST_WAY;
   uint8_t ST_hit = 0;
   long sig_delta = 0;
- 
-  int64_t cap_cl_offset = static_cast<int64_t>(cap_offset_val >> LOG2_BLOCK_SIZE);
- 
-  //  Case 1: ST hit (match on cap_base) 
+
   for (match = 0; match < ST_WAY; match++) {
     if (!valid[set][match])
       continue;
- 
-    if (cap_base[set][match] == cap_base_val) {
+
+    if (cap_base[set][match] == cap_base_val && cap_page_offset[set][match] == cur_cap_page_id) {
       last_sig = sig[set][match];
- 
-      // Delta in cap-relative cache-line units
-      out_delta = cap_cl_offset - last_cap_cl_offset[set][match];
- 
+
+      out_delta = cap_page_cl_offset - last_cap_cl_offset[set][match];
+
       if (out_delta) {
-        // Track cross-page strides within the same capability (VA pages)
-        champsim::page_number last_page{champsim::address{cap_base_val + (static_cast<uint64_t>(last_cap_cl_offset[set][match]) << LOG2_BLOCK_SIZE)}};
-        champsim::page_number curr_page{champsim::address{cap_base_val + cap_offset_val}};
-        if (last_page != curr_page)
-          _parent->stat_cross_page_in_cap++;
- 
-        uint64_t abs_delta = (out_delta < 0) ? (-out_delta) : out_delta;
-        
-        uint64_t folded_magnitude;
-        if (abs_delta < (1ULL << (SIG_DELTA_BIT - 1))) {
-            folded_magnitude = abs_delta;
-        } else {
-
-          folded_magnitude = (abs_delta ^ (abs_delta >> 6) ^ (abs_delta >> 12)) & ((1ULL << (SIG_DELTA_BIT - 1)) - 1);
-          folded_magnitude |= (1ULL << (SIG_DELTA_BIT - 2)); 
-        }
-
-        sig_delta = (out_delta < 0) ? (folded_magnitude + (1 << (SIG_DELTA_BIT - 1))) : folded_magnitude;
+        sig_delta = (out_delta < 0) ? (((-1) * out_delta) + (1 << (SIG_DELTA_BIT - 1))) : out_delta;
         sig[set][match] = ((last_sig << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
         curr_sig = sig[set][match];
-        last_cap_cl_offset[set][match] = cap_cl_offset;
+        last_cap_cl_offset[set][match] = cap_page_cl_offset;
       } else {
-        last_sig = 0;  // same cache line, no delta
+        last_sig = 0;
       }
- 
+
       ST_hit = 1;
       break;
     }
   }
- 
-  //  Case 2: ST miss — find invalid entry 
+
+  // Case 2: ST miss — find invalid entry
   if (match == ST_WAY) {
     for (match = 0; match < ST_WAY; match++) {
       if (!valid[set][match]) {
@@ -263,13 +242,14 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
         curr_sig = 0;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
-        last_cap_cl_offset[set][match] = cap_cl_offset;
+        cap_page_offset[set][match] = cur_cap_page_id;
+        last_cap_cl_offset[set][match] = cap_page_cl_offset;
         break;
       }
     }
   }
- 
-  //  Case 3: ST miss, no invalid — LRU eviction 
+
+  // Case 3: ST miss, no invalid — LRU eviction
   if (match == ST_WAY) {
     for (match = 0; match < ST_WAY; match++) {
       if (lru[set][match] == ST_WAY - 1) {
@@ -277,42 +257,34 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
         curr_sig = 0;
         cap_base[set][match] = cap_base_val;
         cap_length[set][match] = cap_length_val;
-        last_cap_cl_offset[set][match] = cap_cl_offset;
+        cap_page_offset[set][match] = cur_cap_page_id;
+        last_cap_cl_offset[set][match] = cap_page_cl_offset;
         break;
       }
     }
   }
- 
+
   if constexpr (SPP_SANITY_CHECK) {
     if (match == ST_WAY) {
       std::cout << "[ST-CHERI] Cannot find a replacement victim!" << std::endl;
       assert(0);
     }
   }
- 
-  //  GHR bootstrap for new pages 
+
+  // GHR bootstrap for new cap_pages
   if constexpr (GHR_ON) {
     if (ST_hit == 0) {
-      uint32_t GHR_found = _parent->GHR.check_entry(cap_cl_offset);
+      uint32_t GHR_found = _parent->GHR.check_entry(cap_page_cl_offset);
       if (GHR_found < MAX_GHR_ENTRY) {
         auto ghr_delta = _parent->GHR.delta[GHR_found];
-        uint64_t abs_delta = (ghr_delta < 0) ? (-ghr_delta) : ghr_delta;
-        uint64_t folded_magnitude;
-        if (abs_delta < (1ULL << (SIG_DELTA_BIT - 1))) {
-          folded_magnitude = abs_delta;
-        } else {
-          folded_magnitude = (abs_delta ^ (abs_delta >> 6) ^ (abs_delta >> 12)) & ((1ULL << (SIG_DELTA_BIT - 1)) - 1);
-          folded_magnitude |= (1ULL << (SIG_DELTA_BIT - 2)); 
-        }
-        
-        sig_delta = (ghr_delta < 0) ? (folded_magnitude + (1 << (SIG_DELTA_BIT - 1))) : folded_magnitude;
+        sig_delta = (ghr_delta < 0) ? (((-1) * ghr_delta) + (1 << (SIG_DELTA_BIT - 1))) : ghr_delta;
         sig[set][match] = ((_parent->GHR.sig[GHR_found] << SIG_SHIFT) ^ sig_delta) & SIG_MASK;
         curr_sig = sig[set][match];
       }
     }
   }
- 
-  //  LRU update 
+
+  // LRU update
   for (uint32_t way = 0; way < ST_WAY; way++) {
     if (lru[set][way] < lru[set][match])
       lru[set][way]++;

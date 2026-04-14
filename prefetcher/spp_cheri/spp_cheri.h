@@ -73,6 +73,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
     uint32_t lru[ST_SET][ST_WAY];
     uint64_t cap_base[ST_SET][ST_WAY];         // capability base for this entry
     uint64_t cap_length[ST_SET][ST_WAY];
+    uint64_t cap_page_offset[ST_SET][ST_WAY];            // cap-relative page index within object
     int64_t last_cap_cl_offset[ST_SET][ST_WAY]; // cap-relative last offset (cache-line units)
 
   SIGNATURE_TABLE()
@@ -84,6 +85,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
           lru[set][way] = way;
           cap_base[set][way] = 0;
           cap_length[set][way] = 0;
+          cap_page_offset[set][way] = 0;
           last_cap_cl_offset[set][way] = 0;
         }
     };
