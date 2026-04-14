@@ -78,6 +78,7 @@ private:
 
   //  Statistics 
   uint64_t stat_pref_bounds_clip = 0; // prefetches suppressed by cap bounds
+  uint64_t stat_next_region_pf =   0;
 
 
 public:

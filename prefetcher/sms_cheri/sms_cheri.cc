@@ -67,4 +67,6 @@ uint32_t sms_cheri::prefetcher_cache_fill(champsim::address addr, long set, long
 void sms_cheri::prefetcher_final_stats()
 {
   std::cout << "  Prefetches clipped (bounds):  " << stat_pref_bounds_clip << std::endl;
+  std::cout << "  Prefetch next region:  " << stat_next_region_pf << std::endl;
+
 }

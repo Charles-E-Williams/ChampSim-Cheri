@@ -66,5 +66,5 @@ void ampm_cheri::prefetcher_final_stats()
   std::cout << "\n=== AMPM-CHERI Final Stats ===" << "\n";
   std::cout << "Bounded by cap:           " << stat_pf_bounded << "\n";
   std::cout << "Capability too small to prefetch:        " << stat_small_cap << "\n";
-
+  std::cout << "Zone hash collisions:     " << stat_zone_collision << "\n";
 }

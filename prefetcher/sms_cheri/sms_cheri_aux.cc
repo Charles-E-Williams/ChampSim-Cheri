@@ -238,6 +238,22 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     } 
   }
 
+  uint64_t cap_length = ri.cap_top - ri.cap_base;
+  if (cap_length > REGION_SIZE) {
+    uint64_t next_region_va = region_va_start + REGION_SIZE
+                              + (static_cast<uint64_t>(ri.offset) << LOG2_BLOCK_SIZE);
+
+    if (cheri::in_bounds(champsim::address{next_region_va},
+                         champsim::address{ri.cap_base},
+                         champsim::address{ri.cap_top})) {
+      if ((next_region_va & ~page_mask) == ri.demand_va_page) {
+        uint64_t next_pa = ri.demand_pa_page | (next_region_va & page_mask);
+        pref_addr.push_back(next_pa);
+        stat_next_region_pf++;
+      }
+    }
+  }
+
   update_age_pht(set, it);
   return pref_addr.size();
 }

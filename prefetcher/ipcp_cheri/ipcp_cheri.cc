@@ -22,7 +22,7 @@ void ipcp_cheri::prefetcher_initialize()
   num_misses = 0;
 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++)
-    ghb_l1[i] = {0, 0};
+    ghb_l1[i] = {0, 0, 0};
   for (int i = 0; i < NUM_IP_OBJECT_CTX_ENTRIES; i++)
     object_state_l1[i] = {};
   for (int i = 0; i < NUM_REGION_STREAM_ENTRIES; i++)
@@ -141,10 +141,8 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
       if (ghb_index == NUM_GHB_ENTRIES) {
         for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
           ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-        ghb_l1[0] = {cl_offset, cap_base_val};
+        ghb_l1[0] = {cl_offset, cap_base_val, ip};
       }
-
-      check_for_region_stream_l1(index, cap_base_val, cl_offset);
       return 0;  // No prior state, no prefetch
     }
 
@@ -166,7 +164,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = {cl_offset, cap_base_val};
+      ghb_l1[0] = {cl_offset, cap_base_val, ip};
     }
     return 0;
   }
@@ -190,7 +188,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   trackers_l1[index].signature = signature;
 
   // Check stream in GHB and region stream table.
-  check_for_stream_l1(index, cap_base_val, cl_offset);
+  check_for_stream_l1(index, cap_base_val, cl_offset, ip);
   check_for_region_stream_l1(index, cap_base_val, cl_offset);
 
   // Update stored state
@@ -207,7 +205,7 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   if (ghb_index == NUM_GHB_ENTRIES) {
     for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
       ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-    ghb_l1[0] = {cl_offset, cap_base_val};
+    ghb_l1[0] = {cl_offset, cap_base_val, ip};
   }
 
   // Prefetch boundary is always capability bounds.
@@ -346,7 +344,7 @@ uint32_t ipcp_cheri::encode_metadata(int stride, uint16_t type, int _spec_nl)
   return metadata;
 }
 
-void ipcp_cheri::check_for_stream_l1(int index,  uint64_t cap_base_val, int64_t cur_cl_offset)
+void ipcp_cheri::check_for_stream_l1(int index,  uint64_t cap_base_val, int64_t cur_cl_offset, uint64_t ip)
 {
   int pos_count = 0, neg_count = 0, count = 0;
   int64_t check_off = cur_cl_offset;
@@ -354,7 +352,7 @@ void ipcp_cheri::check_for_stream_l1(int index,  uint64_t cap_base_val, int64_t 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
     check_off--;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base) {
+      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base && ip == ghb_l1[j].ip) {
         pos_count++;
         break;
       }
@@ -364,7 +362,7 @@ void ipcp_cheri::check_for_stream_l1(int index,  uint64_t cap_base_val, int64_t 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++) {
     check_off++;
     for (int j = 0; j < NUM_GHB_ENTRIES; j++)
-      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base) {
+      if (check_off == ghb_l1[j].cap_cl_offset && cap_base_val == ghb_l1[j].cap_base && ip == ghb_l1[j].ip) {
         neg_count++;
         break;
       }

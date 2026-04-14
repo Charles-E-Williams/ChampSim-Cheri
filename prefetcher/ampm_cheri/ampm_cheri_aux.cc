@@ -6,11 +6,17 @@
 // TODO: find a better hash function
 uint64_t ampm_cheri::make_zone_key(uint64_t cap_base, uint64_t cap_zone_id)
 {
-  uint64_t k = cap_base ^ (cap_zone_id * 0x9e3779b97f4a7c15ULL);
-  k ^= (k >> 16);
-  k ^= (k >> 8);
-  if (k == 0) k = 1;
-  return k & 0x7FFFFFFFFFFFFFFFULL;  // must fit in signed long for lru_table
+  uint64_t h = cap_base;
+  h ^= (h >> 33);
+  h *= 0xff51afd7ed558ccdULL;
+  h ^= (h >> 33);
+  h *= 0xc4ceb9fe1a85ec53ULL;
+  h ^= (h >> 33);
+  // Now combine with zone_id
+  h ^= (cap_zone_id * 0x9e3779b97f4a7c15ULL);
+  h ^= (h >> 16);
+  if (h == 0) h = 1;
+  return h & 0x7FFFFFFFFFFFFFFFULL;
 }
 
 auto ampm_cheri::zone_key_and_offset(champsim::address v_addr, const champsim::capability& cap) const -> std::pair<region_key_type, std::size_t>
@@ -37,14 +43,19 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa,
   auto [key, offset] = zone_key_and_offset(v_addr, cap);
 
   // dont record
-  if (key.to<uint64_t>() == 0) {
-    fmt::print("Not recording to map\n");
+  if (key.to<uint64_t>() == 0)
     return;
-  }
 
   auto existing_region = regions.check_hit(region_type{key});
 
   if (existing_region.has_value()) {
+
+    // if a different capability collided into this entry, wipe the maps so we don't merge two unrelated access patterns.
+    if (existing_region->cap_base != cap.base.to<uint64_t>()) {
+      stat_zone_collision++;
+      existing_region->access_map.assign(lines_per_zone(), false);
+      existing_region->prefetch_map.assign(lines_per_zone(), false);
+    }
 
     if (prefetch) 
         existing_region->prefetch_map.at(offset) = true;
@@ -68,7 +79,6 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa,
     new_region.cap_top  = cap.base.to<uint64_t>() + cap.length.to<uint64_t>();
     regions.fill(new_region);
   }
-
 }
 
 bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch)
@@ -77,6 +87,8 @@ bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability&
   auto region = regions.check_hit(region_type{key});
 
   if (!region.has_value()) return false;
+
+  if (region->cap_base != cap.base.to<uint64_t>()) return false;
   
   return prefetch ? region->prefetch_map.at(offset) : region->access_map.at(offset);
 }

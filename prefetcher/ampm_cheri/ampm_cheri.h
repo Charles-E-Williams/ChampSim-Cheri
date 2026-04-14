@@ -62,7 +62,7 @@ public:
 
   uint64_t stat_pf_bounded = 0;
   uint64_t stat_small_cap = 0;
-
+  uint64_t stat_zone_collision = 0;
 
   using prefetcher::prefetcher;
   void prefetcher_initialize();
