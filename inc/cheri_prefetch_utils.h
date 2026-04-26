@@ -32,6 +32,7 @@ constexpr bool has_seal_bit(uint32_t perms)             { return (perms & PERM_S
 
 
 // CHERI capabilities are 16-byte (128-bit) values, naturally aligned.
+constexpr uint8_t CAPS_PER_CL = 4;
 constexpr uint8_t CAP_ALIGNMENT_BITS = 4;
 constexpr uint8_t CAP_ALIGNMENT_BYTES = 1u << CAP_ALIGNMENT_BITS;   // 16
 
