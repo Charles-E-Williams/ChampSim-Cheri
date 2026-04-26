@@ -1,6 +1,11 @@
 #ifndef TAGE_DEFINES_H
 #define TAGE_DEFINES_H
 
+// ---------------------------------------------------------------------------
+//  BUDGET_LEVEL selects the hardware budget target (set via compiler flag):
+//    0 → 24 KB    1 → 48 KB    2 → 96 KB    3 → 192 KB (Seznec reference)
+//    4 → 384 KB   5 → 768 KB   6 → 1536 KB
+// ---------------------------------------------------------------------------
 #ifndef BUDGET_LEVEL
 #define BUDGET_LEVEL 3
 #endif
@@ -13,52 +18,118 @@
 #define ENABLE_SC
 #endif
 
-// core scaling knob: +1 roughly doubles total storage
-#define LOGSCALE (BUDGET_LEVEL + 1)
-// Seznec: SC GEHL tables use LOGSCALEB = LOGSCALE+1
-#define LOGSCALEB (LOGSCALE + 1)
+// ---------------------------------------------------------------------------
+//  Per-level parameter table
+//
+//  Each level's LOGT (tagged-table way size), LOGB (bimodal), LOGBIAS (SC
+//  bias/IMLI table size), and LOGSCALEB (SC GEHL table scale) are set
+//  independently to hit the target budget.  Level 3 exactly reproduces
+//  Seznec's CBP 2025 defaults (LOGSCALE=4 in his code).
+//
+//  Level | Target | LOGT | LOGB | LOGBIAS | LOGSCB | NHIST | TBITS | UW | MAXHIST | LOCAL
+//  ------|--------|------|------|---------|--------|-------|-------|----|---------|------
+//    0   |  24 KB |  10  |  12  |    7    |    2   |  12   |   8   |  1 |   200   |  0
+//    1   |  48 KB |  11  |  13  |    8    |    2   |  12   |  10   |  1 |   500   |  0
+//    2   |  96 KB |  11  |  14  |    8    |    3   |  20   |  12   |  2 |   700   |  0
+//    3   | 192 KB |  11  |  15  |   11    |    5   |  28   |  14   |  2 |  1000   |  3
+//    4   | 384 KB |  12  |  16  |   12    |    6   |  28   |  14   |  2 |  1000   |  3
+//    5   | 768 KB |  13  |  17  |   13    |    7   |  27   |  15   |  2 |  1500   |  3
+//    6   |1536 KB |  14  |  18  |   14    |    8   |  27   |  15   |  2 |  2000   |  3
+// ---------------------------------------------------------------------------
 
-// per-level tuning: NHIST, TBITS, UWIDTH, MAXHIST
-// NHIST capped at 28 for levels 5-6 so TAGE doesn't consume the full budget
 #if BUDGET_LEVEL == 0
-  #define NHIST     12
-  #define TBITS      8
-  #define UWIDTH     1
-  #define MAXHIST  300
+  #define LOGT       10
+  #define LOGB       12
+  #define NHIST      12
+  #define TBITS       8
+  #define UWIDTH      1
+  #define MAXHIST   200
+  #define LOCAL_LEVEL 0
+  #ifdef ENABLE_SC
+    #define LOGBIAS     7
+    #define LOGSCALEB   2
+  #endif
+
 #elif BUDGET_LEVEL == 1
-  #define NHIST     16
-  #define TBITS     10
-  #define UWIDTH     1
-  #define MAXHIST  500
+  #define LOGT       11
+  #define LOGB       13
+  #define NHIST      12
+  #define TBITS      10
+  #define UWIDTH      1
+  #define MAXHIST   500
+  #define LOCAL_LEVEL 0
+  #ifdef ENABLE_SC
+    #define LOGBIAS     8
+    #define LOGSCALEB   2
+  #endif
+
 #elif BUDGET_LEVEL == 2
-  #define NHIST     22
-  #define TBITS     12
-  #define UWIDTH     2
-  #define MAXHIST  700
+  #define LOGT       11
+  #define LOGB       14
+  #define NHIST      20
+  #define TBITS      12
+  #define UWIDTH      2
+  #define MAXHIST   700
+  #define LOCAL_LEVEL 0
+  #ifdef ENABLE_SC
+    #define LOGBIAS     8
+    #define LOGSCALEB   3
+  #endif
+
 #elif BUDGET_LEVEL == 3
-  #define NHIST     28
-  #define TBITS     14
-  #define UWIDTH     2
-  #define MAXHIST 1000
+  #define LOGT       11
+  #define LOGB       15
+  #define NHIST      28
+  #define TBITS      14
+  #define UWIDTH      2
+  #define MAXHIST  1000
+  #define LOCAL_LEVEL 3
+  #ifdef ENABLE_SC
+    #define LOGBIAS    11
+    #define LOGSCALEB   5
+  #endif
+
 #elif BUDGET_LEVEL == 4
-  #define NHIST     28
-  #define TBITS     14
-  #define UWIDTH     2
-  #define MAXHIST 1000
+  #define LOGT       12
+  #define LOGB       16
+  #define NHIST      28
+  #define TBITS      14
+  #define UWIDTH      2
+  #define MAXHIST  1000
+  #define LOCAL_LEVEL 3
+  #ifdef ENABLE_SC
+    #define LOGBIAS    12
+    #define LOGSCALEB   6
+  #endif
+
 #elif BUDGET_LEVEL == 5
-  #define NHIST     28
-  #define TBITS     15
-  #define UWIDTH     2
-  #define MAXHIST 1500
+  #define LOGT       13
+  #define LOGB       17
+  #define NHIST      27
+  #define TBITS      15
+  #define UWIDTH      2
+  #define MAXHIST  1500
+  #define LOCAL_LEVEL 3
+  #ifdef ENABLE_SC
+    #define LOGBIAS    13
+    #define LOGSCALEB   7
+  #endif
+
 #elif BUDGET_LEVEL == 6
-  #define NHIST     28
-  #define TBITS     15
-  #define UWIDTH     2
-  #define MAXHIST 2000
+  #define LOGT       14
+  #define LOGB       18
+  #define NHIST      27
+  #define TBITS      15
+  #define UWIDTH      2
+  #define MAXHIST  2000
+  #define LOCAL_LEVEL 3
+  #ifdef ENABLE_SC
+    #define LOGBIAS    14
+    #define LOGSCALEB   8
+  #endif
 #endif
 
-// tagged table geometry
-#define LOGT     (7 + LOGSCALE)
+// tagged table geometry (derived from LOGT)
 #define LOGASSOC 1
 #define ASSOC    (1 << LOGASSOC)
 #define LOGG     (LOGT - LOGASSOC)
@@ -77,7 +148,6 @@
 #define CWIDTH      3
 #define BIMWIDTH    3
 #define HYSTSHIFT   1
-#define LOGB        (11 + LOGSCALE)
 #define PHISTWIDTH  27
 #define MINHIST     3
 #define BITS_PER_BR 5
@@ -91,23 +161,16 @@
 #define LOGCOUNT    6
 #define FILTERALLOCATION
 
-// per-level local history control:
-//   0 = no local history
-//   1 = L only
-//   2 = L + S
-//   3 = L + S + T + Q  (full, matches Seznec at 192KB)
-#if BUDGET_LEVEL <= 2
-  #define LOCAL_LEVEL 0
-#elif BUDGET_LEVEL <= 4
-  #define LOCAL_LEVEL 3
-#else
-  #define LOCAL_LEVEL 2
-#endif
-
-// SC parameters
+// ---------------------------------------------------------------------------
+//  SC parameters (only when ENABLE_SC is defined)
+// ---------------------------------------------------------------------------
 #ifdef ENABLE_SC
 #define PERCWIDTH   6
-#define LOGBIAS     (7 + LOGSCALE)
+
+// LOGINB = LOGBIAS (IMLI bias tables share size with PC bias tables)
+#define LOGINB      LOGBIAS
+#define LOGREGSIZE  6
+
 #define ENABLE_SC_OTHERTABLES
 #define FORCEONHIGHCONF
 #define WIDTHRES    15
@@ -117,6 +180,7 @@
 // SC GEHL tables (global history): G, A, B, F, P
 #define ENABLE_SC_GEHL
 #define LOGGNB  (LOGSCALEB + 6)
+#define LOGANB  (LOGSCALEB + 6)
 #define GNB     5
 #define ANB     4
 #define LOGBNB  (LOGSCALEB + 6)
@@ -128,8 +192,6 @@
 
 // SC IMLI: both large-region (64B) and small-region (4B)
 #define ENABLE_SC_IMLI
-#define LOGINB      LOGBIAS
-#define LOGREGSIZE  6
 
 // multiplicative weights for local and IMLI components
 #define ENABLE_SC_EXTRAW

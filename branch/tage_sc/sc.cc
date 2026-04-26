@@ -23,7 +23,7 @@ StatisticalCorrector::StatisticalCorrector()
 
 #ifdef ENABLE_SC_GEHL
     init_gehl(ggehl, &ggehl_store[0][0], GNB, LOGGNB);
-    init_gehl(agehl, &agehl_store[0][0], ANB, LOGGNB);
+    init_gehl(agehl, &agehl_store[0][0], ANB, LOGANB);
     init_gehl(bgehl, &bgehl_store[0][0], BNB, LOGBNB);
     init_gehl(fgehl, &fgehl_store[0][0], FNB, LOGFNB);
     init_gehl(pgehl, &pgehl_store[0][0], PNB, LOGPNB);
@@ -106,7 +106,7 @@ bool StatisticalCorrector::predict(uint64_t pc, const tage_prediction_info& tinf
     sum_ghist += gehl_predict(pc, hs.gh, gm, ggehl, GNB, LOGGNB);
     uint64_t pc_mixed = pc ^ ((uint64_t)tinfo.longest_match_pred
                               ^ ((uint64_t)tinfo.hc_pred << 1));
-    sum_ghist += gehl_predict(pc_mixed, hs.gh, am, agehl, ANB, LOGGNB);
+    sum_ghist += gehl_predict(pc_mixed, hs.gh, am, agehl, ANB, LOGANB);
 
     pe.pred_tsc = (sum + sum_ghist >= 0);
 
@@ -250,7 +250,7 @@ void StatisticalCorrector::update(const prediction_entry& pe, bool resolve_dir)
         gehl_update(pc, resolve_dir, pe.gh_snap, gm, ggehl, GNB, LOGGNB);
         uint64_t pc_mixed = pc ^ ((uint64_t)pe.tinfo.longest_match_pred
                                   ^ ((uint64_t)pe.tinfo.hc_pred << 1));
-        gehl_update(pc_mixed, resolve_dir, pe.gh_snap, am, agehl, ANB, LOGGNB);
+        gehl_update(pc_mixed, resolve_dir, pe.gh_snap, am, agehl, ANB, LOGANB);
 
         gehl_update(pc ^ (pc >> 3), resolve_dir, pe.fhist_snap, fm, fgehl, FNB, LOGFNB);
         gehl_update(pc ^ (pc >> 3), resolve_dir, pe.phist_block_snap, pm, pgehl, PNB, LOGPNB);
@@ -304,7 +304,7 @@ int StatisticalCorrector::compute_storage() const
 
 #ifdef ENABLE_SC_GEHL
     bits += GNB * (1 << LOGGNB) * PERCWIDTH;
-    bits += ANB * (1 << LOGGNB) * PERCWIDTH;
+    bits += ANB * (1 << LOGANB) * PERCWIDTH;
     bits += gm[0];  // GH bits
     bits += BNB * (1 << LOGBNB) * PERCWIDTH;
     bits += bm[0];

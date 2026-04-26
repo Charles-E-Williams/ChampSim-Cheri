@@ -453,7 +453,7 @@ void TAGE::update_history(uint64_t pc_raw, bool taken, uint64_t target,
     if (taken || backward) {
         hs.gh = (hs.gh << 1) ^ pcbr;
         hs.gh <<= 1;
-        hs.gh ^= ((target >> 4) ^ target) >> 2;
+        hs.gh ^= (target >> 4) ^ (target >> 2);
     } else {
         hs.gh <<= 1;
     }

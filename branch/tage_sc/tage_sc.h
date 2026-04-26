@@ -41,16 +41,16 @@ struct tage_sc : champsim::modules::branch_predictor {
         int target_bits = (24 * 1024 * 8) << BUDGET_LEVEL;
         double target_kb = target_bits / 8192.0;
 
-        std::fprintf(stderr, "\nTAGE-SC budget (BUDGET_LEVEL=%d, LOGSCALE=%d, NHIST=%d):\n", BUDGET_LEVEL, LOGSCALE, NHIST);
+        std::fprintf(stderr, "\nTAGE-SC budget (LEVEL=%d, LOGT=%d, NHIST=%d, TBITS=%d):\n", BUDGET_LEVEL, LOGT, NHIST, TBITS);
         std::fprintf(stderr, "  TAGE:  %7d bits  (%6.1f KB)\n", tage_bits, tage_bits / 8192.0);
 
     #ifdef ENABLE_SC
         int sc_bits = sc.compute_storage();
         total += sc_bits;
-        std::fprintf(stderr, "  SC:    %7d bits  (%6.1f KB)\n", sc_bits, sc_bits / 8192.0);
+        std::fprintf(stderr, "  SC:    %7d bits  (%6.1f KB)  [LOGBIAS=%d, LOGSCALEB=%d, LOCAL=%d]\n",  sc_bits, sc_bits / 8192.0, LOGBIAS, LOGSCALEB, LOCAL_LEVEL);
     #endif
 
-        std::fprintf(stderr, "  TOTAL: %7d bits  (%6.1f KB)  target=%3.0f KB  util=%.1f%%\n\n", total, total / 8192.0, target_kb, 100.0 * total / target_bits);
+        std::fprintf(stderr, "  TOTAL: %7d bits  (%6.1f KB)  target=%3.0f KB  util=%.1f%%\n\n",total, total / 8192.0, target_kb, 100.0 * total / target_bits);
 
         if (total > target_bits)
             std::fprintf(stderr, "[TAGE-SC] WARNING: OVER BUDGET by %.1f KB\n\n", (total - target_bits) / 8192.0);

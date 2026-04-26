@@ -25,7 +25,7 @@ public:
     int am[ANB] = {31, 17, 7, 2};
     int8_t ggehl_store[GNB][1 << LOGGNB] = {};
     int8_t* ggehl[GNB] = {};
-    int8_t agehl_store[ANB][1 << LOGGNB] = {};
+    int8_t agehl_store[ANB][1 << LOGANB] = {};
     int8_t* agehl[ANB] = {};
 
     // backward history GEHL
