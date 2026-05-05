@@ -107,5 +107,5 @@ namespace berti_cheri_space
   # define BERTI_L1                     (0x1)
   # define BERTI_L2                     (0x2)
   # define BERTI_L2R                    (0x3)
-};
+}
 # endif

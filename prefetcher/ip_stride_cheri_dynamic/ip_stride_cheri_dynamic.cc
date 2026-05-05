@@ -15,12 +15,12 @@ void ip_stride_cheri_dynamic::prefetcher_initialize()
 }
 
 uint32_t ip_stride_cheri_dynamic::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
+                                                   uint32_t cpu, champsim::capability cap,
                                                    uint8_t cache_hit, bool useful_prefetch,
-                                                   access_type type, uint32_t metadata_in)
+                                                   access_type type, uint32_t metadata_in,
+                                                   uint32_t metadata_hit)
 {
-  const auto& cap = intern_->get_authorizing_capability();
-
-  if (!cheri::is_tag_valid(cap)) 
+  if (!cheri::is_tag_valid(cap))
     return metadata_in;
     
   if (cheri::has_load_permissions(cap.permissions)) {
@@ -110,7 +110,9 @@ void ip_stride_cheri_dynamic::prefetcher_cycle_operate()
   }
 }
 
-uint32_t ip_stride_cheri_dynamic::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t ip_stride_cheri_dynamic::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless,
+                                                        long set, long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap,
+                                                        uint32_t metadata_in, uint32_t metadata_evict, uint32_t cpu_evict)
 {
   return metadata_in;
 }

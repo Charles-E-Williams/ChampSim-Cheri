@@ -26,8 +26,10 @@ void spp_cheri::prefetcher_cycle_operate() {}
 
 
 uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
+                                             uint32_t cpu, champsim::capability cap,
                                              uint8_t cache_hit, bool useful_prefetch,
-                                             access_type type, uint32_t metadata_in)
+                                             access_type type, uint32_t metadata_in,
+                                             uint32_t metadata_hit)
 {
   champsim::page_number page{addr};
   uint32_t last_sig = 0, curr_sig = 0, depth = 0;
@@ -43,9 +45,8 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
  
   confidence_q[0] = 100;
   GHR.global_accuracy = GHR.pf_issued ? ((100 * GHR.pf_useful) / GHR.pf_issued) : 0;
- 
-  auto cap = intern_->get_authorizing_capability();
-  if (!cheri::is_tag_valid(cap)) 
+
+  if (!cheri::is_tag_valid(cap))
     return metadata_in;
      
   uint64_t cap_base_val   = cap.base.to<uint64_t>();
@@ -167,7 +168,9 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   return metadata_in;
 }
 
-uint32_t spp_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t spp_cheri::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set,
+                                          long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                          uint32_t metadata_evict, uint32_t cpu_evict)
 {
   if constexpr (FILTER_ON) {
     FILTER.check(evicted_addr, spp_cheri::L2C_EVICT);

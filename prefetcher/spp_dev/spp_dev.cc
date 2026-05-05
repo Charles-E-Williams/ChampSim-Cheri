@@ -29,8 +29,8 @@ void spp_dev::prefetcher_initialize()
 
 void spp_dev::prefetcher_cycle_operate() {}
 
-uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-                                           uint32_t metadata_in)
+uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
+                                           bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
   champsim::page_number page{addr};
   uint32_t last_sig = 0, curr_sig = 0, depth = 0;
@@ -134,7 +134,9 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
   return metadata_in;
 }
 
-uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set, long way,
+                                        bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                        uint32_t metadata_evict, uint32_t cpu_evict)
 {
   if constexpr (FILTER_ON) {
     if constexpr (SPP_DEBUG_PRINT) {

@@ -15,7 +15,8 @@ void cheri_ptr_chase::prefetcher_initialize()
   stat_page_crossings = 0; 
 }
 
-uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in)    
+uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
+                                                   bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
 
 
@@ -51,7 +52,9 @@ uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champ
   return static_cast<uint32_t>(ip.to<uint64_t>() ^ (ip.to<uint64_t>() >> 32));
 }
 
-uint32_t cheri_ptr_chase::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t cheri_ptr_chase::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set,
+                                                long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap,
+                                                uint32_t metadata_in, uint32_t metadata_evict, uint32_t cpu_evict)
 {
   uint64_t cl_base = champsim::block_number{addr}.to<uint64_t>() << LOG2_BLOCK_SIZE;
 

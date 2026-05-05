@@ -30,14 +30,15 @@ void ipcp_cheri::prefetcher_initialize()
 }
 
 uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsim::address ip_addr,
+                                              uint32_t cpu, champsim::capability cap,
                                               uint8_t cache_hit, bool useful_prefetch,
-                                              access_type type, uint32_t metadata_in)
+                                              access_type type, uint32_t metadata_in,
+                                              uint32_t metadata_hit)
 {
   uint64_t addr = address.to<uint64_t>();
   uint64_t ip = ip_addr.to<uint64_t>();
 
-  auto cap = intern_->get_authorizing_capability();
-  if (!cheri::is_tag_valid(cap)) 
+  if (!cheri::is_tag_valid(cap))
     return metadata_in;
 
   uint64_t cap_base_val = cap.base.to<uint64_t>();
@@ -308,7 +309,9 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
   return 0;
 }
 
-uint32_t ipcp_cheri::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t ipcp_cheri::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set,
+                                           long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                           uint32_t metadata_evict, uint32_t cpu_evict)
 {
   return 0;
 }

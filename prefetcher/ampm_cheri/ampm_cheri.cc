@@ -24,14 +24,15 @@ void ampm_cheri::prefetcher_initialize()
 
 uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
                                               champsim::address ip,
+                                              uint32_t cpu,
+                                              champsim::capability cap,
                                               bool cache_hit,
                                               bool useful_prefetch,
                                               access_type type,
-                                              uint32_t metadata_in)
+                                              uint32_t metadata_in,
+                                              uint32_t metadata_hit)
 {
-  const auto& cap = intern_->get_authorizing_capability();
-  if (cap.length.to<uint64_t>() == UINT64_MAX)
-	  std::cout << "fuck\n";
+
   if (!cheri::is_tag_valid(cap))
     return metadata_in;
 
@@ -75,13 +76,14 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
   return metadata_in;
 }
 
-
-
-uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, long set,
+uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, champsim::address ip,
+                                           uint32_t cpu, champsim::capability cap,
+                                           bool useless, long set,
                                            long way, bool prefetch,
                                            champsim::address evicted_addr,
+                                           champsim::capability evicted_cap,
                                            uint32_t metadata_in,
-                                           champsim::capability evicted_cap)
+                                           uint32_t metadata_evict, uint32_t cpu_evict)
 {
   if (evicted_addr == champsim::address{})
     return metadata_in;

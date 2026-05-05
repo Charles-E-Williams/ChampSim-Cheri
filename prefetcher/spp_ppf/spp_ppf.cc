@@ -207,8 +207,8 @@ void spp_ppf::PPF_Module::do_prefetch(champsim::address addr, champsim::address 
 	    depth_track[depth]++;
 }
 
-uint32_t spp_ppf::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-										uint32_t metadata_in)
+uint32_t spp_ppf::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
+										bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
     module_.do_prefetch(addr, ip,  cache_hit, useful_prefetch, type, metadata_in);
     return metadata_in;
@@ -231,7 +231,9 @@ void spp_ppf::PPF_Module::handle_fill(champsim::address addr,  long set, long wa
     }
 }
 
-uint32_t spp_ppf::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t spp_ppf::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set, long way,
+                                        bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                        uint32_t metadata_evict, uint32_t cpu_evict)
 {
     module_.handle_fill(addr,  set, way, prefetch, evicted_addr, metadata_in, evicted_cap);
     return metadata_in;

@@ -225,15 +225,20 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
 
   champsim::address evicting_address{};
   champsim::capability evicted_cap{};
-  if (way != set_end && way->valid) {
+  const bool evicted_valid = (way != set_end && way->valid);
+  const bool useless = evicted_valid && way->prefetch;
+  const uint32_t metadata_evict = evicted_valid ? way->pf_metadata : 0u;
+  const uint32_t cpu_evict = evicted_valid ? way->cpu : static_cast<uint32_t>(NUM_CPUS);
+  if (evicted_valid) {
     evicting_address = module_address(*way);
     evicted_cap = way->auth_cap;
   }
 
   auto metadata_thru = fill_mshr.data_promise->pf_metadata;
   if (!module_is_instr(fill_mshr)) {  // limiting only for data line fills
-    metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), get_set_index(fill_mshr.address), way_idx, (fill_mshr.type == access_type::PREFETCH), 
-                                               evicting_address, fill_mshr.data_promise->pf_metadata, evicted_cap);
+    metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), fill_mshr.ip, fill_mshr.cpu, fill_mshr.cap, useless,
+                                               get_set_index(fill_mshr.address), way_idx, (fill_mshr.type == access_type::PREFETCH), evicting_address,
+                                               evicted_cap, fill_mshr.data_promise->pf_metadata, metadata_evict, cpu_evict);
   }
   impl_replacement_cache_fill(fill_mshr.cpu, get_set_index(fill_mshr.address), way_idx, module_address(fill_mshr), fill_mshr.ip, evicting_address,
                               fill_mshr.type);
@@ -283,7 +288,9 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   auth_capability = handle_pkt.cap;
 
   if (should_activate_prefetcher(handle_pkt) && !module_is_instr(handle_pkt)) { // limiting only to data line hits
-    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, hit, useful_prefetch, handle_pkt.type, metadata_thru);
+    const uint32_t metadata_hit = hit ? way->pf_metadata : 0u;
+    metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, handle_pkt.cpu, handle_pkt.cap, hit, useful_prefetch,
+                                                  handle_pkt.type, metadata_thru, metadata_hit);
   }
 
   // update replacement policy
@@ -884,20 +891,20 @@ std::vector<double> CACHE::get_wq_occupancy_ratio() const { return ::occupancy_r
 
 std::vector<double> CACHE::get_pq_occupancy_ratio() const { return ::occupancy_ratio_vec(get_pq_occupancy(), get_pq_size()); }
 
-champsim::capability CACHE::get_authorizing_capability() const {return auth_capability; }
-
 void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetcher_initialize(); }
 
-uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type,
-                                              uint32_t metadata_in) const
+uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool cache_hit,
+                                              bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cache_hit, useful_prefetch, type, metadata_in);
+  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cpu_in, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit);
 }
 
-uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr,
-                                           uint32_t metadata_in, champsim::capability evicted_cap) const
+uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool useless, long set,
+                                           long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                           uint32_t metadata_evict, uint32_t cpu_evict) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, set, way, prefetch, evicted_addr, metadata_in, evicted_cap);
+  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, ip, cpu_in, cap, useless, set, way, prefetch, evicted_addr, evicted_cap, metadata_in, metadata_evict,
+                                                      cpu_evict);
 }
 
 void CACHE::impl_prefetcher_cycle_operate() const { pref_module_pimpl->impl_prefetcher_cycle_operate(); }

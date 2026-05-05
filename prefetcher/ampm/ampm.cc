@@ -55,7 +55,8 @@ void ampm::AMPM_Module::remove_from_pagemap(champsim::address addr, bool prefetc
   }
 }
 
-uint32_t ampm::prefetcher_cache_operate(champsim::address addr, champsim::address ip, bool cache_hit, bool useful_prefetch, access_type type, uint32_t metadata_in)
+uint32_t ampm::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool cache_hit,
+                                        bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
   engine.add_to_pagemap(addr,false);
   engine.do_prefetch(intern_,addr,ip,cache_hit,useful_prefetch,type,0,PREFETCH_DEGREE,intern_->get_mshr_occupancy_ratio() < 0.5);
@@ -63,7 +64,9 @@ uint32_t ampm::prefetcher_cache_operate(champsim::address addr, champsim::addres
   return metadata_in;
 }
 
-uint32_t ampm::prefetcher_cache_fill(champsim::address addr, long set, long way, bool prefetch, champsim::address evicted_addr, uint32_t metadata_in, champsim::capability evicted_cap)
+uint32_t ampm::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set, long way,
+                                     bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                     uint32_t metadata_evict, uint32_t cpu_evict)
 {
   if(evicted_addr != champsim::address{}) {
     engine.remove_from_pagemap(evicted_addr,false);
