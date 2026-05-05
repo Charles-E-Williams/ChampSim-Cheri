@@ -39,6 +39,7 @@
 
 #include "berti_cheri_params.h"
 #include "cache.h"
+#include "cheri_prefetch_utils.h"
 
 #include <algorithm>
 #include <iostream>
@@ -78,6 +79,9 @@ class berti_cheri : public champsim::modules::prefetcher {
     uint64_t found_berti = 0;
     uint64_t average_issued = 0;
     uint64_t average_num = 0;
+
+    uint64_t cross_page_cap = 0;
+    uint64_t pf_bounded_cap = 0;
 
     
     /*****************************************************************************

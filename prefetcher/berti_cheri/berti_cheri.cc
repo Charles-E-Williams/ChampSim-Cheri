@@ -1033,7 +1033,11 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address addr, champsim:
   }
 
   std::vector<delta_t> deltas(BERTI_TABLE_DELTA_SIZE);
-  get(ip_hash, deltas);
+  get(ip_hash, deltas);  
+
+  auto cap = intern_->get_authorizing_capability();
+  
+  
 
   bool first_issue = true;
   for (auto i: deltas)
@@ -1045,13 +1049,19 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address addr, champsim:
     if (i.rpl == BERTI_R) return metadata_in;
     if (p_addr.to<uint64_t>() == 0) continue;
 
+    if (cheri::is_tag_valid(cap) && !cheri::prefetch_safe(p_addr, cap))
+    {
+      pf_bounded_cap++;
+      continue;
+    }
+
     if (champsim::page_number{p_addr} != champsim::page_number{addr})
     {
       cross_page++;
-# ifdef NO_CROSS_PAGE
-      // We do not cross virtual page
-      continue;
-# endif
+      if (cheri::is_tag_valid(cap))
+        cross_page_cap++;
+      else continue;
+
     } else no_cross_page++;
 
     float mshr_load = intern_->get_mshr_occupancy_ratio() * 100;
@@ -1172,4 +1182,8 @@ void berti_cheri::prefetcher_final_stats()
   std::cout << "BERTI";
   std::cout << " AVERAGE_ISSUED: " << ((1.0*average_issued)/average_num);
   std::cout << std::endl;
+  std::cout << "CHERI";
+  std::cout << " PREFETCHES BOUNDED BY CAPABILITIES " << pf_bounded_cap << "\n";
+  std::cout << " CROSS PAGE ALLOWED BY CAPABILITIES " << cross_page_cap << std::endl;
+
 }
