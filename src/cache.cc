@@ -688,10 +688,47 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
 }
 
 
+bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t pf_cpu, champsim::address pf_ip, uint32_t prefetch_metadata, champsim::capability cap)
+{
+  ++sim_stats.pf_requested;
+  if (std::size(internal_PQ) >= PQ_SIZE)
+    return false;
+
+  request_type pf_packet;
+  pf_packet.type = access_type::PREFETCH;
+  pf_packet.pf_metadata = prefetch_metadata;
+  pf_packet.cpu = pf_cpu;
+  pf_packet.address = pf_addr;
+  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.is_translated = !virtual_prefetch;
+  pf_packet.cap = cap;
+  pf_packet.ip = pf_ip;
+
+  internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
+  ++sim_stats.pf_issued;
+  return true;
+}
+
+
 bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
 {
-  return prefetch_line(pf_addr, fill_this_level, prefetch_metadata, auth_capability);
+  ++sim_stats.pf_requested;
+  if (std::size(internal_PQ) >= PQ_SIZE)
+    return false;
+
+  request_type pf_packet;
+  pf_packet.type = access_type::PREFETCH;
+  pf_packet.pf_metadata = prefetch_metadata;
+  pf_packet.cpu = cpu;
+  pf_packet.address = pf_addr;
+  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.is_translated = !virtual_prefetch;
+
+  internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
+  ++sim_stats.pf_issued;
+  return true;
 }
+
 
 // LCOV_EXCL_START exclude deprecated function
 bool CACHE::prefetch_line(uint64_t pf_addr, bool fill_this_level, uint32_t prefetch_metadata)
