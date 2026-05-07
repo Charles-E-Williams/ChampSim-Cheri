@@ -1,24 +1,19 @@
 #include "ampm_cheri.h"
 
-#include <iostream>
 
 #include "cache.h"
 
 void ampm_cheri::prefetcher_initialize()
 {
-  std::cout << "AMPM-CHERI (CI) Prefetcher initialized\n"
-            << "  ZONE_BITS           = " << ZONE_BITS << "\n"
-            << "  LINES_PER_ZONE      = " << lines_per_zone() << "\n"
-            << "  SMALL_CAP_THRESHOLD = " << SMALL_CAP_THRESHOLD << " CL\n"
+  
+  std::cout << "AMPM-CHERI Prefetcher\n"
+            << "  CHERI-AMPM ZONE BITS           = " << CHERI_AMPM_ZONE_BITS << "\n"
+            << "  CACHELINES PER ZONE      = " << lines_per_zone() << "\n"
+            << "  MINIMUM CACHE LINES = " <<  MIN_CAP_CACHE_LINES << " CL\n"
             << "  REGION_SETS         = " << REGION_SETS << "\n"
             << "  REGION_WAYS         = " << REGION_WAYS << "\n"
-            << "  PAGE_REGION_SETS    = " << PAGE_REGION_SETS << "\n"
-            << "  PAGE_REGION_WAYS    = " << PAGE_REGION_WAYS << "\n"
-            << "  BASE_DEGREE         = " << BASE_DEGREE << "\n"
-            << "  MAX_DEGREE          = " << MAX_DEGREE << "\n"
-            << "  CROSS_ZONE          = " << CROSS_ZONE_FACTOR << "x\n"
-            << "  SHT                 = " << SHT_SETS << "x" << SHT_WAYS << "\n"
-            << "  SHT_CONF_BOOST      = " << static_cast<int>(SHT_CONF_BOOST) << "\n";
+            << "  CAPABILITY CONFIDENCE TABLE       = " << cct.SETS << "x" << cct.WAYS << "\n"
+            << "  ZONE WALKER TABLE      = " << zwt.SETS << "x" << zwt.WAYS << "\n";
 }
 
 
@@ -36,118 +31,212 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
   if (!cheri::is_tag_valid(cap))
     return metadata_in;
 
-  if (cheri::has_seal_bit(cap.permissions)) {
-    stat_sealed_bail++;
-    return metadata_in;
-  }
 
   uint64_t cap_len   = cap.length.to<uint64_t>();
   uint64_t cap_lines = cap_len >> LOG2_BLOCK_SIZE;
-  int cls = cap_size_class(cap_len);
+  auto cls = cap_size(cap_len);
+  access_by_size[cls]++;
 
-  stat_access_by_class[cls]++;
-
-  if (useful_prefetch) {
-    stat_useful_by_class[cls]++;
-    if (cap_lines > SMALL_CAP_THRESHOLD)
-      sht_reward(ip, cap);
-  }
-
-
-  if (cap_lines <= SMALL_CAP_THRESHOLD) {
-    stat_page_access++;
-    page_add_to_map(addr, false);
-    bool two_level = intern_->get_mshr_occupancy_ratio() < 0.5;
-    page_do_prefetch(intern_, addr, metadata_in, BASE_DEGREE, two_level, cls);
-    return metadata_in;
-  }
-
-  champsim::address va = cheri::capability_cursor(cap);
-
-  // Record access in object-relative bitmap
-  add_to_map(va, addr, cap, false);
-
-  // SHT: update stride tracker and get per-stream degree
-  int degree = update_and_query_degree(ip, va, cap);
-
-  bool two_level = intern_->get_mshr_occupancy_ratio() < 0.5;
-  do_prefetch(intern_, addr, va, cap, metadata_in, degree, two_level);
-
-  return metadata_in;
-}
-
-uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, champsim::address ip,
-                                           uint32_t cpu, champsim::capability cap,
-                                           bool useless, long set,
-                                           long way, bool prefetch,
-                                           champsim::address evicted_addr,
-                                           champsim::capability evicted_cap,
-                                           uint32_t metadata_in,
-                                           uint32_t metadata_evict, uint32_t cpu_evict)
-{
-  if (evicted_addr == champsim::address{})
-    return metadata_in;
-
-  // Always attempt page-path eviction (keyed by PA, cap not needed)
-  {
-    auto [key, offset] = page_zone_key_and_offset(evicted_addr);
-    auto region = page_regions.check_hit(page_region_type{key});
-    if (region.has_value()) {
-      region->access_map.at(offset)   = false;
-      region->prefetch_map.at(offset) = false;
-      page_regions.fill(region.value());
-    }
-  }
-
-  // Object-path eviction (keyed by VA + cap)
-  if (evicted_cap.tag) {
-    champsim::address evicted_va = cheri::capability_cursor(evicted_cap);
-    auto [key, offset] = zone_key_and_offset(evicted_va, evicted_cap);
-    if (key.to<uint64_t>() != 0) {
-      auto region = regions.check_hit(region_type{key});
-      if (region.has_value()) {
-        region->access_map.at(offset)   = false;
-        region->prefetch_map.at(offset) = false;
-        regions.fill(region.value());
+  if (!cache_hit) {
+    if (type == access_type::PREFETCH) {
+      prefetch_sample_table.fill(sample_table_entry{addr, intern_->current_cycle(), static_cast<uint8_t>(cls)});
+    } else if (type == access_type::LOAD) {
+      if (!prefetch_sample_table.check_hit(sample_table_entry{addr, 0, 0}).has_value()) {
+        demand_sample_table.fill(sample_table_entry{addr, intern_->current_cycle(), static_cast<uint8_t>(cls)});
       }
     }
   }
+  if (cap_lines < MIN_CAP_CACHE_LINES){
+    champsim::block_number pf_addr{addr};
+    prefetch_line(champsim::address{pf_addr+1}, false,cpu,ip, metadata_in, cap);
+  }
 
+  champsim::address va = cheri::capability_cursor(cap);
+  auto [zone_key, zone_offset] = zone_key_and_offset(va, cap);  
+
+
+  if (useful_prefetch) {
+    useful_by_size[cls]++;
+    cct.update_on_useful_pf(ip, cap);
+    zwt.update_on_useful_pf(zone_key);
+    global_useful_epoch++;
+  }
+
+  add_to_map(va, cap, false);
+
+  uint16_t ip_hash = get_ip_hash(ip.to<uint64_t>());
+  zwt.log_ip(zone_key, ip_hash);
+
+  uint8_t cct_conf = cct.update_and_query(ip, va, cap);
+  uint8_t boost_conf = zwt.zone_boost_confidence(zone_key, ip_hash, cct);
+  uint8_t raw_confidence = std::max(cct_conf, boost_conf);
+  uint8_t eff_conf = raw_confidence > global_conf_modifier ? raw_confidence - global_conf_modifier : 0;
+
+  uint8_t squash = cct.squash_chance(eff_conf);
+  if ((intern_->current_cycle() % GLOBAL_SQUASH_MOD_MAX) < squash){
+    cct.squashed++;
+    return metadata_in;
+  }
+  
+  int space_in_mshr = std::max(0,(int)intern_->get_mshr_size() - (int)intern_->get_mshr_occupancy() - (int)intern_->get_pq_occupancy().back());
+  int degree    = std::min(cct.conf_to_depth(eff_conf), space_in_mshr);
+  bool two_level = intern_->get_mshr_occupancy_ratio() < 0.5;
+  if (degree > 0)
+    do_prefetch(intern_, addr, va, ip, cap, metadata_in, cpu,
+      degree, cct.conf_to_zone_la(eff_conf),cct.get_direction(ip, cap), two_level);
+
+  watchdog_counter = 0;
   return metadata_in;
 }
 
 
-static const char* size_class_name(int cls)
+
+uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr,
+                                           champsim::address ip,
+                                           uint32_t cpu,
+                                           champsim::capability cap,
+                                           bool useless,
+                                           long set, long way,
+                                           bool prefetch,
+                                           champsim::address evicted_addr,
+                                           champsim::capability evicted_cap,
+                                           uint32_t metadata_in,
+                                           uint32_t metadata_evict,
+                                           uint32_t cpu_evict)
 {
-  static const char* names[] = {
-    "0-128B", "128B-4KB", "4KB-64KB", "64KB-1MB", "1MB+"
-  };
-  return names[cls];
+  // if(!intern_->warmup && prefetch) {
+  //   std::cout << "PREFETCHER_CACHE_FILL(): IP =" <<ip.to<uint64_t>() << "\n";
+  //   std::cout << "PREFETCHER_CACHE_FILL(): CPU =" << cpu << "\n";
+  //   std::cout << "PREFETCHER_CACHE_FILL() EVICTED CAP:" << evicted_cap.length << "\n";
+  //   std::cout << "PREFETCHER_CACHE_FILL() CAP:" << cap.length << "\n";
+  //   assert(ip.to<uint64_t>());
+  // }
+
+
+  // clear evicted line out of its zone bitmap. evicted_addr is PA;
+  // zone keying is cap-relative VA, so derive the VA from the cap cursor.
+  if (evicted_cap.tag) {
+    champsim::address evicted_va = cheri::capability_cursor(evicted_cap);
+    auto [evz_key, evz_off] = zone_key_and_offset(evicted_va, evicted_cap);
+    if (evz_key.to<uint64_t>() != 0) {
+      region_type probe{evz_key};
+      auto re = regions.check_hit(probe);
+      if (re.has_value() && re->cap_base == evicted_cap.base.to<uint64_t>()) {
+        re->access_map[evz_off]   = false;
+        re->prefetch_map[evz_off] = false;
+        regions.fill(re.value());
+      }
+    }
+  }
+ 
+  // a prefetch fill: penalize CCT and ZWT, bump epoch
+  if (prefetch && cheri::is_tag_valid(cap)) {
+    cct.update_on_fill(ip, cap);
+    champsim::address fill_va = cheri::capability_cursor(cap);
+    auto [fz_key, fz_off] = zone_key_and_offset(fill_va, cap);
+    (void)fz_off;
+    if (fz_key.to<uint64_t>() != 0)
+      zwt.update_on_issued_pf(fz_key);
+    global_epoch_counter++;
+  }
+ 
+  // useless eviction: a prefetched line that was never demanded
+  if (useless)
+    global_useless_epoch++;
+ 
+  // latency sample resolution
+  if (prefetch) {
+    auto e = prefetch_sample_table.check_hit(sample_table_entry{addr, 0, 0});
+    if (e.has_value()) {
+      if (evicted_addr != champsim::address{}) {
+        prefetch_latency_cycles_epoch += intern_->current_cycle() - e->cycle_missed;
+        prefetch_sampled_epoch++;
+      }
+      prefetch_sample_table.invalidate(sample_table_entry{addr, 0, 0});
+    }
+  } else {
+    auto e = demand_sample_table.check_hit(sample_table_entry{addr, 0, 0});
+    if (e.has_value()) {
+      if (evicted_addr != champsim::address{}) {
+        demand_latency_cycles_epoch += intern_->current_cycle() - e->cycle_missed;
+        demand_sampled_epoch++;
+      }
+      demand_sample_table.invalidate(sample_table_entry{addr, 0, 0});
+    }
+  }
+ 
+  return metadata_in;
 }
+
+void ampm_cheri::prefetcher_cycle_operate()
+{
+  // watchdog: relax global modifier if prefetcher is idle
+  watchdog_counter++;
+  if (watchdog_counter > WATCHDOG_INTERVAL) {
+    global_conf_modifier = (global_conf_modifier > GLOBAL_CONF_DECR)
+                               ? static_cast<uint8_t>(global_conf_modifier - GLOBAL_CONF_DECR)
+                               : 0;
+    watchdog_counter = 0;
+  }
+ 
+  // accuracy epoch (every GLOBAL_EPOCH_LENGTH prefetch fills)
+  if (global_epoch_counter >= GLOBAL_EPOCH_LENGTH) {
+    uint64_t total = global_useful_epoch + global_useless_epoch;
+    if (total > 0) {
+      global_usefulness = static_cast<double>(global_useful_epoch) / static_cast<double>(total);
+      if (global_usefulness < GLOBAL_TARGET_ACCURACY) {
+        unsigned next = static_cast<unsigned>(global_conf_modifier) + GLOBAL_CONF_INCR;
+        global_conf_modifier = (next > 255u) ? 255u : static_cast<uint8_t>(next);
+      } else {
+        global_conf_modifier = (global_conf_modifier > GLOBAL_CONF_DECR)
+                                   ? static_cast<uint8_t>(global_conf_modifier - GLOBAL_CONF_DECR)
+                                   : 0;
+      }
+    }
+    global_epoch_counter = 0;
+    global_useful_epoch  = 0;
+    global_useless_epoch = 0;
+  }
+ 
+  // latency epoch: tighten if prefetches are tracking demand latency closely
+  latency_epoch_cycle_counter++;
+  if (latency_epoch_cycle_counter >= LATENCY_EPOCH_CYCLES) {
+    if (demand_sampled_epoch >= LATENCY_MIN_SAMPLES &&
+        prefetch_sampled_epoch >= LATENCY_MIN_SAMPLES) {
+      double demand_lat   = static_cast<double>(demand_latency_cycles_epoch)
+                                / static_cast<double>(demand_sampled_epoch);
+      double prefetch_lat = static_cast<double>(prefetch_latency_cycles_epoch)
+                                / static_cast<double>(prefetch_sampled_epoch);
+      if (prefetch_lat > LATENCY_RATIO_THRESH * demand_lat) {
+        unsigned next = static_cast<unsigned>(global_conf_modifier) + GLOBAL_CONF_INCR;
+        global_conf_modifier = (next > 255u) ? 255u : static_cast<uint8_t>(next);
+      }
+    }
+    prefetch_latency_cycles_epoch = 0;
+    prefetch_sampled_epoch        = 0;
+    demand_latency_cycles_epoch   = 0;
+    demand_sampled_epoch          = 0;
+    latency_epoch_cycle_counter   = 0;
+  }
+}
+
 
 void ampm_cheri::prefetcher_final_stats()
 {
-  std::cout << "\n=== AMPM-CHERI (CI) Final Stats ===\n"
-            << "  Sealed bail:           " << stat_sealed_bail << "\n"
-            << "  Bounded by cap:        " << stat_pf_bounded << "\n"
-            << "  Zone hash collisions:  " << stat_zone_collision << "\n"
-            << "  Cross-zone prefetches: " << stat_cross_zone << "\n"
-            << "\n  -- Page Path (caps <= " << SMALL_CAP_THRESHOLD << " CL) --\n"
-            << "  Page path accesses:    " << stat_page_access << "\n"
-            << "  Page path prefetches:  " << stat_page_pf << "\n"
-            << "\n  -- Stride Hint Table (object path) --\n"
-            << "  SHT hits:              " << stat_sht_hit << "\n"
-            << "  SHT misses:            " << stat_sht_miss << "\n"
-            << "  SHT stride confirmed:  " << stat_sht_confirmed << "\n"
-            << "  SHT rewarded (useful): " << stat_sht_rewarded << "\n"
-            << "  Degree boosted by SHT: " << stat_degree_boosted << "\n";
+  std::cout << "\n=== AMPM-CHERI Final Stats ===\n"
+            << "  Bounded by cap:        " << pf_bounded << "\n"
+            << "  Zone hash collisions:  " << zone_collision << "\n"
+            << "  Cross-zone prefetches: " << cross_zone << "\n";
 
-  std::cout << "\n  -- Per size-class breakdown --\n";
-  for (int c = 0; c < NUM_SIZE_CLASSES; c++) {
-    if (stat_access_by_class[c] == 0) continue;
-    std::cout << "  [" << size_class_name(c) << "]"
-              << "  accesses=" << stat_access_by_class[c]
-              << "  pf_issued=" << stat_pf_by_class[c]
-              << "  useful=" << stat_useful_by_class[c] << "\n";
+  cct.print_stats();
+  zwt.print_stats();
+  std::cout << "\n  Prefetch metrics with respect to capability size\n";
+  static const char* size_name[NUM_SIZES] = {"SMALL","MEDIUM","LARGE","XLARGE","XXL"};
+
+  for (int c = 0; c < NUM_SIZES; c++) {
+    std::cout << "  [" << size_name[c] << "]"
+              << "  accesses=" << access_by_size[c]
+              << "  pf_issued=" << pf_by_size[c]
+              << "  useful=" << useful_by_size[c] << "\n";
   }
 }
