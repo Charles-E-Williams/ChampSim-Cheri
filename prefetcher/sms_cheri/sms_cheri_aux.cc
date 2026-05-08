@@ -20,7 +20,7 @@ sms_cheri::region_info sms_cheri::decompose(uint64_t pa, const champsim::capabil
 
   uint64_t cap_base = cap.base.to<uint64_t>();
   uint64_t cap_top  = cheri::capability_top(cap).to<uint64_t>(); 
-  uint64_t va       = cheri::capability_cursor(cap).to<uint64_t>(); 
+  uint64_t va       = intern_->v_addr.to<uint64_t>(); 
 
   uint64_t obj_cl_off   = cap.offset.to<uint64_t>() >> LOG2_BLOCK_SIZE;
   uint32_t rcls         = region_cls();

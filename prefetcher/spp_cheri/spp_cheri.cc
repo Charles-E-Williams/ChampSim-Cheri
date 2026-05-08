@@ -54,8 +54,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   uint64_t cap_offset_val = cap.offset.to<uint64_t>();
  
   // Demand virtual address from capability cursor
-  uint64_t demand_va = cheri::capability_cursor(cap).to<uint64_t>();
-  uint64_t cap_top   = cheri::capability_top(cap).to<uint64_t>();
+  uint64_t demand_va = intern_->v_addr.to<uint64_t>();
  
  
   if constexpr (SPP_DEBUG_PRINT) {
@@ -97,7 +96,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
         uint64_t pf_va = base_va + (static_cast<int64_t>(delta_q[i]) << LOG2_BLOCK_SIZE);
  
         // CHERI bounds check (in VA space against the authorizing capability)
-        if (!cheri::in_bounds(champsim::address{pf_va}, champsim::address{cap_base_val}, champsim::address{cap_top})) {
+        if (!cheri::prefetch_safe(champsim::address{pf_va}, cap)) {
           stat_pf_bounded_by_cap++;
           // Still allow lookahead to continue past bounded-out prefetches
           do_lookahead = 1;
@@ -107,12 +106,14 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
  
         // Compute PA-space prefetch address for same-page check
         champsim::address pf_addr{champsim::block_number{base_addr} + delta_q[i]};
- 
-        if (champsim::page_number{pf_addr} == page) {
+        int64_t cls_per_cap_page = static_cast<int64_t>(1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE));
+        int64_t target_cap_page_cl_signed = cap_cl_cursor + delta_q[i];
+        bool cross_cap_page = (target_cap_page_cl_signed < 0) || (target_cap_page_cl_signed >= cls_per_cap_page);
+
+        bool same_phys_page = (champsim::page_number{pf_addr} == page);
+        if (!cross_cap_page && same_phys_page) {
           //  Same physical page as demand: issue directly (no translation needed) 
-          if (FILTER.check(pf_addr, ((confidence_q[i] >= FILL_THRESHOLD)
-                                         ? spp_cheri::SPP_L2C_PREFETCH
-                                         : spp_cheri::SPP_LLC_PREFETCH))) {
+          if (FILTER.check(pf_addr, ((confidence_q[i] >= FILL_THRESHOLD) ? spp_cheri::SPP_L2C_PREFETCH : spp_cheri::SPP_LLC_PREFETCH))) {
             prefetch_line(pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0);
  
             if (confidence_q[i] >= FILL_THRESHOLD) {
@@ -132,7 +133,6 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
           }
         } else {
             if constexpr (GHR_ON) {
-              int64_t cls_per_cap_page = static_cast<int64_t>(1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE));
               int64_t target_cap_page_cl = ((cap_cl_cursor + delta_q[i]) % cls_per_cap_page + cls_per_cap_page) % cls_per_cap_page;
               GHR.update_entry(curr_sig, confidence_q[i], target_cap_page_cl, delta_q[i]);
             }

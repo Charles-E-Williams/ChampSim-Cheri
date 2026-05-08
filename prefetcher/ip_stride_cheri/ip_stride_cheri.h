@@ -15,14 +15,11 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     uint64_t cap_hash{};                    // capability index 
     int64_t  last_offset_accessed{};        // most recent offset accessed 
     int64_t  last_stride{};                 // last observed stride
+ 
+    auto index() const { return cap_hash & INT64_MAX; }
+    auto tag() const { return cap_hash; }
   };
 
-  struct cap_table_set {
-      auto operator()(const cap_entry& e) const { return e.cap_hash; }
-  };
-  struct cap_table_way {
-      auto operator()(const cap_entry& e) const { return e.cap_hash; }
-  };
   struct lookahead_entry {
     champsim::address address{};
     champsim::address::difference_type stride{};
@@ -35,7 +32,7 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
 
   constexpr static int PREFETCH_DEGREE = 3;
   
-  champsim::msl::lru_table<cap_entry, cap_table_set, cap_table_way> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
+  champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
   std::optional<lookahead_entry> active_lookahead;
  
   uint64_t cap_prefetches_bounded{};

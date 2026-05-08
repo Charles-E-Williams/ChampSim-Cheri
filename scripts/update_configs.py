@@ -153,7 +153,7 @@ base_config = {
   "physical_memory": {
     "data_rate": 3200,
     "channels": 1,
-    "ranks": 1,
+    "ranks": 2,
     "bankgroups": 8,
     "banks": 4,
     "bank_rows": 65536,

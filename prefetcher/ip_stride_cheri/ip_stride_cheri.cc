@@ -23,8 +23,8 @@ uint32_t ip_stride_cheri::prefetcher_cache_operate(champsim::address addr, champ
   if (!cheri::is_tag_valid(cap))
     return metadata_in;
     
-  if (cheri::has_load_permissions(cap.permissions)) {
- 
+  if (cheri::has_load_permissions(cap.permissions)) { //probably not needed since QEMU wouldnt have let this access occur if perms were violated
+  
     // Skip single-element objects (too small to prefetch into)
     if (!cheri::has_prefetchable_range(cap)) {
       too_small_filtered++;
@@ -103,8 +103,7 @@ void ip_stride_cheri::prefetcher_final_stats()
 {
   std::cout << "\nip_stride_cheri final stats" << std::endl;
   if (cap_table_hits + cap_table_misses > 0) {
-    double hit_rate = 100.0 * static_cast<double>(cap_table_hits)
-                    / static_cast<double>(cap_table_hits + cap_table_misses);
+    double hit_rate = 100.0 * static_cast<double>(cap_table_hits)  / static_cast<double>(cap_table_hits + cap_table_misses);
     std::cout << "  Cap table hit rate:          " << hit_rate << "%" << std::endl;
   }
   std::cout << "  Single object filtered prefetch:         " << too_small_filtered << std::endl;
