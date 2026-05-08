@@ -149,6 +149,7 @@ auto CACHE::fill_block(mshr_type mshr, uint32_t metadata) -> BLOCK
   to_fill.v_address = mshr.v_address;
   to_fill.data = mshr.data_promise->data;
   to_fill.pf_metadata = metadata;
+  to_fill.cpu = mshr.cpu;
   to_fill.auth_cap = mshr.cap;
 
   return to_fill;
@@ -165,6 +166,13 @@ template <typename T>
 champsim::address CACHE::module_address(const T& element) const
 {
   auto address = virtual_prefetch ? element.v_address : element.address;
+  return champsim::address{address.slice_upper(match_offset_bits ? champsim::data::bits{} : OFFSET_BITS)};
+}
+
+template <typename T>
+champsim::address CACHE::module_vaddress(const T& element) const
+{
+  auto address = element.v_address;
   return champsim::address{address.slice_upper(match_offset_bits ? champsim::data::bits{} : OFFSET_BITS)};
 }
 
@@ -231,11 +239,13 @@ bool CACHE::handle_fill(const mshr_type& fill_mshr)
   const uint32_t cpu_evict = evicted_valid ? way->cpu : static_cast<uint32_t>(NUM_CPUS);
   if (evicted_valid) {
     evicting_address = module_address(*way);
+    vaddr_evicted = module_vaddress(*way);
     evicted_cap = way->auth_cap;
   }
 
   auto metadata_thru = fill_mshr.data_promise->pf_metadata;
   if (!module_is_instr(fill_mshr)) {  // limiting only for data line fills
+    v_addr = module_vaddress(fill_mshr);
     metadata_thru = impl_prefetcher_cache_fill(module_address(fill_mshr), fill_mshr.ip, fill_mshr.cpu, fill_mshr.cap, useless,
                                                get_set_index(fill_mshr.address), way_idx, (fill_mshr.type == access_type::PREFETCH), evicting_address,
                                                evicted_cap, fill_mshr.data_promise->pf_metadata, metadata_evict, cpu_evict);
@@ -285,10 +295,10 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   }
 
   auto metadata_thru = handle_pkt.pf_metadata;
-  auth_capability = handle_pkt.cap;
 
   if (should_activate_prefetcher(handle_pkt) && !module_is_instr(handle_pkt)) { // limiting only to data line hits
     const uint32_t metadata_hit = hit ? way->pf_metadata : 0u;
+    v_addr = module_vaddress(handle_pkt);
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, handle_pkt.cpu, handle_pkt.cap, hit, useful_prefetch,
                                                   handle_pkt.type, metadata_thru, metadata_hit);
   }
@@ -940,8 +950,7 @@ uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, champsim::add
                                            long way, bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
                                            uint32_t metadata_evict, uint32_t cpu_evict) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, ip, cpu_in, cap, useless, set, way, prefetch, evicted_addr, evicted_cap, metadata_in, metadata_evict,
-                                                      cpu_evict);
+  return pref_module_pimpl->impl_prefetcher_cache_fill(addr, ip, cpu_in, cap, useless, set, way, prefetch, evicted_addr, evicted_cap, metadata_in, metadata_evict, cpu_evict);
 }
 
 void CACHE::impl_prefetcher_cycle_operate() const { pref_module_pimpl->impl_prefetcher_cycle_operate(); }

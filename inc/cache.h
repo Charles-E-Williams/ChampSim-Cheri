@@ -150,6 +150,9 @@ private:
   template <typename T>
   bool module_is_instr(const T& element) const;
 
+  template <typename T>
+  champsim::address module_vaddress(const T& element) const;
+
   auto matches_address(champsim::address address) const;
   std::pair<mshr_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
@@ -184,6 +187,8 @@ public:
   std::deque<mshr_type> inflight_writes;
 
   champsim::capability auth_capability{};
+  champsim::address v_addr{};
+  champsim::address vaddr_evicted{};
 
   long operate() final;
   void initialize() final;
