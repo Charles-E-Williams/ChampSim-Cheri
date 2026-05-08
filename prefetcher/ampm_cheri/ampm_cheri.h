@@ -267,6 +267,8 @@ public:
   uint64_t pf_bounded           = 0;
   uint64_t zone_collision       = 0;
   uint64_t cross_zone           = 0;
+  uint64_t region_miss          = 0;
+  uint64_t cursor_mismatch      = 0;   
   uint64_t pf_by_size[capability_size::NUM_SIZES]     = {};
   uint64_t useful_by_size[capability_size::NUM_SIZES]  = {};
   uint64_t access_by_size[capability_size::NUM_SIZES]  = {};
@@ -274,12 +276,12 @@ public:
 
   using prefetcher::prefetcher;
   void prefetcher_initialize();
-  uint32_t prefetcher_cache_operate(champsim::address addr, champsim::address ip,
+  uint32_t prefetcher_cache_operate(champsim::address addr,champsim::address vaddr, champsim::address ip,
                                     uint32_t cpu, champsim::capability cap,
                                     bool cache_hit, bool useful_prefetch,
                                     access_type type, uint32_t metadata_in,
                                     uint32_t metadata_hit);
-  uint32_t prefetcher_cache_fill(champsim::address addr, champsim::address ip,
+  uint32_t prefetcher_cache_fill(champsim::address addr, champsim::address vaddr,champsim::address ip,
                                  uint32_t cpu, champsim::capability cap,
                                  bool useless, long set, long way,
                                  bool prefetch, champsim::address evicted_addr,

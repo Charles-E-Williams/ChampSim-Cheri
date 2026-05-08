@@ -319,7 +319,7 @@ bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability&
   auto [key, offset] = zone_key_and_offset(v_addr, cap);
   if (key.to<uint64_t>() == 0) return false;
   auto region = regions.check_hit(region_type{key});
-  if (!region.has_value()) return false;
+  if (!region.has_value()){ region_miss++; return false;}
   if (region->cap_base != cap.base.to<uint64_t>()) return false;
   return prefetch ? region->prefetch_map.at(offset) : region->access_map.at(offset);
 }

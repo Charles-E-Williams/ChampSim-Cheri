@@ -18,6 +18,7 @@ void ampm_cheri::prefetcher_initialize()
 
 
 uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
+                                              champsim::address vaddr,
                                               champsim::address ip,
                                               uint32_t cpu,
                                               champsim::capability cap,
@@ -47,12 +48,13 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
     }
   }
   if (cap_lines < MIN_CAP_CACHE_LINES){
-    champsim::block_number pf_addr{addr};
-    prefetch_line(champsim::address{pf_addr+1}, false,cpu,ip, metadata_in, cap);
+    return metadata_in;
   }
 
   champsim::address va = cheri::capability_cursor(cap);
-  auto [zone_key, zone_offset] = zone_key_and_offset(va, cap);  
+
+
+  auto [zone_key, zone_offset] = zone_key_and_offset(vaddr, cap);  
 
 
   if (useful_prefetch) {
@@ -62,17 +64,17 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
     global_useful_epoch++;
   }
 
-  add_to_map(va, cap, false);
+  add_to_map(vaddr, cap, false);
 
   uint16_t ip_hash = get_ip_hash(ip.to<uint64_t>());
   zwt.log_ip(zone_key, ip_hash);
 
-  uint8_t cct_conf = cct.update_and_query(ip, va, cap);
+  uint8_t cct_conf = cct.update_and_query(ip, vaddr, cap);
   uint8_t boost_conf = zwt.zone_boost_confidence(zone_key, ip_hash, cct);
   uint8_t raw_confidence = std::max(cct_conf, boost_conf);
   uint8_t eff_conf = raw_confidence > global_conf_modifier ? raw_confidence - global_conf_modifier : 0;
 
-  uint8_t squash = cct.squash_chance(eff_conf);
+  uint8_t squash = 0;// cct.squash_chance(eff_conf);
   if ((intern_->current_cycle() % GLOBAL_SQUASH_MOD_MAX) < squash){
     cct.squashed++;
     return metadata_in;
@@ -82,7 +84,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
   int degree    = std::min(cct.conf_to_depth(eff_conf), space_in_mshr);
   bool two_level = intern_->get_mshr_occupancy_ratio() < 0.5;
   if (degree > 0)
-    do_prefetch(intern_, addr, va, ip, cap, metadata_in, cpu,
+    do_prefetch(intern_, addr, vaddr, ip, cap, metadata_in, cpu,
       degree, cct.conf_to_zone_la(eff_conf),cct.get_direction(ip, cap), two_level);
 
   watchdog_counter = 0;
@@ -92,6 +94,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
 
 
 uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr,
+                                           champsim::address vaddr,
                                            champsim::address ip,
                                            uint32_t cpu,
                                            champsim::capability cap,
@@ -132,8 +135,7 @@ uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr,
   // a prefetch fill: penalize CCT and ZWT, bump epoch
   if (prefetch && cheri::is_tag_valid(cap)) {
     cct.update_on_fill(ip, cap);
-    champsim::address fill_va = cheri::capability_cursor(cap);
-    auto [fz_key, fz_off] = zone_key_and_offset(fill_va, cap);
+    auto [fz_key, fz_off] = zone_key_and_offset(vaddr, cap);
     (void)fz_off;
     if (fz_key.to<uint64_t>() != 0)
       zwt.update_on_issued_pf(fz_key);
@@ -226,7 +228,10 @@ void ampm_cheri::prefetcher_final_stats()
   std::cout << "\n=== AMPM-CHERI Final Stats ===\n"
             << "  Bounded by cap:        " << pf_bounded << "\n"
             << "  Zone hash collisions:  " << zone_collision << "\n"
-            << "  Cross-zone prefetches: " << cross_zone << "\n";
+            << "  Cross-zone prefetches: " << cross_zone << "\n"
+             << " REGION MISSES: " << region_miss << "\n"
+            << "  Cursor/addr mismatch:  " << cursor_mismatch << "\n";
+
 
   cct.print_stats();
   zwt.print_stats();
