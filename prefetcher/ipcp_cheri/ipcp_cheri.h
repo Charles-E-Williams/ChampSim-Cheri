@@ -57,32 +57,12 @@ struct ghb_entry {
   uint64_t cap_base;
 };
  
-class REGION_STREAM_TABLE_CHERI
-{
-public:
-  uint64_t cap_base;
-  int64_t last_cl_offset;
-  uint16_t valid;
-  uint16_t dir;
-  uint16_t run_length;
-
-  REGION_STREAM_TABLE_CHERI()
-  {
-    cap_base = 0;
-    last_cl_offset = 0;
-    valid = 0;
-    dir = 0;
-    run_length = 0;
-  };
-};
 
 struct ipcp_cheri : public champsim::modules::prefetcher {
 private:
-  static constexpr int NUM_REGION_STREAM_ENTRIES = 64;
   IP_TABLE_L1_CHERI trackers_l1[NUM_IP_TABLE_L1_ENTRIES];
   DELTA_PRED_TABLE_CHERI DPT_l1[4096];
   ghb_entry ghb_l1[NUM_GHB_ENTRIES];
-  REGION_STREAM_TABLE_CHERI region_stream_l1[NUM_REGION_STREAM_ENTRIES];
   int64_t prev_cpu_cycle;
   uint64_t num_misses;
   float mpkc = {0};

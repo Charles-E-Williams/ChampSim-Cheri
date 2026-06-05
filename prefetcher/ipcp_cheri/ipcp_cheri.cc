@@ -23,8 +23,6 @@ void ipcp_cheri::prefetcher_initialize()
 
   for (int i = 0; i < NUM_GHB_ENTRIES; i++)
     ghb_l1[i] = {0, 0};
-  for (int i = 0; i < NUM_REGION_STREAM_ENTRIES; i++)
-    region_stream_l1[i] = {};
 }
 
 uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsim::address ip_addr,
@@ -120,12 +118,6 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     trackers_l1[index].cap_base = cap_base_val;
     trackers_l1[index].cap_length = cap_length_val;
     trackers_l1[index].last_cl_offset = cl_offset;
-    trackers_l1[index].last_stride = 0;
-    trackers_l1[index].signature = 0;
-    trackers_l1[index].conf = 0;
-    trackers_l1[index].str_valid = 0;
-    trackers_l1[index].str_strength = 0;
-    trackers_l1[index].str_dir = 0;
 
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
@@ -134,19 +126,21 @@ uint32_t ipcp_cheri::prefetcher_cache_operate(champsim::address address, champsi
     if (ghb_index == NUM_GHB_ENTRIES) {
       for (ghb_index = NUM_GHB_ENTRIES - 1; ghb_index > 0; ghb_index--)
         ghb_l1[ghb_index] = ghb_l1[ghb_index - 1];
-      ghb_l1[0] = {cl_offset, cap_base_val};  // or {cl_offset, cap_base_val} if you also drop ip from ghb_entry per the earlier flag
+      ghb_l1[0] = {cl_offset, cap_base_val}; 
     }
     return 0;
   }
 
 
-  int64_t MAX_STRIDE = static_cast<int64_t>(cap_length_val >> LOG2_BLOCK_SIZE);
+  constexpr int64_t MAX_STRIDE_CAP = 512;
+  int64_t cap_lines = static_cast<int64_t>(cap_length_val >> LOG2_BLOCK_SIZE);
+  int64_t MAX_STRIDE = (cap_lines > MAX_STRIDE_CAP || cap_lines <= 0) ? MAX_STRIDE_CAP : cap_lines;
   if (stride > MAX_STRIDE || stride < -MAX_STRIDE)  {
-    // Update the offset for future accesses, but abort training for this large jump
+    //update the offset for future accesses
     trackers_l1[index].last_cl_offset = cl_offset;
     trackers_l1[index].last_stride = 0; 
     
-    // We optionally update the GHB here so stream detection still works on absolute addresses
+    // we optionally update the GHB here so stream detection still works on absolute addresses
     int ghb_index = 0;
     for (ghb_index = 0; ghb_index < NUM_GHB_ENTRIES; ghb_index++)
       if (cl_offset == ghb_l1[ghb_index].cap_cl_offset && cap_base_val == ghb_l1[ghb_index].cap_base)

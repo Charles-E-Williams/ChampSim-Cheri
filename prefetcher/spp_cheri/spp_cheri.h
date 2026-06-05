@@ -152,6 +152,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
     uint8_t valid[MAX_GHR_ENTRY];
     uint32_t sig[MAX_GHR_ENTRY], confidence[MAX_GHR_ENTRY];
     int64_t cap_cl_offset[MAX_GHR_ENTRY];
+    int64_t pa_page_cl_offset[MAX_GHR_ENTRY];
     int64_t delta[MAX_GHR_ENTRY];
 
     GLOBAL_REGISTER()
@@ -164,12 +165,13 @@ struct spp_cheri : public champsim::modules::prefetcher {
         sig[i] = 0;
         confidence[i] = 0;
         cap_cl_offset[i] = 0;
+        pa_page_cl_offset[i] = 0; 
         delta[i] = 0;
       }
     }
 
-    void update_entry(uint32_t pf_sig, uint32_t pf_confidence, int64_t pf_cap_cl_off, int64_t pf_delta);
-    uint32_t check_entry(int64_t demand_cap_cl_off);
+    void update_entry(uint32_t pf_sig, uint32_t pf_confidence, int64_t pf_cap_cl_off, int64_t pf_pa_page_cl_off, int64_t pf_delta);
+    uint32_t check_entry(int64_t demand_cap_cl_off, int64_t demand_pa_page_cl_off);
   };
 
   SIGNATURE_TABLE ST;

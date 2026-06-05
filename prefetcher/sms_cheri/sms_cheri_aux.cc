@@ -240,16 +240,24 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
 
   uint64_t cap_length = ri.cap_top - ri.cap_base;
   if (cap_length > REGION_SIZE) {
-    uint64_t next_region_va = region_va_start + REGION_SIZE
-                              + (static_cast<uint64_t>(ri.offset) << LOG2_BLOCK_SIZE);
+    uint64_t next_region_va_base = region_va_start + REGION_SIZE;
+    uint64_t next_region_va_end  = next_region_va_base + REGION_SIZE - 1;
 
-    if (cheri::in_bounds(champsim::address{next_region_va},
-                         champsim::address{ri.cap_base},
-                         champsim::address{ri.cap_top})) {
-      if ((next_region_va & ~page_mask) == ri.demand_va_page) {
-        uint64_t next_pa = ri.demand_pa_page | (next_region_va & page_mask);
-        pref_addr.push_back(next_pa);
-        stat_next_region_pf++;
+    bool same_page = ((next_region_va_base & ~page_mask) == ri.demand_va_page) && ((next_region_va_end  & ~page_mask) == ri.demand_va_page);
+
+    if (same_page) {
+
+      bool whole_region_in_cap = cheri::in_bounds(champsim::address{next_region_va_end}, champsim::address{ri.cap_base},  champsim::address{ri.cap_top});
+
+      if (whole_region_in_cap) {
+        for (uint32_t i = 0; i < region_cls(); ++i) {
+          if (!entry->pattern[i])
+            continue;
+          uint64_t target_va = next_region_va_base + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
+          uint64_t target_pa = ri.demand_pa_page | (target_va & page_mask);
+          pref_addr.push_back(target_pa);
+          stat_next_region_pf++;
+        }
       }
     }
   }

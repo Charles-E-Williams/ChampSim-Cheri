@@ -85,8 +85,7 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
  
   do {
     uint32_t lookahead_way = PT_WAY;
-    PT.read_pattern(curr_sig, delta_q, confidence_q, lookahead_way,
-                    lookahead_conf, pf_q_tail, depth);
+    PT.read_pattern(curr_sig, delta_q, confidence_q, lookahead_way, lookahead_conf, pf_q_tail, depth);
  
     do_lookahead = 0;
     for (uint32_t i = pf_q_head; i < pf_q_tail; i++) {
@@ -98,21 +97,14 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
         // CHERI bounds check (in VA space against the authorizing capability)
         if (!cheri::prefetch_safe(champsim::address{pf_va}, cap)) {
           stat_pf_bounded_by_cap++;
-          // Still allow lookahead to continue past bounded-out prefetches
-          do_lookahead = 1;
           pf_q_head++;
           continue;
         }
  
         // Compute PA-space prefetch address for same-page check
         champsim::address pf_addr{champsim::block_number{base_addr} + delta_q[i]};
-        int64_t cls_per_cap_page = static_cast<int64_t>(1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE));
-        int64_t target_cap_page_cl_signed = cap_cl_cursor + delta_q[i];
-        bool cross_cap_page = (target_cap_page_cl_signed < 0) || (target_cap_page_cl_signed >= cls_per_cap_page);
-
-        bool same_phys_page = (champsim::page_number{pf_addr} == page);
-        if (!cross_cap_page && same_phys_page) {
-          //  Same physical page as demand: issue directly (no translation needed) 
+        if (champsim::page_number{pf_addr} == page) {
+          //  same physical page as demand
           if (FILTER.check(pf_addr, ((confidence_q[i] >= FILL_THRESHOLD) ? spp_cheri::SPP_L2C_PREFETCH : spp_cheri::SPP_LLC_PREFETCH))) {
             prefetch_line(pf_addr, (confidence_q[i] >= FILL_THRESHOLD), 0);
  
@@ -133,8 +125,11 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
           }
         } else {
             if constexpr (GHR_ON) {
+              int64_t cls_per_cap_page = static_cast<int64_t>(1ULL << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE));
+
               int64_t target_cap_page_cl = ((cap_cl_cursor + delta_q[i]) % cls_per_cap_page + cls_per_cap_page) % cls_per_cap_page;
-              GHR.update_entry(curr_sig, confidence_q[i], target_cap_page_cl, delta_q[i]);
+              int64_t target_pa_page_cl  = ((champsim::block_number{pf_addr}.to<uint64_t>()) & (cls_per_cap_page - 1));
+              GHR.update_entry(curr_sig, confidence_q[i], target_cap_page_cl, target_pa_page_cl, delta_q[i]);
             }
           } 
         do_lookahead = 1;
@@ -277,7 +272,10 @@ void spp_cheri::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr,
   // GHR bootstrap for new cap_pages
   if constexpr (GHR_ON) {
     if (ST_hit == 0) {
-      uint32_t GHR_found = _parent->GHR.check_entry(cap_page_cl_offset);
+      uint64_t pa_page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
+      int64_t demand_pa_page_cl = static_cast<int64_t>((addr.to<uint64_t>() & pa_page_mask) >> LOG2_BLOCK_SIZE);
+      uint32_t GHR_found = _parent->GHR.check_entry(cap_page_cl_offset, demand_pa_page_cl);
+
       if (GHR_found < MAX_GHR_ENTRY) {
         auto ghr_delta = _parent->GHR.delta[GHR_found];
         sig_delta = (ghr_delta < 0) ? (((-1) * ghr_delta) + (1 << (SIG_DELTA_BIT - 1))) : ghr_delta;
@@ -347,6 +345,7 @@ void spp_cheri::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<int64
                                             uint32_t& pf_q_tail, uint32_t& depth)
 {
   uint32_t set = get_hash(curr_sig) % PT_SET, local_conf = 0, pf_conf = 0, max_conf = 0;
+  const uint32_t q_size = static_cast<uint32_t>(confidence_q.size());
 
   if (c_sig[set]) {
     for (uint32_t way = 0; way < PT_WAY; way++) {
@@ -354,7 +353,7 @@ void spp_cheri::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<int64
       pf_conf = depth ? (_parent->GHR.global_accuracy * c_delta[set][way] / c_sig[set] * lookahead_conf / 100)
                       : local_conf;
 
-      if (pf_conf >= PF_THRESHOLD) {
+      if (pf_conf >= PF_THRESHOLD && pf_q_tail < q_size) {
         confidence_q[pf_q_tail] = pf_conf;
         delta_q[pf_q_tail] = delta[set][way];
 
@@ -365,11 +364,13 @@ void spp_cheri::PATTERN_TABLE::read_pattern(uint32_t curr_sig, std::vector<int64
         pf_q_tail++;
       }
     }
-    pf_q_tail++;
+    if (pf_q_tail < q_size) 
+      pf_q_tail++;
+
     lookahead_conf = max_conf;
     if (lookahead_conf >= PF_THRESHOLD)
       depth++;
-  } else {
+  } else if (pf_q_tail < q_size){
     confidence_q[pf_q_tail] = 0;
   }
 }
@@ -423,8 +424,7 @@ bool spp_cheri::PREFETCH_FILTER::check(champsim::address check_addr, FILTER_REQU
 }
 
 
-void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confidence,
-                                               int64_t pf_cap_cl_off, int64_t pf_delta)
+void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confidence, int64_t pf_cap_cl_off, int64_t pf_pa_page_cl_off, int64_t pf_delta)
 {                                              
   uint32_t min_conf = 100, victim_way = 0;
 
@@ -432,6 +432,7 @@ void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confi
     if (valid[i] && (cap_cl_offset[i] == pf_cap_cl_off)) {
       sig[i] = pf_sig;
       confidence[i] = pf_confidence;
+      pa_page_cl_offset[i] = pf_pa_page_cl_off;
       delta[i] = pf_delta;
       return;
     }
@@ -450,14 +451,24 @@ void spp_cheri::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confi
   sig[victim_way] = pf_sig;
   confidence[victim_way] = pf_confidence;
   cap_cl_offset[victim_way] = pf_cap_cl_off;
+  pa_page_cl_offset[victim_way] = pf_pa_page_cl_off;
   delta[victim_way] = pf_delta;
 }
 
-uint32_t spp_cheri::GLOBAL_REGISTER::check_entry(int64_t demand_cap_cl_off)
+uint32_t spp_cheri::GLOBAL_REGISTER::check_entry(int64_t demand_cap_cl_off, int64_t demand_pa_page_cl_off)
 {
   uint32_t max_conf = 0, max_conf_way = MAX_GHR_ENTRY;
   for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
-    if ((cap_cl_offset[i] == demand_cap_cl_off) && (max_conf < confidence[i])) {
+    if (valid[i] && (cap_cl_offset[i] == demand_cap_cl_off) && (max_conf < confidence[i])) {
+      max_conf = confidence[i];
+      max_conf_way = i;
+    }
+  }
+  if (max_conf_way < MAX_GHR_ENTRY)
+    return max_conf_way;
+
+  for (uint32_t i = 0; i < MAX_GHR_ENTRY; i++) {
+    if (valid[i] && (pa_page_cl_offset[i] == demand_pa_page_cl_off) && (max_conf < confidence[i])) {
       max_conf = confidence[i];
       max_conf_way = i;
     }
