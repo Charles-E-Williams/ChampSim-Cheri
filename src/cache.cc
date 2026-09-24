@@ -327,7 +327,10 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     way->dirty |= (handle_pkt.type == access_type::WRITE);
-    way->auth_cap = handle_pkt.cap; // update auth cap if the block is modified
+    // Track the authorizing capability of the most recent tagged demand access.
+    // Prefetch requests and untagged accesses carry no meaningful authority, so they must not overwrite it.
+    if (handle_pkt.cap.tag && handle_pkt.type != access_type::PREFETCH)
+      way->auth_cap = handle_pkt.cap;
    
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {

@@ -82,6 +82,17 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - `static_assert`s in `inc/trace_instruction.h` pin the `cheri_instr` layout.
 - Upstream `master` links `libCLI11`. Run `./vcpkg/bootstrap-vcpkg.sh && ./vcpkg/vcpkg install` after `git submodule update --init`.
 
+## Behaviour changes after the port (2026-09)
+- **Untagged capability → early exit** (`acea8ec6`). Every CHERI prefetcher's `cache_operate` returns `metadata_in` immediately when the authorizing capability is untagged. Before this, `berti_cheri` had a page-bounded fallback, and `cheri_ptr_chase` never checked the tag. Fill hooks are unchanged.
+- **`BLOCK::auth_cap` is only updated by tagged demand hits.**
+  - Before: `try_hit` overwrote `way->auth_cap` with the incoming packet's cap on every hit, with the comment "update auth cap if the block is modified".
+  - Why that was wrong:
+    - Prefetch requests carry either no cap (legacy `prefetch_line`) or the prefetcher's cap, not a demand's authority.
+    - Untagged accesses carry no authority at all.
+    - So a prefetch hit or an untagged hit (e.g. an L1D prefetch arriving at L2C) erased the capability of the last real access to the line. That capability later reaches prefetchers as `evicted_cap` (AMPM-CHERI zone cleanup) and rides on the writeback packet.
+  - Now: `try_hit` updates it only when `handle_pkt.cap.tag && handle_pkt.type != access_type::PREFETCH`. Fills still set `auth_cap` from the fill entry.
+  - Test: `434-cheri-auth-cap-on-hit.cc`.
+
 ## Known issues (intentionally not changed)
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
 - **Untagged-cap warning floods stock traces.** `execute_load` and `do_complete_store` print a warning for every access with an untagged authority cap.
