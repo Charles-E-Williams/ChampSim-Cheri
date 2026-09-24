@@ -98,12 +98,16 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `CACHE::impl_prefetcher_cache_operate` records the triggering access's `cap` on entry and clears it on exit.
     - The no-cap `CACHE::prefetch_line(addr, fill_this_level, metadata)` attaches that recorded cap to the prefetch packet when it is called inside the hook.
     - The cap overloads are unaffected. Calls outside `cache_operate` (cycle and fill hooks) still get an untagged cap.
+    - **The inherited cap is re-pointed at the prefetched line.** `offset = prefetch VA - base`, so `capability_cursor()` and `lines_from_cap_base()` at the next level describe the prefetched line, not the trigger. Base, length, permissions and tag are unchanged.
+      - The prefetch VA is `pf_addr` on `virtual_prefetch` caches.
+      - On physical caches, it is the trigger's VA page spliced with `pf_addr`'s page offset, when the prefetch is on the trigger's physical page.
+      - Otherwise, the trigger's offset is kept and counted in the new stat `pf_cap_offset_unadjusted`, which is printed as `PREFETCH CAP OFFSET UNADJUSTED` for L1D/L2C/LLC and included in JSON. This covers a physical prefetch on a different page, and a prefetch below `base`. A negative offset would wrap and trip the overflow assert in `cheri::capability_cursor()`.
   - **Why:** every CHERI prefetcher issued through the no-cap overload, so every prefetch packet was untagged. At L2C/LLC, `prefetch_activate` is `LOAD,PREFETCH`, so every PREFETCH access there reached the prefetcher untagged and hit the untagged-cap early return. CHERI prefetchers at L2C/LLC therefore never trained on L1D (or L2C) prefetches. The fill's `cap` and `BLOCK::auth_cap` of prefetched lines were untagged for the same reason.
   - **Enabled** at L1D, L2C and LLC in all `champsim_cheri_*` configs. It stays off (the default) in `champsim_config.json`, `champsim_no_pf_config.json` and all `champsim_riscv_*` configs, and at L1I everywhere, so baseline runs are unchanged. Stock and third-party prefetchers were not edited.
   - **Cycle-hook issuers** now keep the triggering cap with each buffered candidate and use the cap overload:
     - `ip_stride_cheri` / `ip_stride_cheri_dynamic`: `active_lookahead.cap`.
     - `sms_cheri`: `pref_buffer` now stores `(address, capability)` pairs, filled from the trigger in `cache_operate`.
-  - **Still untagged:** `cheri_ptr_chase` issues one prefetch from `prefetcher_cache_fill`, which has no trigger, so that prefetch stays untagged.
+  - **`cheri_ptr_chase`** targets a different object than the trigger, so it never inherits. All three call sites (the target in `cache_operate`, `pct_chase`, and `prefetcher_cache_fill`) pass the chased pointer's own capability through the cap overload. `ptr_map` entries now store that capability alongside the target address.
   - Test: `435-cheri-inherit-trigger-cap.cc`.
 
 ## Known issues (intentionally not changed)

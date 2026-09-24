@@ -155,6 +155,7 @@ private:
   champsim::address module_vaddress(const T& element) const;
 
   auto matches_address(champsim::address address) const;
+  champsim::capability inherited_prefetch_cap(champsim::address pf_addr);
   std::pair<fill_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
   std::deque<tag_lookup_type> internal_PQ{};
@@ -189,8 +190,13 @@ public:
   std::deque<fill_type> inflight_fills;
 
   champsim::capability auth_capability{};
-  // Capability of the access currently inside the prefetcher's cache_operate hook (set only when inherit_trigger_cap)
-  mutable std::optional<champsim::capability> trigger_cap{};
+  // The access currently inside the prefetcher's cache_operate hook (set only when inherit_trigger_cap)
+  struct prefetch_trigger_type {
+    champsim::capability cap;
+    champsim::address address;
+    champsim::address v_address;
+  };
+  std::optional<prefetch_trigger_type> prefetch_trigger{};
   champsim::address v_addr{};
   champsim::address vaddr_evicted{};
 

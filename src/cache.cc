@@ -164,6 +164,30 @@ auto CACHE::matches_address(champsim::address addr) const
   };
 }
 
+// The triggering access's capability, re-pointed at the prefetched line: offset = prefetch VA - base.
+// Base, length, permissions and tag are unchanged. If the prefetch VA is unknown (physical cache, different
+// physical page than the trigger) or below the base, the trigger's offset is kept and counted.
+champsim::capability CACHE::inherited_prefetch_cap(champsim::address pf_addr)
+{
+  auto cap = prefetch_trigger->cap;
+  if (!cap.tag)
+    return cap;
+
+  std::optional<champsim::address> pf_vaddr;
+  if (virtual_prefetch)
+    pf_vaddr = pf_addr;
+  else if (champsim::page_number{pf_addr} == champsim::page_number{prefetch_trigger->address})
+    pf_vaddr = champsim::address{champsim::splice(champsim::page_number{prefetch_trigger->v_address}, champsim::page_offset{pf_addr})};
+
+  // An offset below the base would wrap, which cheri::capability_cursor() asserts against.
+  if (pf_vaddr.has_value() && pf_vaddr->to<uint64_t>() >= cap.base.to<uint64_t>())
+    cap.offset = champsim::address{pf_vaddr->to<uint64_t>() - cap.base.to<uint64_t>()};
+  else
+    ++sim_stats.pf_cap_offset_unadjusted;
+
+  return cap;
+}
+
 template <typename T>
 champsim::address CACHE::module_address(const T& element) const
 {
@@ -299,8 +323,11 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   if (should_activate_prefetcher(handle_pkt) && !module_is_instr(handle_pkt)) { // limiting only to data line hits
     const uint32_t metadata_hit = hit ? way->pf_metadata : 0u;
     v_addr = module_vaddress(handle_pkt);
+    if (inherit_trigger_cap)
+      prefetch_trigger = prefetch_trigger_type{handle_pkt.cap, handle_pkt.address, handle_pkt.v_address};
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, handle_pkt.cpu, handle_pkt.cap, hit, useful_prefetch,
                                                   handle_pkt.type, metadata_thru, metadata_hit);
+    prefetch_trigger.reset();
   }
 
   // update replacement policy
@@ -735,8 +762,8 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
-  if (trigger_cap.has_value())
-    pf_packet.cap = *trigger_cap;
+  if (prefetch_trigger.has_value())
+    pf_packet.cap = inherited_prefetch_cap(pf_addr);
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
@@ -946,11 +973,7 @@ void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetc
 uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool cache_hit,
                                               bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit) const
 {
-  if (inherit_trigger_cap)
-    trigger_cap = cap;
-  auto metadata_out = pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cpu_in, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit);
-  trigger_cap.reset();
-  return metadata_out;
+  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cpu_in, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit);
 }
 
 uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool useless, long set,
@@ -1031,6 +1054,7 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useful = sim_stats.pf_useful;
   roi_stats.pf_useless = sim_stats.pf_useless;
   roi_stats.pf_fill = sim_stats.pf_fill;
+  roi_stats.pf_cap_offset_unadjusted = sim_stats.pf_cap_offset_unadjusted;
 
   roi_stats.cap_auth_hits = sim_stats.cap_auth_hits;
   roi_stats.cap_auth_misses = sim_stats.cap_auth_misses;

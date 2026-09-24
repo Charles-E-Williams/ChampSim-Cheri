@@ -311,6 +311,9 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
       lines.emplace_back("");
     }
 
+    if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos)
+      lines.push_back(fmt::format("cpu{}->{} PREFETCH CAP OFFSET UNADJUSTED: {:10}", cpu, stats.name, stats.pf_cap_offset_unadjusted));
+
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});
     lines.push_back(
         fmt::format("cpu{}->{} AVERAGE MISS LATENCY: {} cycles", cpu, stats.name, ::print_ratio(stats.total_miss_latency_cycles, total_downstream_demands)));

@@ -43,6 +43,7 @@ struct cheri_ptr_chase : public champsim::modules::prefetcher {
   struct ptr_map_entry {
     uint64_t cl_tag = 0;   // source cacheline
     uint64_t target = 0;   // VA of the pointer inside it
+    champsim::capability target_cap{}; // the pointer itself, used as the capability of the prefetch
   };
 
   // 4 capabilities (16B each) can fit in a cache line

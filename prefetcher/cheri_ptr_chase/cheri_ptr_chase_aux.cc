@@ -69,6 +69,7 @@ void cheri_ptr_chase::pct_chase(champsim::address ip, uint64_t start_cursor)
         }
 
         uint64_t next_target = ptr_map[idx].target;
+        const champsim::capability next_cap = ptr_map[idx].target_cap;
         if (next_target == 0 || next_target == cursor) {
             stat_null_or_loop++;
             break;
@@ -77,7 +78,7 @@ void cheri_ptr_chase::pct_chase(champsim::address ip, uint64_t start_cursor)
         champsim::address pf_addr{next_target};
         if (!filter.test(pf_addr)) {
             filter.add(pf_addr);
-            prefetch_line(pf_addr, false, 0); // false = place deeper chases into the l2
+            prefetch_line(pf_addr, false, 0, next_cap); // false = place deeper chases into the l2
             stat_pf_issued++;
         } else {
             stat_bloom_filtered++;

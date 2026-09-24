@@ -40,7 +40,7 @@ uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champ
       champsim::address target_addr{target_cursor};
       if (!filter.test(target_addr)) {
         filter.add(target_addr);
-        prefetch_line(target_addr, true, 0);
+        prefetch_line(target_addr, true, 0, *stored); // the chased pointer is the prefetch's capability
         stat_pf_issued++;
       }
       pct_chase(ip, target_cursor);
@@ -76,12 +76,12 @@ uint32_t cheri_ptr_chase::prefetcher_cache_fill(champsim::address addr, champsim
       if (target != 0 && target != cl_base) {
         uint64_t cl = cl_base >> LOG2_BLOCK_SIZE;
         uint64_t idx = filter.hash(cl) % PTR_MAP_SIZE;
-        ptr_map[idx] = {cl, target};
+        ptr_map[idx] = {cl, target, *stored};
 
         champsim::address pf_addr{target};
         if (!filter.test(pf_addr)) {
           filter.add(pf_addr);
-          prefetch_line(pf_addr, true, metadata_in); // Pass metadata forward
+          prefetch_line(pf_addr, true, metadata_in, *stored); // Pass metadata forward; the pointer is the prefetch's capability
           stat_pf_issued++;
         }
         
