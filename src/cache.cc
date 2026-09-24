@@ -225,15 +225,14 @@ void CACHE::record_useful_prefetch(champsim::stats::event_counter<pf_cap_key>& c
 // base, length, permissions and tag are unchanged. With line = the cache line containing the prefetch VA:
 //  - the cursor (base + offset) is already inside line: unchanged (e.g. cheri_ptr_chase's pointer capabilities);
 //  - line overlaps the object: offset = max(prefetch VA, base) - base, so the cursor stays inside the object;
-//  - line lies entirely outside the object, or the prefetch VA is unknown: unchanged, counted in pf_cap_offset_unadjusted.
+//  - line lies entirely outside the object, or the prefetch VA is unknown: unchanged.
 champsim::capability CACHE::repoint_prefetch_cap(champsim::capability cap, champsim::address pf_addr)
 {
   if (!cap.tag)
     return cap;
 
-  const auto pf_vaddr = prefetch_vaddr(pf_addr);
-  if (!pf_vaddr.has_value() || !cheri::repoint_cap_to_line(cap, *pf_vaddr))
-    ++sim_stats.pf_cap_offset_unadjusted;
+  if (const auto pf_vaddr = prefetch_vaddr(pf_addr); pf_vaddr.has_value())
+    cheri::repoint_cap_to_line(cap, *pf_vaddr);
   return cap;
 }
 
@@ -1080,7 +1079,6 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useful = sim_stats.pf_useful;
   roi_stats.pf_useless = sim_stats.pf_useless;
   roi_stats.pf_fill = sim_stats.pf_fill;
-  roi_stats.pf_cap_offset_unadjusted = sim_stats.pf_cap_offset_unadjusted;
 
   roi_stats.cap_auth_hits = sim_stats.cap_auth_hits;
   roi_stats.cap_auth_misses = sim_stats.cap_auth_misses;

@@ -105,9 +105,9 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
       - With `line` = the cache line containing the prefetch VA and the object `[base, base + length)`:
         - the cursor is already inside `line`: unchanged (covers `cheri_ptr_chase`, whose pointer cap already points at its target);
         - else `line` overlaps the object: `offset = max(prefetch VA, base) − base`, so the cursor never points outside the object (the first partial line of an unaligned object points at `base`);
-        - else (the line lies entirely outside the object), or the prefetch VA is unknown: the offset is kept and counted in `pf_cap_offset_unadjusted`, printed as `PREFETCH CAP OFFSET UNADJUSTED` for L1D/L2C/LLC and included in JSON.
-      - This replaces the earlier "below `base` is unadjusted" rule.
-      - A prefetch issued with an explicit cap from `prefetcher_cycle_operate` on a physical cache (e.g. `sms_cheri` at L2C) has no known VA, so every one of them counts as unadjusted.
+        - else (the line lies entirely outside the object), or the prefetch VA is unknown: the offset is left unchanged.
+      - This replaces the earlier "below `base` is left unchanged" rule. The counter that tracked unchanged offsets (`pf_cap_offset_unadjusted`, plain-text `PREFETCH CAP OFFSET UNADJUSTED`, JSON `prefetch cap offset unadjusted`) was later removed.
+      - A prefetch issued with an explicit cap from `prefetcher_cycle_operate` on a physical cache (e.g. `sms_cheri` at L2C) has no known VA, so the cache leaves its cap as the prefetcher set it.
     - **`cheri::prefetch_safe()` uses the same line-overlap test** through the shared helper `cheri::overlaps_bounds()`: `base < top && line_start < top && line_start + BLOCK_SIZE > base`, plus load permission.
       - Before, it accepted a prefetch only if its address was inside `[base, top)`, so the first line of an object with an unaligned base was rejected.
       - `overlaps_bounds()` had no callers. Its old form also had an off-by-one (`block_end > base` with an inclusive `block_end`), fixed by the shared formula.
@@ -188,7 +188,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Readers now derive what they need from the capability, which the core presents with its cursor at the effective address. Choice per reader:
     - **`spp_cheri` operate, option (A).** The demand's virtual line comes from `cheri::line_va_from_cursor(cap, addr)`: accepted only if the cap is tagged and the cursor's line position within the page equals the physical address's. On failure, return early (untagged-cap policy), counted as `Cursor/line check failed` in its final stats. The VA only feeds the candidate VAs for `prefetch_safe` and lookahead, so results match the old side channel whenever the check passes.
     - **`sms_cheri` decompose, option (B).** Everything comes from the cursor and the physical address. Target physical line = demand's physical line + (target object line − demand object line)·64, kept only if it stays on the demand's physical page (the next-region path too). The bounds checks are unchanged, expressed object-relatively.
-      - Each buffered target now stores the demand's capability re-pointed at the target line (`cheri::repoint_cap_to_line`, the same line-overlap rule as `CACHE::repoint_prefetch_cap`). Its prefetches, issued later from `cycle_operate`, therefore carry correct cursors. At a physical cache the cache still counts them in `pf_cap_offset_unadjusted`, because it can't see their VA.
+      - Each buffered target now stores the demand's capability re-pointed at the target line (`cheri::repoint_cap_to_line`, the same line-overlap rule as `CACHE::repoint_prefetch_cap`). Its prefetches, issued later from `cycle_operate`, therefore carry correct cursors.
       - Results differ slightly from before for objects with an unaligned `base`. The old target address was `cap_base + line·64`, which isn't line-aligned; the new one is the demand's line plus a whole number of lines.
     - **`ampm_cheri` operate and fill, option (A)**, so zone keys match.
       - Operate: the VA comes from `cheri::line_va_from_cursor(cap, addr)`. When the check fails, a large-cap access uses AMPM's page-based fallback engine, counted as `Cursor/line check failed (to page path)`.

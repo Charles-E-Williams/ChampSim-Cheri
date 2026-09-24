@@ -54,7 +54,6 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
   statsmap.emplace("prefetch issued", stats.pf_issued);
   statsmap.emplace("useful prefetch", stats.pf_useful);
   statsmap.emplace("useless prefetch", stats.pf_useless);
-  statsmap.emplace("prefetch cap offset unadjusted", stats.pf_cap_offset_unadjusted);
 
   // Prefetch outcomes by issuing capability size class: {counter: {class: [per-cpu raw counts]}}
   {

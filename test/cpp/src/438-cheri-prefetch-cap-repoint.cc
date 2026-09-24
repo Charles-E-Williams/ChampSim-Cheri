@@ -73,7 +73,6 @@ TEST_CASE("438-1: the first line of an object with an unaligned base re-points t
   const auto got = c.prefetch_and_fill(0x70000000, object_cap(0xc0)); // trigger cursor further into the object
   check_unchanged_except_offset(got);
   CHECK(got.offset == champsim::address{0}); // cursor == base, not the line start below it
-  CHECK(c.uut.sim_stats.pf_cap_offset_unadjusted == 0);
 }
 
 TEST_CASE("438-2: a pointer-chase capability whose cursor is already inside the line is unchanged")
@@ -82,16 +81,14 @@ TEST_CASE("438-2: a pointer-chase capability whose cursor is already inside the 
   const auto got = c.prefetch_and_fill(0x70000040, object_cap(0x20)); // cursor 0x70000050, inside line 0x70000040
   check_unchanged_except_offset(got);
   CHECK(got.offset == champsim::address{0x20});
-  CHECK(c.uut.sim_stats.pf_cap_offset_unadjusted == 0);
 }
 
-TEST_CASE("438-3: a line entirely outside the object keeps the offset and is counted as unadjusted")
+TEST_CASE("438-3: a line entirely outside the object keeps the offset unchanged")
 {
   virtual_cache c;
   const auto got = c.prefetch_and_fill(0x70001000, object_cap(0x40));
   check_unchanged_except_offset(got);
   CHECK(got.offset == champsim::address{0x40});
-  CHECK(c.uut.sim_stats.pf_cap_offset_unadjusted == 1);
 }
 
 TEST_CASE("438-4: an explicit-capability prefetch carrying its trigger's cursor is re-pointed at the prefetched line")
@@ -100,7 +97,6 @@ TEST_CASE("438-4: an explicit-capability prefetch carrying its trigger's cursor 
   const auto got = c.prefetch_and_fill(0x70000100, object_cap(0x10)); // like ip_stride_cheri's lookahead: cursor at the trigger
   check_unchanged_except_offset(got);
   CHECK(got.offset == champsim::address{0x70000100 - obj_base});
-  CHECK(c.uut.sim_stats.pf_cap_offset_unadjusted == 0);
 }
 
 TEST_CASE("438-5: prefetch_safe accepts the first and last partial lines of an unaligned object and rejects the lines just outside")

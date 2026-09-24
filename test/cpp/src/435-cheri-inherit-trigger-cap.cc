@@ -59,7 +59,6 @@ struct prefetch_cap_recorder : champsim::modules::prefetcher {
 struct result {
   std::vector<uint64_t> tagged_offsets{};
   std::size_t untagged = 0;
-  uint64_t unadjusted = 0;
 };
 
 // virtual_upper: the upper cache prefetches in the virtual address space and translates through a mock.
@@ -128,7 +127,6 @@ result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::addr
     }
   }
   std::sort(std::begin(retval.tagged_offsets), std::end(retval.tagged_offsets));
-  retval.unadjusted = upper.sim_stats.pf_cap_offset_unadjusted;
   return retval;
 }
 } // namespace
@@ -136,12 +134,11 @@ result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::addr
 TEST_CASE("On a physical cache, an inherited capability is re-pointed at the prefetched line when it is on the trigger's page")
 {
   const champsim::address same_page{trigger_pa + 0x40};                // VA 0x7fff12345e80 -> offset 0xe80
-  const champsim::address other_page{((trigger_pa >> 12) + 1) << 12}; // VA unknown -> trigger's offset, counted
+  const champsim::address other_page{((trigger_pa >> 12) + 1) << 12}; // VA unknown -> trigger's offset, unchanged
   auto res = run_scenario(true, false, {same_page, other_page}, champsim::address{trigger_pa + 0x80});
 
   CHECK(res.tagged_offsets == std::vector<uint64_t>{0xe40, 0xe80});
   CHECK(res.untagged == 1); // the cycle_operate prefetch has no trigger
-  CHECK(res.unadjusted == 1);
 }
 
 TEST_CASE("On a virtual-prefetch cache, an inherited capability is re-pointed at the prefetch VA, even across pages")
@@ -152,7 +149,6 @@ TEST_CASE("On a virtual-prefetch cache, an inherited capability is re-pointed at
 
   CHECK(res.tagged_offsets == std::vector<uint64_t>{0xe80, 0x1040});
   CHECK(res.untagged == 1);
-  CHECK(res.unadjusted == 0);
 }
 
 TEST_CASE("Without inherit_trigger_cap, a no-cap prefetch issued inside cache_operate stays untagged")
@@ -161,5 +157,4 @@ TEST_CASE("Without inherit_trigger_cap, a no-cap prefetch issued inside cache_op
 
   CHECK(res.tagged_offsets.empty());
   CHECK(res.untagged == 2);
-  CHECK(res.unadjusted == 0);
 }

@@ -8,7 +8,6 @@ cache_stats operator-(cache_stats lhs, cache_stats rhs)
   result.pf_useful = lhs.pf_useful - rhs.pf_useful;
   result.pf_useless = lhs.pf_useless - rhs.pf_useless;
   result.pf_fill = lhs.pf_fill - rhs.pf_fill;
-  result.pf_cap_offset_unadjusted = lhs.pf_cap_offset_unadjusted - rhs.pf_cap_offset_unadjusted;
 
   result.hits = lhs.hits - rhs.hits;
   result.misses = lhs.misses - rhs.misses;

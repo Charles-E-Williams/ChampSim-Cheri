@@ -314,9 +314,6 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
       lines.emplace_back("");
     }
 
-    if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos)
-      lines.push_back(fmt::format("cpu{}->{} PREFETCH CAP OFFSET UNADJUSTED: {:10}", cpu, stats.name, stats.pf_cap_offset_unadjusted));
-
     // Prefetch outcomes by the size class of the capability on the prefetch packet (the issuing object), in two tables.
     // Outcomes: accuracy follows Berti (MICRO'22): useful / prefetch fills, where prefetch fills = Filled + Used Late
     // (a late prefetch still brought its line in, although the merged demand took over its MSHR entry) and useful is
