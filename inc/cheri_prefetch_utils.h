@@ -131,12 +131,13 @@ inline bool in_bounds(champsim::address addr, champsim::address base, champsim::
   return (addr.to<uint64_t>() >= base.to<uint64_t>()) && (addr.to<uint64_t>() < top.to<uint64_t>());
 }
 
-// True if any byte of the cache line overlaps [base, top).
+// True if any byte of the cache line overlaps the non-empty object [base, top):
+// line_start < top && line_start + BLOCK_SIZE > base. Shared by prefetch_safe() and CACHE's prefetch-cap re-pointing.
 inline bool overlaps_bounds(champsim::block_number block, champsim::address base, champsim::address top)
 {
-  uint64_t block_start = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
-  uint64_t block_end   = block_start | (BLOCK_SIZE - 1);
-  return (block_start < top.to<uint64_t>()) && (block_end > base.to<uint64_t>());
+  const uint64_t line_start = block.to<uint64_t>() << LOG2_BLOCK_SIZE;
+  const uint64_t line_last = line_start + (BLOCK_SIZE - 1); // line_start + BLOCK_SIZE > base, without overflow
+  return (base.to<uint64_t>() < top.to<uint64_t>()) && (line_start < top.to<uint64_t>()) && (line_last >= base.to<uint64_t>());
 }
 
 // Remaining cache lines from block to the capability bound in the given direction.
@@ -184,11 +185,11 @@ inline bool has_prefetchable_range(const champsim::capability& cap)
            has_prefetchable_range_backward(cap);
 }
 
-// True if issuing a prefetch for pf_addr is safe under cap:
-// tag valid, not sealed, has load permission, and address within bounds.
+// True if issuing a prefetch for pf_addr is safe under cap: load permission, and the cache line containing pf_addr
+// overlaps the object (so the first and last partial lines of an unaligned object are allowed).
 inline bool prefetch_safe(champsim::address pf_addr, const champsim::capability& cap)
 {
-  return in_bounds(pf_addr, cap.base, capability_top(cap)) && has_load_permissions(cap.permissions);
+  return overlaps_bounds(champsim::block_number{pf_addr}, cap.base, capability_top(cap)) && has_load_permissions(cap.permissions);
 }
 
 

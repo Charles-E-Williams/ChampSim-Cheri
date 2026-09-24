@@ -230,20 +230,31 @@ void CACHE::record_useful_prefetch(champsim::stats::event_counter<pf_cap_key>& c
     sim_stats.pf_useful_same_object_by_cap_size.increment(key);
 }
 
-// The triggering access's capability, re-pointed at the prefetched line: offset = prefetch VA - base.
-// Base, length, permissions and tag are unchanged. If the prefetch VA is unknown (physical cache, different
-// physical page than the trigger) or below the base, the trigger's offset is kept and counted.
-champsim::capability CACHE::inherited_prefetch_cap(champsim::address pf_addr)
+// Re-point a prefetch's capability (explicit or inherited) at the prefetched line by changing only its offset;
+// base, length, permissions and tag are unchanged. With line = the cache line containing the prefetch VA:
+//  - the cursor (base + offset) is already inside line: unchanged (e.g. cheri_ptr_chase's pointer capabilities);
+//  - line overlaps the object: offset = max(prefetch VA, base) - base, so the cursor stays inside the object;
+//  - line lies entirely outside the object, or the prefetch VA is unknown: unchanged, counted in pf_cap_offset_unadjusted.
+champsim::capability CACHE::repoint_prefetch_cap(champsim::capability cap, champsim::address pf_addr)
 {
-  auto cap = prefetch_trigger->cap;
   if (!cap.tag)
     return cap;
 
-  auto pf_vaddr = prefetch_vaddr(pf_addr);
+  const auto pf_vaddr = prefetch_vaddr(pf_addr);
+  if (!pf_vaddr.has_value()) {
+    ++sim_stats.pf_cap_offset_unadjusted;
+    return cap;
+  }
 
-  // An offset below the base would wrap, which cheri::capability_cursor() asserts against.
-  if (pf_vaddr.has_value() && pf_vaddr->to<uint64_t>() >= cap.base.to<uint64_t>())
-    cap.offset = champsim::address{pf_vaddr->to<uint64_t>() - cap.base.to<uint64_t>()};
+  const uint64_t va = pf_vaddr->to<uint64_t>();
+  const uint64_t line_start = va & ~static_cast<uint64_t>(BLOCK_SIZE - 1);
+  const uint64_t base = cap.base.to<uint64_t>();
+  const uint64_t cursor = base + cap.offset.to<uint64_t>(); // raw; capability_cursor() would assert on a wrapped offset
+  if (cursor >= line_start && cursor - line_start < BLOCK_SIZE)
+    return cap;
+
+  if (cheri::overlaps_bounds(champsim::block_number{*pf_vaddr}, cap.base, cheri::capability_top(cap)))
+    cap.offset = champsim::address{std::max(va, base) - base};
   else
     ++sim_stats.pf_cap_offset_unadjusted;
 
@@ -765,7 +776,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
-  pf_packet.cap = cap;
+  pf_packet.cap = repoint_prefetch_cap(cap, pf_addr);
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
@@ -787,7 +798,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
-  pf_packet.cap = cap;
+  pf_packet.cap = repoint_prefetch_cap(cap, pf_addr);
   pf_packet.ip = pf_ip;
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
@@ -811,7 +822,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
   if (prefetch_trigger.has_value())
-    pf_packet.cap = inherited_prefetch_cap(pf_addr);
+    pf_packet.cap = repoint_prefetch_cap(prefetch_trigger->cap, pf_addr);
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;

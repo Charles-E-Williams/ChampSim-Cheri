@@ -97,11 +97,23 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **Mechanism:**
     - `CACHE::impl_prefetcher_cache_operate` records the triggering access's `cap` on entry and clears it on exit.
     - The no-cap `CACHE::prefetch_line(addr, fill_this_level, metadata)` attaches that recorded cap to the prefetch packet when it is called inside the hook.
-    - The cap overloads are unaffected. Calls outside `cache_operate` (cycle and fill hooks) still get an untagged cap.
-    - **The inherited cap is re-pointed at the prefetched line.** `offset = prefetch VA - base`, so `capability_cursor()` and `lines_from_cap_base()` at the next level describe the prefetched line, not the trigger. Base, length, permissions and tag are unchanged.
-      - The prefetch VA is `pf_addr` on `virtual_prefetch` caches.
-      - On physical caches, it is the trigger's VA page spliced with `pf_addr`'s page offset, when the prefetch is on the trigger's physical page.
-      - Otherwise, the trigger's offset is kept and counted in the new stat `pf_cap_offset_unadjusted`, which is printed as `PREFETCH CAP OFFSET UNADJUSTED` for L1D/L2C/LLC and included in JSON. This covers a physical prefetch on a different page, and a prefetch below `base`. A negative offset would wrap and trip the overflow assert in `cheri::capability_cursor()`.
+    - Calls outside `cache_operate` (cycle and fill hooks) through the no-cap overload still get an untagged cap.
+    - **Every tagged cap on a prefetch is re-pointed at the prefetched line**, explicit or inherited (`CACHE::repoint_prefetch_cap`, in all three `prefetch_line` overloads).
+      - Why: a prefetch carries its trigger's cap, so the cursor (`base + offset`) points at the trigger's address. At L2C/LLC, CHERI prefetchers train on PREFETCH accesses and derive the position within the object from the cursor (`lines_from_cap_base()`, `capability_cursor()`), and the filled block keeps the cap as `auth_cap` (later `evicted_cap`). An earlier version re-pointed only inherited caps. That was wrong: `ip_stride_cheri`'s lookahead cap and `sms_cheri`'s buffered caps also carry the trigger's cursor.
+      - Only the offset changes; base, length, permissions and tag never do.
+      - The prefetch VA is `pf_addr` on `virtual_prefetch` caches. On physical caches it is the trigger's VA page spliced with `pf_addr`'s page offset, when the prefetch is on the trigger's physical page; this works only inside `cache_operate`.
+      - With `line` = the cache line containing the prefetch VA and the object `[base, base + length)`:
+        - the cursor is already inside `line`: unchanged (covers `cheri_ptr_chase`, whose pointer cap already points at its target);
+        - else `line` overlaps the object: `offset = max(prefetch VA, base) − base`, so the cursor never points outside the object (the first partial line of an unaligned object points at `base`);
+        - else (the line lies entirely outside the object), or the prefetch VA is unknown: the offset is kept and counted in `pf_cap_offset_unadjusted`, printed as `PREFETCH CAP OFFSET UNADJUSTED` for L1D/L2C/LLC and included in JSON.
+      - This replaces the earlier "below `base` is unadjusted" rule.
+      - A prefetch issued with an explicit cap from `prefetcher_cycle_operate` on a physical cache (e.g. `sms_cheri` at L2C) has no known VA, so every one of them counts as unadjusted.
+    - **`cheri::prefetch_safe()` uses the same line-overlap test** through the shared helper `cheri::overlaps_bounds()`: `base < top && line_start < top && line_start + BLOCK_SIZE > base`, plus load permission.
+      - Before, it accepted a prefetch only if its address was inside `[base, top)`, so the first line of an object with an unaligned base was rejected.
+      - `overlaps_bounds()` had no callers. Its old form also had an off-by-one (`block_end > base` with an inclusive `block_end`), fixed by the shared formula.
+      - Callers (their behaviour at object edges changes): `next_line_cheri.cc:17`, `ip_stride_cheri.cc:73`, `ip_stride_cheri_dynamic.cc:91`, `spp_cheri.cc:98`, `ampm_cheri_aux.cc:115`, `ipcp_cheri.cc:96, :208, :229, :257, :277`, `berti_cheri.cc:1052`.
+    - `cheri::hash_capability()` hashes only `base` and `length`, so re-pointing does not change it.
+    - Test: `438-cheri-prefetch-cap-repoint.cc`.
   - **Why:** every CHERI prefetcher issued through the no-cap overload, so every prefetch packet was untagged. At L2C/LLC, `prefetch_activate` is `LOAD,PREFETCH`, so every PREFETCH access there reached the prefetcher untagged and hit the untagged-cap early return. CHERI prefetchers at L2C/LLC therefore never trained on L1D (or L2C) prefetches. The fill's `cap` and `BLOCK::auth_cap` of prefetched lines were untagged for the same reason.
   - **Enabled** at L1D, L2C and LLC in all `champsim_cheri_*` configs. It stays off (the default) in `champsim_config.json`, `champsim_no_pf_config.json` and all `champsim_riscv_*` configs, and at L1I everywhere, so baseline runs are unchanged. Stock and third-party prefetchers were not edited.
   - **Cycle-hook issuers** now keep the triggering cap with each buffered candidate and use the cap overload:

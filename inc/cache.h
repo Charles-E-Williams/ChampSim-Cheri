@@ -155,7 +155,7 @@ private:
   champsim::address module_vaddress(const T& element) const;
 
   auto matches_address(champsim::address address) const;
-  champsim::capability inherited_prefetch_cap(champsim::address pf_addr);
+  champsim::capability repoint_prefetch_cap(champsim::capability cap, champsim::address pf_addr);
   [[nodiscard]] std::optional<champsim::address> prefetch_vaddr(champsim::address pf_addr) const;
   void record_prefetch_issue(tag_lookup_type& pf_entry, bool fill_this_level);
   void record_useful_prefetch(champsim::stats::event_counter<pf_cap_key>& counter, cap_size_coverage_events pf_class, champsim::address pf_base,
