@@ -22,6 +22,7 @@
 // special registers that help us identify branches
 namespace champsim
 {
+constexpr char REG_RETURN = 1;
 constexpr char REG_STACK_POINTER = 6;
 constexpr char REG_FLAGS = 25;
 constexpr char REG_INSTRUCTION_POINTER = 26;
@@ -65,5 +66,37 @@ struct cloudsuite_instr {
   unsigned char asid[2];
 };
 // NOLINTEND(cppcoreguidelines-avoid-c-arrays,modernize-avoid-c-arrays)
+
+struct cheri_instr {
+  // instruction pointer or PC (Program Counter)
+  unsigned long long ip;
+
+  // branch info
+  unsigned char is_branch;
+  unsigned char branch_taken;
+
+  unsigned char destination_registers[NUM_INSTR_DESTINATIONS]; // output registers
+  unsigned char source_registers[NUM_INSTR_SOURCES];           // input registers
+
+  unsigned long long destination_memory[NUM_INSTR_DESTINATIONS]; // output memory
+  unsigned long long source_memory[NUM_INSTR_SOURCES];           // input memory
+
+  // Authorizing capability
+  unsigned long long auth_base;
+  unsigned long long auth_length;
+  unsigned long long auth_offset;
+  unsigned auth_perms;
+  unsigned char auth_tag;
+
+  // Transferred capability (cap load/store payload)
+  unsigned long long cap_base;
+  unsigned long long cap_length;
+  unsigned long long cap_offset;
+  unsigned cap_perms;
+  unsigned char cap_tag;
+
+  // What's present (bitmask)
+  unsigned char cap_op;
+};
 
 #endif

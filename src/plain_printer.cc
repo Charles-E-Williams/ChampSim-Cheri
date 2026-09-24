@@ -119,11 +119,202 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     lines.push_back(fmt::format("cpu{}->{} PREFETCH REQUESTED: {:10} ISSUED: {:10} USEFUL: {:10} USELESS: {:10}", cpu, stats.name, stats.pf_requested,
                                 stats.pf_issued, stats.pf_useful, stats.pf_useless));
 
+
+    // CHERI capability distributions — only for data-path caches/TLBs
+    auto should_print_cheri = [](const std::string& name) {
+      for (const auto* suffix : {"L1D", "L2C", "LLC", "DTLB", "STLB"}) {
+        if (name.find(suffix) != std::string::npos)
+          return true;
+      }
+      return false;
+    };
+
+    if (should_print_cheri(stats.name)) {
+
+      auto has_auth_data = [&](access_type type, std::size_t cpu_id) {
+        for (auto b : cap_size_coverage_events_all) {
+          if (stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
+          if (stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
+        }
+        return false;
+      };
+
+      auto has_cap = [&](access_type type, std::size_t cpu_id) {
+        for (auto b : cap_size_coverage_events_all) {
+          if (stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
+          if (stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu_id}, 0L) > 0) return true;
+        }
+        return false;
+      };
+
+      auto pct_str = [](long count, long total) -> std::string {
+        if (total == 0) return fmt::format("{:>6s}", "-");
+        return fmt::format("{:5.1f}%", 100.0 * static_cast<double>(count) / static_cast<double>(total));
+      };
+
+      bool any_cap_printed = false;
+
+      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE, access_type::TRANSLATION} ) {
+        if (!has_auth_data(type, cpu))
+          continue;
+
+        long hit_total = 0, miss_total = 0;
+        for (auto b : cap_size_coverage_events_with_untagged) {
+          hit_total  += stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          miss_total += stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+        }
+
+
+        if (!any_cap_printed) {
+          lines.emplace_back("");
+          lines.push_back(fmt::format("{} — CHERI Capability Distributions", stats.name));
+          any_cap_printed = true;
+        }
+
+        std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+        lines.emplace_back("");
+        lines.push_back(fmt::format("  Authority Capability - {} ({} hits, {} misses)", type_name, hit_total, miss_total));
+        lines.push_back(fmt::format("  {:<16s}  {:>10s} {:>11s}  {:>11s} {:>13s}", "Object Size", "Hits", "Misses", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<73s}", ""));
+
+        for (auto b : cap_size_coverage_events_with_untagged) {
+          auto idx = static_cast<std::size_t>(b);
+          long hit = stats.cap_auth_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long miss = stats.cap_auth_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+
+          if (hit + miss == 0)
+            continue;
+
+          lines.push_back(fmt::format("  {:<16s} {:10d} {:11d} {:>11s}  {:>13s}",
+              cap_size_coverage_events_names.at(idx),
+              hit,
+              miss,
+              pct_str(hit, hit_total),
+              pct_str(miss, miss_total)));
+        }
+      }
+
+      for (const auto type : {access_type::LOAD, access_type::RFO, access_type::WRITE}) {
+        if (!has_cap(type, cpu))
+          continue;
+
+        long hit_total = 0, miss_total = 0;
+        for (auto b : cap_size_coverage_events_with_untagged) {
+          hit_total  += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          miss_total += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+        }
+
+        if (hit_total + miss_total == 0)
+          continue;
+
+        long tagged_hits = 0, tagged_misses = 0;
+        for (auto b : cap_size_coverage_events_all) {
+          tagged_hits   += stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          tagged_misses += stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+        }
+
+        if (!any_cap_printed) {
+          lines.emplace_back("");
+          lines.push_back(fmt::format("{} — CHERI Capability Distributions", stats.name));
+          any_cap_printed = true;
+        }
+
+        std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+        lines.emplace_back("");
+        lines.push_back(fmt::format("  Capability — {} ({} hits, {} misses)", type_name, hit_total, miss_total));
+        double tagged_pct = (hit_total + miss_total > 0)
+            ? 100.0 * static_cast<double>(tagged_hits + tagged_misses) / static_cast<double>(hit_total + miss_total)
+            : 0.0;
+        lines.push_back(fmt::format("  Tagged Access Rate {:.1f}% ({} tagged, {} untagged)",
+            tagged_pct, tagged_hits + tagged_misses,
+            (hit_total + miss_total) - (tagged_hits + tagged_misses)));
+        lines.push_back(fmt::format("  {:<16s}  {:>10s} {:>11s}  {:>11s} {:>13s}",
+            "Pointer Size", "Hits", "Misses", "% of Hits", "% of Misses"));
+        lines.push_back(fmt::format("  {:-<73s}", ""));
+
+        for (auto b : cap_size_coverage_events_with_untagged) {
+          auto idx = static_cast<std::size_t>(b);
+          long hit = stats.cap_data_hits.value_or(cap_dist_key{b, type, cpu}, 0L);
+          long miss = stats.cap_data_misses.value_or(cap_dist_key{b, type, cpu}, 0L);
+
+          if (hit + miss == 0)
+            continue;
+
+          lines.push_back(fmt::format("  {:<16s} {:10d} {:11d} {:>11s}  {:>13s}",
+              cap_size_coverage_events_names.at(idx),
+              hit,
+              miss,
+              pct_str(hit, hit_total),
+              pct_str(miss, miss_total)));
+        }
+      }
+      if (any_cap_printed)
+        lines.emplace_back("");
+    }
+
+    auto should_print_cl_caps = [](const std::string& name) {
+      for (const auto* suffix : {"L1D", "L2C", "LLC"}) {
+        if (name.find(suffix) != std::string::npos)
+          return true;
+      }
+      return false;
+    };
+
+    if (should_print_cl_caps(stats.name)) {
+      for (const auto type : {access_type::LOAD, access_type::WRITE, access_type::PREFETCH}) {
+        uint64_t cl_hit_total = 0;
+        std::array<uint64_t, 5> cl_hit_counts{};
+        for (unsigned i = 0; i <= 4; i++) {
+          cl_hit_counts[i] = stats.capabilities_per_cl_hit.value_or(cl_cap_key{i, type, cpu}, 0L);
+          cl_hit_total += cl_hit_counts[i];
+        }
+
+        uint64_t cl_miss_total = 0;
+        std::array<uint64_t, 5> cl_miss_counts{};
+        for (unsigned i = 0; i <= 4; i++) {
+          cl_miss_counts[i] = stats.capabilities_per_cl_miss.value_or(cl_cap_key{i, type, cpu}, 0L);
+          cl_miss_total += cl_miss_counts[i];
+        }
+
+        if (cl_hit_total == 0 && cl_miss_total == 0)
+          continue;
+
+        std::string type_name{access_type_names.at(champsim::to_underlying(type))};
+        lines.emplace_back("");
+
+        if (cl_hit_total > 0) {
+          double avg_hit = static_cast<double>(
+              cl_hit_counts[1] + 2*cl_hit_counts[2] + 3*cl_hit_counts[3] + 4*cl_hit_counts[4])
+              / static_cast<double>(cl_hit_total);
+          lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Hit (avg {:.2f})", type_name, avg_hit));
+          for (unsigned i = 0; i <= 4; i++) {
+            if (cl_hit_counts[i] > 0)
+              lines.push_back(fmt::format("    {} capabilities: {:10d} ({:5.1f}%)", i,
+                  cl_hit_counts[i],
+                  100.0 * static_cast<double>(cl_hit_counts[i]) / static_cast<double>(cl_hit_total)));
+          }
+        }
+
+        if (cl_miss_total > 0) {
+          double avg_miss = static_cast<double>(
+              cl_miss_counts[1] + 2*cl_miss_counts[2] + 3*cl_miss_counts[3] + 4*cl_miss_counts[4])
+              / static_cast<double>(cl_miss_total);
+          lines.push_back(fmt::format("  Capabilities Per Cache Line — {} Miss (avg {:.2f})", type_name, avg_miss));
+          for (unsigned i = 0; i <= 4; i++) {
+            if (cl_miss_counts[i] > 0)
+              lines.push_back(fmt::format("    {} capabilities: {:10d} ({:5.1f}%)", i,
+                  cl_miss_counts[i],
+                  100.0 * static_cast<double>(cl_miss_counts[i]) / static_cast<double>(cl_miss_total)));
+          }
+        }
+      }
+      lines.emplace_back("");
+    }
+
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});
     lines.push_back(
         fmt::format("cpu{}->{} AVERAGE MISS LATENCY: {} cycles", cpu, stats.name, ::print_ratio(stats.total_miss_latency_cycles, total_downstream_demands)));
   }
-
   return lines;
 }
 

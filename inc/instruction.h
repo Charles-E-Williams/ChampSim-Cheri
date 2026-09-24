@@ -24,11 +24,13 @@
 #include <limits>
 #include <string_view>
 #include <vector>
+#include <iostream>
 
 #include "address.h"
 #include "champsim.h"
 #include "chrono.h"
 #include "trace_instruction.h"
+#include "cheri.h"
 
 // branch types
 enum branch_type {
@@ -37,7 +39,7 @@ enum branch_type {
   BRANCH_CONDITIONAL,
   BRANCH_DIRECT_CALL,
   BRANCH_INDIRECT_CALL,
-  BRANCH_RETURN,
+  BRANCH_RETURN,     
   BRANCH_OTHER,
   NOT_BRANCH
 };
@@ -105,6 +107,12 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
 
+  
+  champsim::capability auth_cap{};
+  champsim::capability transferred_cap{};
+  champsim::cap_op_type cap_op{champsim::cap_op_type::NONE};
+  bool is_presimpoint = false;
+
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};
 
@@ -130,7 +138,10 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
 
 private:
   template <typename T>
-  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid) : ip(instr.ip), is_branch(instr.is_branch), branch_taken(instr.branch_taken), asid(local_asid)
+  ooo_model_instr(T instr, std::array<uint8_t, 2> local_asid, champsim::capability auth, champsim::capability transferred, champsim::cap_op_type op)
+      : ip(instr.ip), is_branch(instr.is_branch), asid(local_asid),
+        auth_cap(auth), transferred_cap(transferred), cap_op(op),
+        is_presimpoint(champsim::is_presimpoint(op))
   {
     std::remove_copy(std::begin(instr.destination_registers), std::end(instr.destination_registers), std::back_inserter(this->destination_registers), 0);
     std::remove_copy(std::begin(instr.source_registers), std::end(instr.source_registers), std::back_inserter(this->source_registers), 0);
@@ -146,54 +157,80 @@ private:
     bool reads_sp = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_STACK_POINTER);
     bool reads_flags = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_FLAGS);
     bool reads_ip = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_INSTRUCTION_POINTER);
+    bool reads_ra = std::count(std::begin(source_registers), std::end(source_registers), champsim::REG_RETURN);
+    bool writes_ra = std::count(std::begin(destination_registers), std::end(destination_registers), champsim::REG_RETURN);
+
+
     bool reads_other = std::count_if(std::begin(source_registers), std::end(source_registers), [](uint8_t r) {
-      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER;
+      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER && r != champsim::REG_RETURN; 
+    });
+    bool writes_other = std::count_if(std::begin(destination_registers), std::end(destination_registers), [](uint8_t r) {
+      return r != champsim::REG_STACK_POINTER && r != champsim::REG_FLAGS && r != champsim::REG_INSTRUCTION_POINTER && r != champsim::REG_RETURN; 
     });
 
+
     // determine what kind of branch this is, if any
-    if (!reads_sp && !reads_flags && writes_ip && !reads_other) {
-      // direct jump
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_DIRECT_JUMP;
-    } else if (!reads_sp && !reads_ip && !reads_flags && writes_ip && reads_other) {
-      // indirect branch
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_INDIRECT;
+    if (!reads_sp && !reads_flags && writes_ip && !reads_other && !reads_ip) {
+        // direct jump
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_DIRECT_JUMP;
+    } else if (!reads_sp && !reads_ip && !reads_flags && writes_ip && reads_other && !writes_other) {
+        // indirect branch
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_INDIRECT;
     } else if (!reads_sp && reads_ip && !writes_sp && writes_ip && (reads_flags || reads_other)) {
-      // conditional branch
-      is_branch = true;
-      branch_taken = instr.branch_taken; // don't change this
-      branch = BRANCH_CONDITIONAL;
-    } else if (reads_sp && reads_ip && writes_sp && writes_ip && !reads_flags && !reads_other) {
-      // direct call
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_DIRECT_CALL;
-    } else if (reads_sp && reads_ip && writes_sp && writes_ip && !reads_flags && reads_other) {
-      // indirect call
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_INDIRECT_CALL;
-    } else if (reads_sp && !reads_ip && writes_sp && writes_ip) {
-      // return
-      is_branch = true;
-      branch_taken = true;
-      branch = BRANCH_RETURN;
+        // conditional branch
+        is_branch = true;
+        branch_taken = instr.branch_taken;
+        branch = BRANCH_CONDITIONAL;
+    } else if (writes_ip && reads_ip && !reads_flags && !reads_other && !reads_ra && ((reads_sp && writes_sp) || (writes_ra || writes_other)))  {
+        // direct call
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_DIRECT_CALL;
+    } else if (writes_ip && reads_ip && !reads_flags && (reads_ra || reads_other) && ((reads_sp && writes_sp) || (writes_ra || writes_other))){
+        // indirect call
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_INDIRECT_CALL;
+    } else if (writes_ip && !reads_ip && ((reads_sp && writes_sp) || (reads_ip && reads_ra && !writes_other && !reads_sp))) {
+        // return
+        is_branch = true;
+        branch_taken = true;
+        branch = BRANCH_RETURN;
     } else if (writes_ip) {
-      // some other branch type that doesn't fit the above categories
-      is_branch = true;
-      branch_taken = instr.branch_taken; // don't change this
-      branch = BRANCH_OTHER;
+        // some other branch type that doesn't fit the above categories
+        is_branch = true;
+        branch_taken = instr.branch_taken; // don't change this
+        branch = BRANCH_OTHER;
     } else {
-      branch_taken = false;
+        branch_taken = false;
     }
+
   }
 
 public:
-  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}) {}
-  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}) {}
+  ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}, champsim::capability{}, champsim::capability{}, champsim::cap_op_type::NONE) {}
+  ooo_model_instr(uint8_t /*cpu*/, cloudsuite_instr instr) : ooo_model_instr(instr, {instr.asid[0], instr.asid[1]}, champsim::capability{}, champsim::capability{}, champsim::cap_op_type::NONE) {}
+  ooo_model_instr(uint8_t cpu, cheri_instr instr) : ooo_model_instr(instr, {cpu,cpu}, 
+          champsim::capability{
+              champsim::address{instr.auth_offset},
+              champsim::address{instr.auth_base},
+              champsim::address{instr.auth_length},
+              instr.auth_perms,
+              static_cast<bool>(instr.auth_tag)
+          },
+          champsim::capability{
+              champsim::address{instr.cap_offset},
+              champsim::address{instr.cap_base},
+              champsim::address{instr.cap_length},
+              instr.cap_perms,
+              static_cast<bool>(instr.cap_tag)
+          },
+          static_cast<champsim::cap_op_type>(instr.cap_op)
+  ) {}
 
   [[nodiscard]] std::size_t num_mem_ops() const { return std::size(destination_memory) + std::size(source_memory); }
 };

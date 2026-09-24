@@ -153,6 +153,21 @@ public:
     }
   }
 
+  void fill(const value_type& elem, value_type& evic) {
+    auto tag = tag_projection(elem);
+    auto [set_begin, set_end] = get_set_span(elem);
+    if (set_begin != set_end) {
+      auto [miss, hit] = std::minmax_element(set_begin, set_end, match_and_check(tag));
+
+      if (tag_projection(hit->data) == tag) {
+        *hit = {++access_count, elem};
+      } else {
+        evic = miss->data;
+        *miss = {++access_count, elem};
+      }
+    }
+  }
+
   std::optional<value_type> invalidate(const value_type& elem)
   {
     auto [set_begin, set_end] = get_set_span(elem);
@@ -163,6 +178,16 @@ public:
     }
 
     return std::exchange(*hit, {}).data;
+  }
+
+  void flush() {
+    for (auto &b : block) {
+      b.last_used = 0;
+    }
+  }
+
+  block_vec_type get_contents() {
+    return(block);
   }
 
   lru_table(std::size_t sets, std::size_t ways, SetProj set_proj, TagProj tag_proj)

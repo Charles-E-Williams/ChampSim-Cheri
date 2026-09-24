@@ -26,6 +26,7 @@
 
 #include "instruction.h"
 #include "util/detect.h"
+#include "capability_memory.h"
 
 namespace champsim
 {
@@ -87,6 +88,8 @@ class bulk_tracereader
   constexpr static std::size_t buffer_size = 128;
   constexpr static std::size_t refresh_thresh = 1;
   std::deque<ooo_model_instr> instr_buffer;
+  bool presimpoint_done = false;
+  uint64_t presimpoint_count = 0;
 
 public:
   ooo_model_instr operator()();
@@ -110,27 +113,59 @@ void set_branch_targets(It begin, It end)
 template <typename T, typename F>
 ooo_model_instr bulk_tracereader<T, F>::operator()()
 {
-  if (std::size(instr_buffer) <= refresh_thresh) {
+  while (std::size(instr_buffer) <= refresh_thresh) {
     std::array<T, buffer_size - refresh_thresh> trace_read_buf;
     std::array<char, std::size(trace_read_buf) * sizeof(T)> raw_buf;
     std::size_t bytes_read;
 
-    // Read from trace file
     trace_file.read(std::data(raw_buf), std::size(raw_buf));
     bytes_read = static_cast<std::size_t>(trace_file.gcount());
     eof_ = trace_file.eof();
 
-    // Transform bytes into trace format instructions
     std::memcpy(std::data(trace_read_buf), std::data(raw_buf), bytes_read);
 
-    // Inflate trace format into core model instructions
     auto begin = std::begin(trace_read_buf);
     auto end = std::next(begin, bytes_read / sizeof(T));
-    std::transform(begin, end, std::back_inserter(instr_buffer), [cpu = this->cpu](T t) { return ooo_model_instr{cpu, t}; });
 
-    // Set branch targets
-    set_branch_targets(std::begin(instr_buffer), std::end(instr_buffer));
+
+    for (auto it = begin; it != end; ++it) {
+      if constexpr (std::is_same_v<T, cheri_instr>) {
+          if (it->cap_op == static_cast<unsigned char>(champsim::cap_op_type::PRESIMPOINT)) {
+              if (!champsim::cap_mem[cpu].is_finalized()) {
+                  for (const auto& dmem : it->destination_memory) {
+                      if (dmem == 0) continue;
+                      champsim::capability cap{
+                          champsim::address{it->cap_offset},
+                          champsim::address{it->cap_base},
+                          champsim::address{it->cap_length},
+                          it->cap_perms,
+                          static_cast<bool>(it->cap_tag)
+                      };
+                      if (cap.tag)
+                          champsim::cap_mem[cpu].store_capability(champsim::address{dmem}, cap);
+                      else
+                          champsim::cap_mem[cpu].invalidate_tag(champsim::address{dmem});
+                  }
+              }
+              presimpoint_count++;
+              continue;
+          }
+
+          if (!presimpoint_done) {
+              presimpoint_done = true;
+              champsim::cap_mem[cpu].finalize();
+              fmt::print("[TRACE] CPU {} presimpoint phase complete: {} entries processed, "
+                        "cap_mem size: {}\n", cpu, presimpoint_count, champsim::cap_mem[cpu].size());
+          }
+      }
+      instr_buffer.push_back(ooo_model_instr{cpu, *it});
+    }
+
+    if (eof_) break;
   }
+
+  // Set branch targets on whatever we accumulated
+  set_branch_targets(std::begin(instr_buffer), std::end(instr_buffer));
 
   auto retval = instr_buffer.front();
   instr_buffer.pop_front();
@@ -141,6 +176,6 @@ ooo_model_instr bulk_tracereader<T, F>::operator()()
 std::string get_fptr_cmd(std::string_view fname);
 } // namespace champsim
 
-champsim::tracereader get_tracereader(const std::string& fname, uint8_t cpu, bool is_cloudsuite, bool repeat);
+champsim::tracereader get_tracereader(const std::string& fname, uint8_t cpu, bool is_cloudsuite, bool is_cheri, bool repeat);
 
 #endif

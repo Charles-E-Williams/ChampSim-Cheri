@@ -61,6 +61,8 @@ class PageTableWalker : public champsim::operable
     uint32_t pf_metadata = 0;
     uint32_t cpu = std::numeric_limits<uint32_t>::max();
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
+    champsim::capability cap{};
+
 
     std::size_t translation_level = 0;
 

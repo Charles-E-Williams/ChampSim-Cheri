@@ -18,19 +18,24 @@
 #define BLOCK_H
 
 #include "champsim.h"
+#include "cheri.h"
 
 namespace champsim
 {
+
 struct cache_block {
   bool valid = false;
   bool prefetch = false;
   bool dirty = false;
+  uint32_t cpu = 0;
 
   champsim::address address{};
   champsim::address v_address{};
   champsim::address data{};
+  champsim::capability auth_cap{};
 
   uint32_t pf_metadata = 0;
+  
 };
 } // namespace champsim
 

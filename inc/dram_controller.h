@@ -103,6 +103,8 @@ struct DRAM_CHANNEL final : public champsim::operable {
 
     uint32_t pf_metadata = 0;
 
+    champsim::capability cap{};
+    
     champsim::address address{};
     champsim::address v_address{};
     champsim::address data{};
