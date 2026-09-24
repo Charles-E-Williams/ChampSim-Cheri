@@ -83,7 +83,6 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 - Upstream `master` links `libCLI11`. Run `./vcpkg/bootstrap-vcpkg.sh && ./vcpkg/vcpkg install` after `git submodule update --init`.
 
 ## Known issues (intentionally not changed)
-- **`champsim_cheri_config.json` is broken.** It selects L2C prefetcher `kratos`, which was deleted in `ed9b7113`, so `config.sh` fails on it. It was already broken on the old fork.
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
 - **Untagged-cap warning floods stock traces.** `execute_load` and `do_complete_store` print a warning for every access with an untagged authority cap.
 - **Order-dependent side channels.** `CACHE::v_addr` and `vaddr_evicted` are written in `try_hit`/`handle_fill` and read by prefetchers.
