@@ -16,7 +16,8 @@ TEST_CASE("An empty core stats prints zero")
                                     "BRANCH_CONDITIONAL: -",
                                     "BRANCH_DIRECT_CALL: -",
                                     "BRANCH_INDIRECT_CALL: -",
-                                    "BRANCH_RETURN: -"};
+                                    "BRANCH_RETURN: -",
+                                    "test_cpu UNTAGGED AUTHORITY CAPABILITY LOADS: 0 STORES: 0"};
 
   REQUIRE_THAT(champsim::plain_printer::format(given), Catch::Matchers::RangeEquals(expected));
 }
@@ -38,7 +39,8 @@ TEST_CASE("The number of instructions and cycles modifies the IPC")
                                     "BRANCH_CONDITIONAL: 0",
                                     "BRANCH_DIRECT_CALL: 0",
                                     "BRANCH_INDIRECT_CALL: 0",
-                                    "BRANCH_RETURN: 0"};
+                                    "BRANCH_RETURN: 0",
+                                    "test_cpu UNTAGGED AUTHORITY CAPABILITY LOADS: 0 STORES: 0"};
 
   REQUIRE_THAT(champsim::plain_printer::format(given), Catch::Matchers::RangeEquals(expected));
 }
@@ -69,7 +71,8 @@ TEST_CASE("The number of mispredictions modifies the MPKI")
                                     "BRANCH_CONDITIONAL: 0",
                                     "BRANCH_DIRECT_CALL: 0",
                                     "BRANCH_INDIRECT_CALL: 0",
-                                    "BRANCH_RETURN: 0"};
+                                    "BRANCH_RETURN: 0",
+                                    "test_cpu UNTAGGED AUTHORITY CAPABILITY LOADS: 0 STORES: 0"};
   expected.at(line_index) = expected_line;
 
   REQUIRE_THAT(champsim::plain_printer::format(given), Catch::Matchers::RangeEquals(expected));
@@ -97,7 +100,8 @@ TEST_CASE("The ROB occupancy modifies the flush penalty")
                                     "BRANCH_CONDITIONAL: 0",
                                     "BRANCH_DIRECT_CALL: 0",
                                     "BRANCH_INDIRECT_CALL: 0",
-                                    "BRANCH_RETURN: 0"};
+                                    "BRANCH_RETURN: 0",
+                                    "test_cpu UNTAGGED AUTHORITY CAPABILITY LOADS: 0 STORES: 0"};
 
   REQUIRE_THAT(champsim::plain_printer::format(given), Catch::Matchers::RangeEquals(expected));
 }

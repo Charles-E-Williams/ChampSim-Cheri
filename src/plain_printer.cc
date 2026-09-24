@@ -62,6 +62,8 @@ std::vector<std::string> champsim::plain_printer::format(O3_CPU::stats_type stat
                                 ::print_ratio(std::kilo::num * stats.branch_type_misses.value_or(idx, 0), stats.instrs())));
   }
 
+  lines.push_back(fmt::format("{} UNTAGGED AUTHORITY CAPABILITY LOADS: {} STORES: {}", stats.name, stats.untagged_auth_loads, stats.untagged_auth_stores));
+
   return lines;
 }
 

@@ -110,9 +110,14 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **`cheri_ptr_chase`** targets a different object than the trigger, so it never inherits. All three call sites (the target in `cache_operate`, `pct_chase`, and `prefetcher_cache_fill`) pass the chased pointer's own capability through the cap overload. `ptr_map` entries now store that capability alongside the target address.
   - Test: `435-cheri-inherit-trigger-cap.cc`.
 
+- **Untagged-authority warnings are rate-limited.**
+  - `execute_load` and `do_complete_store` now print their `[OOO_CPU] WARNING: ... missing tagged authority capability` message once per CPU, the first time each occurs; the text is unchanged.
+  - Every occurrence is counted in `cpu_stats::untagged_auth_loads` and `untagged_auth_stores`. These are printed per core as `cpuN UNTAGGED AUTHORITY CAPABILITY LOADS: x STORES: y`, and included in JSON.
+  - Like the other core stats, the counters reset at each phase, so the final (ROI) numbers exclude warmup.
+  - Test `198-core-plain-printer.cc` expects the new line.
+
 ## Known issues (intentionally not changed)
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
-- **Untagged-cap warning floods stock traces.** `execute_load` and `do_complete_store` print a warning for every access with an untagged authority cap.
 - **Order-dependent side channels.** `CACHE::v_addr` and `vaddr_evicted` are written in `try_hit`/`handle_fill` and read by prefetchers.
 - **Hardcoded constants.** The caps-per-cache-line loops in `cache.cc` use `4` and `16` instead of `cheri::CAPS_PER_CL` / the alignment constant; the pattern is repeated three times.
 - **`cache_stats` `operator-`** does not subtract `miss_merge`/`fill`. This matches upstream behaviour.

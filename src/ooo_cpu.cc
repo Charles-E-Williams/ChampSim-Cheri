@@ -17,6 +17,7 @@
 #include "ooo_cpu.h"
 
 #include <algorithm>
+#include <utility>
 #include <chrono>
 #include <cmath>
 #include <numeric>
@@ -596,8 +597,11 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
   data_packet.ip = sq_entry.ip;
   data_packet.cap = sq_entry.auth_cap;  
 
-  if(!data_packet.cap.tag) 
-    fmt::print("[OOO_CPU] WARNING: Store Instruction missing tagged authority capability. This is a problem with your trace.\n"); 
+  if (!data_packet.cap.tag) {
+    ++sim_stats.untagged_auth_stores;
+    if (!std::exchange(warned_untagged_auth_store, true))
+      fmt::print("[OOO_CPU] WARNING: Store Instruction missing tagged authority capability. This is a problem with your trace.\n");
+  }
 
   if constexpr (champsim::debug_print) {
     fmt::print("[SQ] {} instr_id: {} vaddr: {}\n", __func__, data_packet.instr_id, data_packet.v_address);
@@ -619,8 +623,11 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.ip = lq_entry.ip;
   data_packet.cap = lq_entry.auth_cap;  
 
-  if(!data_packet.cap.tag) 
-    fmt::print("[OOO_CPU] WARNING: Load Instruction missing tagged authority capability. This is a problem with your trace.\n"); 
+  if (!data_packet.cap.tag) {
+    ++sim_stats.untagged_auth_loads;
+    if (!std::exchange(warned_untagged_auth_load, true))
+      fmt::print("[OOO_CPU] WARNING: Load Instruction missing tagged authority capability. This is a problem with your trace.\n");
+  }
 
 
   if constexpr (champsim::debug_print) {

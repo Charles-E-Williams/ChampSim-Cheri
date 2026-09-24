@@ -109,6 +109,10 @@ public:
 
   stats_type roi_stats{}, sim_stats{};
 
+  // The untagged-authority warnings are printed once each; every occurrence is counted in the stats
+  bool warned_untagged_auth_load = false;
+  bool warned_untagged_auth_store = false;
+
   // instruction buffer
   struct dib_shift {
     champsim::data::bits shamt;
