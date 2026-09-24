@@ -29,7 +29,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 | Area | Files | Change |
 |---|---|---|
 | Capability type | `inc/cheri.h` | `champsim::capability {offset, base, length, permissions, tag}`, `cap_op_type {NONE, AUTH, TRANSFERRED, BOTH, PRESIMPOINT}` |
-| Trace format | `inc/trace_instruction.h` | `cheri_instr`: 128 bytes, layout pinned by `static_assert`s. This is a binary contract with the CHERI-QEMU tracer and `cheri-trace-filter`. |
+| Trace format | `inc/trace_instruction.h` | `cheri_instr`: 128 bytes. This is a binary contract with the CHERI-QEMU tracer and `cheri-trace-filter`. |
 | Instruction | `inc/instruction.h` | `auth_cap`, `transferred_cap`, `cap_op`, `is_presimpoint`, and a `cheri_instr` constructor |
 | Trace reader | `inc/tracereader.h`, `src/tracereader.cc` | PRESIMPOINT entries write `cap_mem` and are never emitted as instructions. They are skipped once `cap_mem` is finalized, i.e. after a trace wrap. The first non-presimpoint entry finalizes `cap_mem` and prints `[TRACE] ... presimpoint phase complete`. |
 | CLI | `src/main.cc` | `-p/--cheri-purecap`. `initialize_capability_memory(NUM_CPUS)` is always called. |
@@ -38,7 +38,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 | Packets | `inc/channel.h` | `request.cap`, `response.cap`, a 6-arg `response` constructor. The upstream 5-arg constructor is kept. |
 | Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. (The fork's `CACHE::v_addr` / `vaddr_evicted` side-channel members were removed after the port.) |
 | DRAM | `src/dram_controller.cc` | `cap` passes through responses. |
-| Stats | `inc/cache_stats.h`, `src/cache_stats.cc`, `src/plain_printer.cc` | `cap_auth_*` and `cap_data_*` hit/miss by size class; `capabilities_per_cl_{hit,miss}`. Plain text only. Downstream plot scripts parse this format, so do not change it. |
+| Stats | `inc/cache_stats.h`, `src/cache_stats.cc`, `src/plain_printer.cc` | `cap_auth_*` and `cap_data_*` hit/miss by size class; `capabilities_per_cl_{hit,miss}`. Plain text only (original CHERI distributions). Downstream plot scripts parse this format, so do not change it. |
 | Utilities | `inc/cheri_prefetch_utils.h` | Permission bits, `CAPS_PER_CL`, `TLBClone`, bounds helpers |
 | Misc | `inc/msl/lru_table.h`, `inc/ptw.h`, `src/ptw.cc`, `src/vmem.cc`, `inc/register_allocator.h`, `inc/champsim.h`, `src/modules.cc`, `Makefile` | Small supporting edits. `REG_RETURN` was added for RISC-V branches. |
 
@@ -52,6 +52,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 - The `champsim_{cheri,riscv}_*_config.json` and `champsim_no_pf_config.json` files, `scripts/build_all.sh`, and `scripts/update_configs.py`.
 - Upstream's `champsim_config.json`, which the old fork had deleted, is restored.
 - The QEMU trace converters that used to live under `tracer/` were removed in `fb661361`, because QEMU now emits ChampSim traces directly.
+- `champsim_cheri_config.json` was repaired in `208c54e6`. It had been broken since the `kratos` prefetcher was deleted in April 2026 (`ed9b7113`): its L2C prefetcher still named `kratos`, so `config.sh` rejected it. The L2C prefetcher is now `no`.
 
 ## Design timeline (commit dates)
 - **2025-04 to 2025-09:** QEMU tracer and converters, RISC-V branch handling, first capability-aware trace format (`b2914368`, 2025-09-02).
@@ -79,7 +80,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - `090-capability-memory.cc`: finalize idempotence, and store/invalidate/load after finalize.
   - `433-cheri-capability-hooks.cc`: the demand `cap` reaches `cache_operate` at two chained levels, and the victim's `auth_cap` reaches `cache_fill` as `evicted_cap`.
   - `453-va-ampm-lite-behavior.cc` was updated to call the extended `impl_prefetcher_*` signatures.
-  - `static_assert`s in `inc/trace_instruction.h` pin the `cheri_instr` layout.
+  - `static_assert`s pinning the `cheri_instr` layout were added to `inc/trace_instruction.h` with the port and later removed.
 - Upstream `master` links `libCLI11`. Run `./vcpkg/bootstrap-vcpkg.sh && ./vcpkg/vcpkg install` after `git submodule update --init`.
 
 ## Behaviour changes after the port (2026-09)
