@@ -338,8 +338,8 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
           return fmt::format("{:8.1f}%", 100.0 * static_cast<double>(num) / static_cast<double>(denom));
         };
         lines.push_back(fmt::format("cpu{}->{} Prefetch Usefulness by Capability Size", cpu, stats.name));
-        lines.push_back(fmt::format("  {:<10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>9s} {:>9s} {:>9s} {:>10s}", "Object",
-                                    "Issued", "SkipFill", "Redundant", "OOBIssue", "FillOwn", "TimelyDem", "TimelyUpPf", "Late", "Useless", "SameObj",
+        lines.push_back(fmt::format("  {:<10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>9s} {:>9s} {:>9s} {:>10s}", "Object",
+                                    "Issued", "SkipFill", "Redundant", "FillOwn", "TimelyDem", "TimelyUpPf", "Late", "Useless", "SameObj",
                                     "DemUntag", "Accuracy", "Timely%", "Late%", "UnusedEnd"));
         for (auto cls : cap_size_coverage_events_with_untagged) {
           const long timely_demand = count(stats.pf_useful_timely_demand_by_cap_size, cls);
@@ -348,10 +348,10 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
           const long useless = count(stats.pf_useless_by_cap_size, cls);
           const long fill_own = count(stats.pf_fill_own_by_cap_size, cls);
           const long prefetch_fills = fill_own + late;
-          lines.push_back(fmt::format("  {:<10s} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {} {} {} {:10d}",
+          lines.push_back(fmt::format("  {:<10s} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {} {} {} {:10d}",
                                       cap_size_coverage_events_names.at(static_cast<std::size_t>(cls)), count(stats.pf_issued_by_cap_size, cls),
                                       count(stats.pf_issued_skip_fill_by_cap_size, cls), count(stats.pf_redundant_by_cap_size, cls),
-                                      count(stats.pf_out_of_bounds_at_issue_by_cap_size, cls), fill_own, timely_demand, timely_upper_pf, late, useless,
+                                      fill_own, timely_demand, timely_upper_pf, late, useless,
                                       count(stats.pf_useful_same_object_by_cap_size, cls), count(stats.pf_useful_demand_untagged_by_cap_size, cls),
                                       ratio(timely_demand + late, prefetch_fills), ratio(timely_demand, prefetch_fills), ratio(late, prefetch_fills),
                                       fill_own - timely_demand - timely_upper_pf - useless));

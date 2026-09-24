@@ -109,7 +109,6 @@ struct cache_stats {
   champsim::stats::event_counter<pf_cap_key> pf_useless_by_cap_size = {};                // sums to pf_useless
   champsim::stats::event_counter<pf_cap_key> pf_useful_same_object_by_cap_size = {};     // demand-useful, demand cap tagged with the issuing base
   champsim::stats::event_counter<pf_cap_key> pf_useful_demand_untagged_by_cap_size = {}; // demand-useful, demand cap untagged
-  champsim::stats::event_counter<pf_cap_key> pf_out_of_bounds_at_issue_by_cap_size = {}; // issued, VA known and outside [base, base+length)
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);

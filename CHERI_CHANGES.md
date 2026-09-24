@@ -93,7 +93,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Now: `try_hit` updates it only when `handle_pkt.cap.tag && handle_pkt.type != access_type::PREFETCH`. Fills still set `auth_cap` from the fill entry.
   - Test: `434-cheri-auth-cap-on-hit.cc`.
 
-- **Prefetches inherit the triggering access's capability** (per-cache JSON knob `inherit_trigger_cap`, default `false`). This is the first part of task 2.
+- **Prefetches inherit the triggering access's capability** (per-cache JSON knob `inherit_trigger_cap`, default `false`). This started as the first part of brief task 2; task 2 itself was later dropped (see below).
   - **Mechanism:**
     - `CACHE::impl_prefetcher_cache_operate` records the triggering access's `cap` on entry and clears it on exit.
     - The no-cap `CACHE::prefetch_line(addr, fill_this_level, metadata)` attaches that recorded cap to the prefetch packet when it is called inside the hook.
@@ -149,7 +149,6 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `pf_fill_own_by_cap_size` (fills that set the prefetch bit; ≤ `pf_fill`, which also counts upper-level prefetches).
     - `pf_useful_timely_demand_by_cap_size` and `pf_useful_timely_upper_pf_by_cap_size` (both at the `try_hit` site), and `pf_useful_late_by_cap_size` (at the `handle_miss` site). `timely_demand + timely_upper_pf + late` sums to `pf_useful`. `pf_useless_by_cap_size` sums to `pf_useless`.
     - `pf_useful_same_object_by_cap_size` (demand cap tagged with the issuing base) and `pf_useful_demand_untagged_by_cap_size`. Both are counted only for demand uses (timely-demand and late).
-    - `pf_out_of_bounds_at_issue_by_cap_size` (tagged cap, prefetch VA known and outside `[base, base+length)`).
   - **Wiring:** all counters are in `end_phase`'s `roi_stats` copy and in `operator-`.
   - **Output:**
     - Plain text: a per-CPU "Prefetch Usefulness by Capability Size" table for L1D/L2C/LLC, printed after the existing CHERI sections and only when a count is nonzero. It shows raw counts plus derived columns over prefetch fills = fill_own + late (the Berti, MICRO'22 definition; upstream does not count a late prefetch as a fill because the merged demand takes over its MSHR entry, but it still brought the line in):
@@ -167,7 +166,13 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `invalidate_entry` counts nothing.
   - **Same-object rule:** "same object" also requires a tagged issuing capability.
   - **Resident blocks:** resident-at-end can be off by the rare invalidation.
-  - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases).
+  - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases: 437-1 to 437-8 and 437-10 to 437-12; 437-9 was removed with the out-of-bounds counter).
+
+- **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
+  - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
+  - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.
+  - `inherit_trigger_cap` and prefetch-cap re-pointing, which started as part of task 2, stay; they feed the CHERI prefetchers and the task 3 stats.
+  - **`pf_out_of_bounds_at_issue_by_cap_size` removed** (counter, ROI copy, `operator-`, the plain-text `OOBIssue` column, the JSON field, test 437-9, and its entry in the counter list that 437-10/437-11 use). It measured what task 2 would drop, and it would always read zero for CHERI prefetchers.
 
 ## Known issues (intentionally not changed)
 - **Order-dependent side channels `CACHE::v_addr` / `vaddr_evicted`.**

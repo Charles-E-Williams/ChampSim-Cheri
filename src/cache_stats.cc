@@ -31,7 +31,6 @@ cache_stats operator-(cache_stats lhs, cache_stats rhs)
   result.pf_useless_by_cap_size = lhs.pf_useless_by_cap_size - rhs.pf_useless_by_cap_size;
   result.pf_useful_same_object_by_cap_size = lhs.pf_useful_same_object_by_cap_size - rhs.pf_useful_same_object_by_cap_size;
   result.pf_useful_demand_untagged_by_cap_size = lhs.pf_useful_demand_untagged_by_cap_size - rhs.pf_useful_demand_untagged_by_cap_size;
-  result.pf_out_of_bounds_at_issue_by_cap_size = lhs.pf_out_of_bounds_at_issue_by_cap_size - rhs.pf_out_of_bounds_at_issue_by_cap_size;
   
   result.total_miss_latency_cycles = lhs.total_miss_latency_cycles - rhs.total_miss_latency_cycles;
 

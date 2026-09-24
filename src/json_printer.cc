@@ -57,11 +57,10 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
 
   // Prefetch outcomes by issuing capability size class: {counter: {class: [per-cpu raw counts]}}
   {
-    const std::array<std::pair<const char*, const champsim::stats::event_counter<pf_cap_key>*>, 11> by_size{{
+    const std::array<std::pair<const char*, const champsim::stats::event_counter<pf_cap_key>*>, 10> by_size{{
         {"issued", &stats.pf_issued_by_cap_size},
         {"issued skip fill", &stats.pf_issued_skip_fill_by_cap_size},
         {"redundant", &stats.pf_redundant_by_cap_size},
-        {"out of bounds at issue", &stats.pf_out_of_bounds_at_issue_by_cap_size},
         {"fill own", &stats.pf_fill_own_by_cap_size},
         {"useful timely demand", &stats.pf_useful_timely_demand_by_cap_size},
         {"useful timely upper-level prefetch", &stats.pf_useful_timely_upper_pf_by_cap_size},

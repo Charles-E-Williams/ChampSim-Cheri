@@ -21,13 +21,13 @@ const auto cap_64B_b = make_cap(0x90000, 64);    // 0-128B, different object
 const auto cap_4KB = make_cap(0x20000, 4096);    // 128B-4KB
 const auto cap_1MB = make_cap(0x100000, 1 << 20); // 64KB-1MB
 
-constexpr std::array<champsim::stats::event_counter<pf_cap_key> cache_stats::*, 11> all_by_size{
+constexpr std::array<champsim::stats::event_counter<pf_cap_key> cache_stats::*, 10> all_by_size{
     &cache_stats::pf_issued_by_cap_size,          &cache_stats::pf_issued_skip_fill_by_cap_size,
     &cache_stats::pf_redundant_by_cap_size,       &cache_stats::pf_fill_own_by_cap_size,
     &cache_stats::pf_useful_timely_demand_by_cap_size, &cache_stats::pf_useful_timely_upper_pf_by_cap_size,
     &cache_stats::pf_useful_late_by_cap_size,
     &cache_stats::pf_useless_by_cap_size,         &cache_stats::pf_useful_same_object_by_cap_size,
-    &cache_stats::pf_useful_demand_untagged_by_cap_size, &cache_stats::pf_out_of_bounds_at_issue_by_cap_size};
+    &cache_stats::pf_useful_demand_untagged_by_cap_size};
 
 long count(const champsim::stats::event_counter<pf_cap_key>& counter, cls c) { return counter.value_or(pf_cap_key{c, 0}, 0L); }
 
@@ -294,19 +294,6 @@ TEST_CASE("437-8: a prefetch issued with fill_this_level == false is counted as 
   CHECK(count(r.stats().pf_issued_skip_fill_by_cap_size, cls::B_128B_4KB) == 1);
   r.run(100);
   CHECK(count(r.stats().pf_fill_own_by_cap_size, cls::B_128B_4KB) == 1); // only the filling one
-}
-
-TEST_CASE("437-9: a prefetch VA outside the issuing capability is counted at issue")
-{
-  rig<> r{1, 4, 0, true}; // virtual_prefetch: the prefetch address is the VA
-  const uint64_t base = cap_4KB.base.to<uint64_t>();
-  r.own_prefetch(base - 64, cap_4KB);   // below base
-  r.own_prefetch(base + 4096, cap_4KB); // at top
-  r.own_prefetch(base + 64, cap_4KB);   // inside
-  r.own_prefetch(base + 4096 - 64, cap_4KB); // last line inside
-
-  CHECK(count(r.stats().pf_issued_by_cap_size, cls::B_128B_4KB) == 4);
-  CHECK(count(r.stats().pf_out_of_bounds_at_issue_by_cap_size, cls::B_128B_4KB) == 2);
 }
 
 TEST_CASE("437-10: begin_phase clears the counters, end_phase copies them to roi_stats, and operator- subtracts them")

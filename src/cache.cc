@@ -207,15 +207,6 @@ void CACHE::record_prefetch_issue(tag_lookup_type& pf_entry, bool fill_this_leve
   sim_stats.pf_issued_by_cap_size.increment(key);
   if (!fill_this_level)
     sim_stats.pf_issued_skip_fill_by_cap_size.increment(key);
-
-  if (pf_entry.pf_cap_class != cap_size_coverage_events::UNTAGGED) {
-    if (auto va = prefetch_vaddr(pf_entry.address); va.has_value()) {
-      const auto base = cap.base.to<uint64_t>();
-      const auto top = base + cap.length.to<uint64_t>();
-      if (va->to<uint64_t>() < base || va->to<uint64_t>() >= top)
-        sim_stats.pf_out_of_bounds_at_issue_by_cap_size.increment(key);
-    }
-  }
 }
 
 // Count a prefetch used by a demand in its issuing class, and whether that demand was in the same object
@@ -1133,7 +1124,6 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useless_by_cap_size = sim_stats.pf_useless_by_cap_size;
   roi_stats.pf_useful_same_object_by_cap_size = sim_stats.pf_useful_same_object_by_cap_size;
   roi_stats.pf_useful_demand_untagged_by_cap_size = sim_stats.pf_useful_demand_untagged_by_cap_size;
-  roi_stats.pf_out_of_bounds_at_issue_by_cap_size = sim_stats.pf_out_of_bounds_at_issue_by_cap_size;
 
 
   for (auto* ul : upper_levels) {
