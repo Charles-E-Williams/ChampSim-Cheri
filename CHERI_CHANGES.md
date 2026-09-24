@@ -173,7 +173,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **Evidence:** a temporary debug counter compared `base + offset` with each tagged demand access's VA at L1D.
     - Totals: exact 1,189,694; same line 343,685; different line 627,212 (29%).
     - The same IP always showed the same constant `cursor − va`. Examples: stack loads and stores through the 1 GiB stack capability at −12, −32 and −60, and a register-save prologue at −64 … −176.
-  - **Change:** `O3_CPU::present_auth_cap_at()`, called in `execute_load` and `do_complete_store` (per LSQ entry, so each memory operand gets its own VA), sets `offset = v_address − base` on the packet's tagged authorizing cap.
+  - **Change:** `O3_CPU::set_auth_cap_cursor()`, called in `execute_load` and `do_complete_store` (per LSQ entry, so each memory operand gets its own VA), sets `offset = v_address − base` on the packet's tagged authorizing cap.
     - Base, length, permissions and tag are unchanged.
     - `cap_mem` is untouched: transferred capabilities are data and keep their own cursors.
     - If the VA is outside `[base, base + length)`, the offset is left alone and counted in the new per-CPU core stat `auth_cap_va_out_of_bounds`. A wrap below base would trip `capability_cursor()`'s assert. The first occurrence prints `[OOO_CPU] WARNING: Memory access outside the bounds of its tagged authority capability...` once; the total is printed per core as `cpuN AUTHORITY CAPABILITY DOES NOT COVER ACCESS: n` and in JSON. A valid CHERI trace should produce none.

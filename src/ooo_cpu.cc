@@ -590,7 +590,7 @@ void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry)
 // bounds-checks the effective address (cursor + immediate). Present the capability with its cursor at this memory
 // operand's effective address: offset = va - base. Base, length, permissions and tag are unchanged. If va is outside
 // [base, base + length) the offset is left alone (a wrap below base would trip capability_cursor()'s assert) and counted.
-void O3_CPU::present_auth_cap_at(champsim::capability& cap, champsim::address va)
+void O3_CPU::set_auth_cap_cursor(champsim::capability& cap, champsim::address va)
 {
   const uint64_t base = cap.base.to<uint64_t>();
   const uint64_t addr = va.to<uint64_t>();
@@ -617,7 +617,7 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
     if (!std::exchange(warned_untagged_auth_store, true))
       fmt::print("[OOO_CPU] WARNING: Store Instruction missing tagged authority capability. This is a problem with your trace.\n");
   } else {
-    present_auth_cap_at(data_packet.cap, data_packet.v_address);
+    set_auth_cap_cursor(data_packet.cap, data_packet.v_address);
   }
 
   if constexpr (champsim::debug_print) {
@@ -645,7 +645,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
     if (!std::exchange(warned_untagged_auth_load, true))
       fmt::print("[OOO_CPU] WARNING: Load Instruction missing tagged authority capability. This is a problem with your trace.\n");
   } else {
-    present_auth_cap_at(data_packet.cap, data_packet.v_address);
+    set_auth_cap_cursor(data_packet.cap, data_packet.v_address);
   }
 
 

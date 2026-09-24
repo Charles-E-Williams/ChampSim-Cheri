@@ -113,7 +113,7 @@ public:
   bool warned_untagged_auth_load = false;
   bool warned_untagged_auth_store = false;
   bool warned_auth_cap_va_out_of_bounds = false;
-  void present_auth_cap_at(champsim::capability& cap, champsim::address va);
+  void set_auth_cap_cursor(champsim::capability& cap, champsim::address va);
 
   // instruction buffer
   struct dib_shift {
