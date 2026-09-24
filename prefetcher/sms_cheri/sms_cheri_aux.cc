@@ -267,12 +267,12 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
 }
 
 
-void sms_cheri::buffer_prefetch(std::vector<uint64_t> pref_addr)
+void sms_cheri::buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap)
 {
   for (uint32_t i = 0; i < pref_addr.size(); ++i) {
     if (pref_buffer.size() >= PREF_BUFFER_SIZE)
       break;
-    pref_buffer.push_back(pref_addr[i]);
+    pref_buffer.emplace_back(pref_addr[i], cap);
   }
 }
 
@@ -280,8 +280,8 @@ void sms_cheri::issue_prefetch()
 {
   uint32_t count = 0;
   while (!pref_buffer.empty() && count < PREF_DEGREE) {
-    champsim::address pf_addr{pref_buffer.front()};
-    const bool success = prefetch_line(pf_addr, true, 0);
+    champsim::address pf_addr{pref_buffer.front().first};
+    const bool success = prefetch_line(pf_addr, true, 0, pref_buffer.front().second);
     if (!success)
       break;
     pref_buffer.pop_front();

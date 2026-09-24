@@ -52,7 +52,7 @@ uint32_t sms_cheri::prefetcher_cache_operate(champsim::address address,
       // replay a previously learned pattern from the PHT.
       insert_filter_table(pc, ri);
       generate_prefetch(pc, addr, ri, pref_addr);
-      buffer_prefetch(pref_addr);
+      buffer_prefetch(pref_addr, cap);
     }
   }
 

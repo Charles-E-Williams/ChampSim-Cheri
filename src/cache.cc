@@ -40,6 +40,7 @@ CACHE::CACHE(CACHE&& other)
       cpu(other.cpu), NAME(std::move(other.NAME)), NUM_SET(other.NUM_SET), NUM_WAY(other.NUM_WAY), MSHR_SIZE(other.MSHR_SIZE), PQ_SIZE(other.PQ_SIZE),
       HIT_LATENCY(other.HIT_LATENCY), FILL_LATENCY(other.FILL_LATENCY), OFFSET_BITS(other.OFFSET_BITS), block(std::move(other.block)), MAX_TAG(other.MAX_TAG),
       MAX_FILL(other.MAX_FILL), prefetch_as_load(other.prefetch_as_load), match_offset_bits(other.match_offset_bits), virtual_prefetch(other.virtual_prefetch),
+      inherit_trigger_cap(other.inherit_trigger_cap),
       pref_activate_mask(std::move(other.pref_activate_mask)),
 
       sim_stats(std::move(other.sim_stats)), roi_stats(std::move(other.roi_stats)),
@@ -78,6 +79,7 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
   this->prefetch_as_load = other.prefetch_as_load;
   this->match_offset_bits = other.match_offset_bits;
   this->virtual_prefetch = other.virtual_prefetch;
+  this->inherit_trigger_cap = other.inherit_trigger_cap;
   this->pref_activate_mask = std::move(other.pref_activate_mask);
 
   this->sim_stats = std::move(other.sim_stats);
@@ -733,6 +735,8 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.address = pf_addr;
   pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
   pf_packet.is_translated = !virtual_prefetch;
+  if (trigger_cap.has_value())
+    pf_packet.cap = *trigger_cap;
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
@@ -942,7 +946,11 @@ void CACHE::impl_prefetcher_initialize() const { pref_module_pimpl->impl_prefetc
 uint32_t CACHE::impl_prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool cache_hit,
                                               bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit) const
 {
-  return pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cpu_in, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit);
+  if (inherit_trigger_cap)
+    trigger_cap = cap;
+  auto metadata_out = pref_module_pimpl->impl_prefetcher_cache_operate(addr, ip, cpu_in, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit);
+  trigger_cap.reset();
+  return metadata_out;
 }
 
 uint32_t CACHE::impl_prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu_in, champsim::capability cap, bool useless, long set,

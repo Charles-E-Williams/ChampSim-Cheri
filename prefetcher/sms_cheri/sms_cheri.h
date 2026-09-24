@@ -2,6 +2,7 @@
 #define __SMS_CHERI_H__
 
 #include <deque>
+#include <utility>
 #include <vector>
 
 #include "champsim.h"
@@ -30,7 +31,7 @@ private:
   std::deque<FTEntry*> filter_table;
   std::deque<ATEntry*> acc_table;
   std::vector<std::deque<PHTEntry*>> pht;
-  std::deque<uint64_t> pref_buffer;
+  std::deque<std::pair<uint64_t, champsim::capability>> pref_buffer; // candidate address and the capability of the access that produced it
 
   // Decomposes a demand into (region_id, offset, cap metadata) using
   // capability bounds when available, page boundaries otherwise.
@@ -73,7 +74,7 @@ private:
                                 const region_info& ri,
                                 std::vector<uint64_t>& pref_addr);
 
-  void buffer_prefetch(std::vector<uint64_t> pref_addr);
+  void buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap);
   void issue_prefetch();
 
   //  Statistics 

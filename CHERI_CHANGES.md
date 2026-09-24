@@ -93,6 +93,19 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Now: `try_hit` updates it only when `handle_pkt.cap.tag && handle_pkt.type != access_type::PREFETCH`. Fills still set `auth_cap` from the fill entry.
   - Test: `434-cheri-auth-cap-on-hit.cc`.
 
+- **Prefetches inherit the triggering access's capability** (per-cache JSON knob `inherit_trigger_cap`, default `false`). This is the first part of task 2.
+  - **Mechanism:**
+    - `CACHE::impl_prefetcher_cache_operate` records the triggering access's `cap` on entry and clears it on exit.
+    - The no-cap `CACHE::prefetch_line(addr, fill_this_level, metadata)` attaches that recorded cap to the prefetch packet when it is called inside the hook.
+    - The cap overloads are unaffected. Calls outside `cache_operate` (cycle and fill hooks) still get an untagged cap.
+  - **Why:** every CHERI prefetcher issued through the no-cap overload, so every prefetch packet was untagged. At L2C/LLC, `prefetch_activate` is `LOAD,PREFETCH`, so every PREFETCH access there reached the prefetcher untagged and hit the untagged-cap early return. CHERI prefetchers at L2C/LLC therefore never trained on L1D (or L2C) prefetches. The fill's `cap` and `BLOCK::auth_cap` of prefetched lines were untagged for the same reason.
+  - **Enabled** at L1D, L2C and LLC in all `champsim_cheri_*` configs. It stays off (the default) in `champsim_config.json`, `champsim_no_pf_config.json` and all `champsim_riscv_*` configs, and at L1I everywhere, so baseline runs are unchanged. Stock and third-party prefetchers were not edited.
+  - **Cycle-hook issuers** now keep the triggering cap with each buffered candidate and use the cap overload:
+    - `ip_stride_cheri` / `ip_stride_cheri_dynamic`: `active_lookahead.cap`.
+    - `sms_cheri`: `pref_buffer` now stores `(address, capability)` pairs, filled from the trigger in `cache_operate`.
+  - **Still untagged:** `cheri_ptr_chase` issues one prefetch from `prefetcher_cache_fill`, which has no trigger, so that prefetch stays untagged.
+  - Test: `435-cheri-inherit-trigger-cap.cc`.
+
 ## Known issues (intentionally not changed)
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
 - **Untagged-cap warning floods stock traces.** `execute_load` and `do_complete_store` print a warning for every access with an untagged authority cap.

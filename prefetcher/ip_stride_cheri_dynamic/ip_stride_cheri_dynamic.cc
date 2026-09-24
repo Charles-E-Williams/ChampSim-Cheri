@@ -97,7 +97,8 @@ void ip_stride_cheri_dynamic::prefetcher_cycle_operate()
  
   if (intern_->virtual_prefetch || champsim::page_number{pf_address} == champsim::page_number{old_pf_address}) {
     const bool mshr_under_light_load = intern_->get_mshr_occupancy_ratio() < 0.5;
-    const bool success = prefetch_line(pf_address, mshr_under_light_load, 0);
+    const bool success = cap.has_value() ? prefetch_line(pf_address, mshr_under_light_load, 0, *cap)
+                                         : prefetch_line(pf_address, mshr_under_light_load, 0);
  
     if (success) { 
       active_lookahead = {pf_address, stride, degree - 1, cap};
