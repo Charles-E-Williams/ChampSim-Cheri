@@ -70,6 +70,7 @@ inline cap_size_coverage_events classify_capability(const champsim::capability& 
 
 using cap_dist_key = std::tuple<cap_size_coverage_events, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
 using cl_cap_key = std::tuple<unsigned, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
+using pf_cap_key = std::pair<cap_size_coverage_events, std::remove_cv_t<decltype(NUM_CPUS)>>; // (issuing capability's size class, cpu of the prefetch)
 
 struct cache_stats {
   std::string name;
@@ -95,6 +96,20 @@ struct cache_stats {
 
   champsim::stats::event_counter<cl_cap_key> capabilities_per_cl_hit = {};
   champsim::stats::event_counter<cl_cap_key> capabilities_per_cl_miss = {};
+
+  // Prefetch outcomes by the size class of the capability on the prefetch packet (brief section 10, task 3)
+  champsim::stats::event_counter<pf_cap_key> pf_issued_by_cap_size = {};                 // sums to pf_issued
+  champsim::stats::event_counter<pf_cap_key> pf_issued_skip_fill_by_cap_size = {};       // issued with fill_this_level == false; never credited
+  champsim::stats::event_counter<pf_cap_key> pf_redundant_by_cap_size = {};              // own prefetch hit a resident line
+  champsim::stats::event_counter<pf_cap_key> pf_fill_own_by_cap_size = {};               // fills that set the prefetch bit; <= pf_fill
+  champsim::stats::event_counter<pf_cap_key> pf_useful_timely_demand_by_cap_size = {};   // a non-PREFETCH access hit the prefetched block
+  champsim::stats::event_counter<pf_cap_key> pf_useful_timely_upper_pf_by_cap_size = {}; // a PREFETCH from the upper level hit it
+                                                                                         // timely_demand + timely_upper_pf + late sums to pf_useful
+  champsim::stats::event_counter<pf_cap_key> pf_useful_late_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useless_by_cap_size = {};                // sums to pf_useless
+  champsim::stats::event_counter<pf_cap_key> pf_useful_same_object_by_cap_size = {};     // demand-useful, demand cap tagged with the issuing base
+  champsim::stats::event_counter<pf_cap_key> pf_useful_demand_untagged_by_cap_size = {}; // demand-useful, demand cap untagged
+  champsim::stats::event_counter<pf_cap_key> pf_out_of_bounds_at_issue_by_cap_size = {}; // issued, VA known and outside [base, base+length)
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);

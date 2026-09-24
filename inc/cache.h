@@ -79,6 +79,9 @@ class CACHE : public champsim::operable
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
+    // Issuing capability of this cache's own prefetch (set in prefetch_line)
+    cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
+    champsim::address pf_cap_base{};
     champsim::chrono::clock::time_point event_cycle = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -107,6 +110,8 @@ public:
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
+    cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
+    champsim::address pf_cap_base{};
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -151,6 +156,10 @@ private:
 
   auto matches_address(champsim::address address) const;
   champsim::capability inherited_prefetch_cap(champsim::address pf_addr);
+  [[nodiscard]] std::optional<champsim::address> prefetch_vaddr(champsim::address pf_addr) const;
+  void record_prefetch_issue(tag_lookup_type& pf_entry, bool fill_this_level);
+  void record_useful_prefetch(champsim::stats::event_counter<pf_cap_key>& counter, cap_size_coverage_events pf_class, champsim::address pf_base,
+                              uint32_t pf_cpu, const champsim::capability& demand_cap);
   std::pair<fill_type, request_type> mshr_and_forward_packet(const tag_lookup_type& handle_pkt);
 
   std::deque<tag_lookup_type> internal_PQ{};

@@ -127,6 +127,36 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Test: `436-l1i-miss-activates-l2c-prefetcher.cc`.
   - Upstream's `_is_instruction_cache` / `_is_instruction_prefetcher` in `config/` and `test/python/` are unrelated upstream config flags and remain.
 
+- **Prefetch usefulness by capability size (brief §10 task 3, revised 2026-09-24).** Stats only; no timing or control-flow change.
+  - **Issuing capability:** the cap on the prefetch packet (explicit, or inherited and offset-adjusted via `inherit_trigger_cap`); UNTAGGED if none.
+    - Its size class and base are stamped in `prefetch_line` on the `tag_lookup_type`, copied to `fill_type`, and stored on `BLOCK` (`pf_cap_class`, `pf_cap_base`, separate from `auth_cap`) when the fill sets the prefetch bit.
+    - For late-useful prefetches they are read from the in-flight entry before `fill_type::merge`.
+  - **Counters,** keyed by (size class, CPU of the prefetch):
+    - `pf_issued_by_cap_size` (sums to `pf_issued`); `pf_issued_skip_fill_by_cap_size` (`fill_this_level == false`, never credited anywhere).
+    - `pf_redundant_by_cap_size` (own prefetch hit a resident line).
+    - `pf_fill_own_by_cap_size` (fills that set the prefetch bit; ≤ `pf_fill`, which also counts upper-level prefetches).
+    - `pf_useful_timely_demand_by_cap_size` and `pf_useful_timely_upper_pf_by_cap_size` (both at the `try_hit` site), and `pf_useful_late_by_cap_size` (at the `handle_miss` site). `timely_demand + timely_upper_pf + late` sums to `pf_useful`. `pf_useless_by_cap_size` sums to `pf_useless`.
+    - `pf_useful_same_object_by_cap_size` (demand cap tagged with the issuing base) and `pf_useful_demand_untagged_by_cap_size`. Both are counted only for demand uses (timely-demand and late).
+    - `pf_out_of_bounds_at_issue_by_cap_size` (tagged cap, prefetch VA known and outside `[base, base+length)`).
+  - **Wiring:** all counters are in `end_phase`'s `roi_stats` copy and in `operator-`.
+  - **Output:**
+    - Plain text: a per-CPU "Prefetch Usefulness by Capability Size" table for L1D/L2C/LLC, printed after the existing CHERI sections and only when a count is nonzero. It shows raw counts plus derived columns over prefetch fills = fill_own + late (the Berti, MICRO'22 definition; upstream does not count a late prefetch as a fill because the merged demand takes over its MSHR entry, but it still brought the line in):
+      - accuracy = (timely_demand + late) / prefetch fills (demand-only useful);
+      - timely % = timely_demand / prefetch fills;
+      - late % = late / prefetch fills (timely % + late % = accuracy);
+      - unused at end = fill_own − timely_demand − timely_upper_pf − useless (informational; counts as not useful).
+      - Upper-level-prefetch hits have their own raw column (`TimelyUpPf`) and are not in accuracy.
+    - JSON: `"prefetch by capability size"` → counter → class → per-CPU raw counts.
+    - Coverage by size is computed offline against the authority-capability LOAD miss table.
+  - **Counting semantics are upstream's**, verified in the port:
+    - A timely useful is any non-own access that hits a prefetched block, including a PREFETCH from the upper level (`useful_prefetch = hit && way->prefetch && !handle_pkt.prefetch_from_this`); the hit also clears the prefetch bit. The late site, by contrast, excludes PREFETCH requests.
+    - **Choice:** `pf_useful` is left as upstream counts it. The by-size counters split the timely site so the two cases stay visible, and the printed accuracy counts only demand uses. A prefetch whose line was first touched by an upper-level prefetch counts as neither useful nor useless in accuracy, even if a demand later hits the line, because the bit is already cleared.
+    - `pf_fill` excludes fills that bypass the cache.
+    - `invalidate_entry` counts nothing.
+  - **Same-object rule:** "same object" also requires a tagged issuing capability.
+  - **Resident blocks:** resident-at-end can be off by the rare invalidation.
+  - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases).
+
 ## Known issues (intentionally not changed)
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
 - **Order-dependent side channels.** `CACHE::v_addr` and `vaddr_evicted` are written in `try_hit`/`handle_fill` and read by prefetchers.

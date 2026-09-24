@@ -316,6 +316,50 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos)
       lines.push_back(fmt::format("cpu{}->{} PREFETCH CAP OFFSET UNADJUSTED: {:10}", cpu, stats.name, stats.pf_cap_offset_unadjusted));
 
+    // Prefetch outcomes by the size class of the capability on the prefetch packet. Raw counts first; the last four columns
+    // are derived over prefetch fills = FillOwn + Late (Berti, MICRO'22: accuracy = useful / prefetch fills; a late prefetch
+    // still brought its line in, although the merged demand took over its MSHR entry). Useful here is demand-only:
+    // TimelyDem + Late. TimelyUpPf (a PREFETCH from the upper level hit the block) is shown but not counted as useful.
+    // Timely% + Late% = Accuracy.
+    // Coverage by size is computed offline against the authority-capability LOAD miss table above.
+    if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos) {
+      auto count = [&](const auto& counter, cap_size_coverage_events cls) { return counter.value_or(pf_cap_key{cls, cpu}, 0L); };
+      bool any = false;
+      for (auto cls : cap_size_coverage_events_with_untagged)
+        any = any || count(stats.pf_issued_by_cap_size, cls) > 0 || count(stats.pf_redundant_by_cap_size, cls) > 0
+              || count(stats.pf_useful_timely_demand_by_cap_size, cls) > 0 || count(stats.pf_useful_timely_upper_pf_by_cap_size, cls) > 0
+              || count(stats.pf_useful_late_by_cap_size, cls) > 0
+              || count(stats.pf_useless_by_cap_size, cls) > 0 || count(stats.pf_fill_own_by_cap_size, cls) > 0;
+
+      if (any) {
+        auto ratio = [](long num, long denom) -> std::string {
+          if (denom <= 0)
+            return fmt::format("{:>9s}", "-");
+          return fmt::format("{:8.1f}%", 100.0 * static_cast<double>(num) / static_cast<double>(denom));
+        };
+        lines.push_back(fmt::format("cpu{}->{} Prefetch Usefulness by Capability Size", cpu, stats.name));
+        lines.push_back(fmt::format("  {:<10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>9s} {:>9s} {:>9s} {:>10s}", "Object",
+                                    "Issued", "SkipFill", "Redundant", "OOBIssue", "FillOwn", "TimelyDem", "TimelyUpPf", "Late", "Useless", "SameObj",
+                                    "DemUntag", "Accuracy", "Timely%", "Late%", "UnusedEnd"));
+        for (auto cls : cap_size_coverage_events_with_untagged) {
+          const long timely_demand = count(stats.pf_useful_timely_demand_by_cap_size, cls);
+          const long timely_upper_pf = count(stats.pf_useful_timely_upper_pf_by_cap_size, cls);
+          const long late = count(stats.pf_useful_late_by_cap_size, cls);
+          const long useless = count(stats.pf_useless_by_cap_size, cls);
+          const long fill_own = count(stats.pf_fill_own_by_cap_size, cls);
+          const long prefetch_fills = fill_own + late;
+          lines.push_back(fmt::format("  {:<10s} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {} {} {} {:10d}",
+                                      cap_size_coverage_events_names.at(static_cast<std::size_t>(cls)), count(stats.pf_issued_by_cap_size, cls),
+                                      count(stats.pf_issued_skip_fill_by_cap_size, cls), count(stats.pf_redundant_by_cap_size, cls),
+                                      count(stats.pf_out_of_bounds_at_issue_by_cap_size, cls), fill_own, timely_demand, timely_upper_pf, late, useless,
+                                      count(stats.pf_useful_same_object_by_cap_size, cls), count(stats.pf_useful_demand_untagged_by_cap_size, cls),
+                                      ratio(timely_demand + late, prefetch_fills), ratio(timely_demand, prefetch_fills), ratio(late, prefetch_fills),
+                                      fill_own - timely_demand - timely_upper_pf - useless));
+        }
+        lines.emplace_back("");
+      }
+    }
+
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});
     lines.push_back(
         fmt::format("cpu{}->{} AVERAGE MISS LATENCY: {} cycles", cpu, stats.name, ::print_ratio(stats.total_miss_latency_cycles, total_downstream_demands)));

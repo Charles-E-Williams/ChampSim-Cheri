@@ -19,6 +19,7 @@
 
 #include "champsim.h"
 #include "cheri.h"
+#include "cache_stats.h"
 
 namespace champsim
 {
@@ -33,6 +34,10 @@ struct cache_block {
   champsim::address v_address{};
   champsim::address data{};
   champsim::capability auth_cap{};
+
+  // Issuing capability of the prefetch that filled this block; meaningful only while prefetch is set
+  cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
+  champsim::address pf_cap_base{};
 
   uint32_t pf_metadata = 0;
   

@@ -102,7 +102,7 @@ CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref
 
 CACHE::fill_type::fill_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), cap(req.cap), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
+      prefetch_from_this(req.prefetch_from_this), cap(req.cap), pf_cap_class(req.pf_cap_class), pf_cap_base(req.pf_cap_base), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
 {
 }
 
@@ -153,6 +153,10 @@ auto CACHE::fill_block(fill_type fill, uint32_t metadata) -> BLOCK
   to_fill.pf_metadata = metadata;
   to_fill.cpu = fill.cpu;
   to_fill.auth_cap = fill.cap;
+  if (fill.prefetch_from_this) {
+    to_fill.pf_cap_class = fill.pf_cap_class;
+    to_fill.pf_cap_base = fill.pf_cap_base;
+  }
 
   return to_fill;
 }
@@ -164,6 +168,51 @@ auto CACHE::matches_address(champsim::address addr) const
   };
 }
 
+// The virtual address of a prefetch, if known: pf_addr on virtual_prefetch caches; on physical caches, the trigger's
+// VA page spliced with pf_addr's page offset when the prefetch is on the trigger's physical page.
+std::optional<champsim::address> CACHE::prefetch_vaddr(champsim::address pf_addr) const
+{
+  if (virtual_prefetch)
+    return pf_addr;
+  if (prefetch_trigger.has_value() && champsim::page_number{pf_addr} == champsim::page_number{prefetch_trigger->address})
+    return champsim::address{champsim::splice(champsim::page_number{prefetch_trigger->v_address}, champsim::page_offset{pf_addr})};
+  return std::nullopt;
+}
+
+// Stamp an accepted prefetch with the size class and base of the capability on its packet, and count it
+void CACHE::record_prefetch_issue(tag_lookup_type& pf_entry, bool fill_this_level)
+{
+  const auto& cap = pf_entry.cap;
+  pf_entry.pf_cap_class = classify_capability(cap);
+  pf_entry.pf_cap_base = (pf_entry.pf_cap_class == cap_size_coverage_events::UNTAGGED) ? champsim::address{} : cap.base;
+
+  const pf_cap_key key{pf_entry.pf_cap_class, pf_entry.cpu};
+  sim_stats.pf_issued_by_cap_size.increment(key);
+  if (!fill_this_level)
+    sim_stats.pf_issued_skip_fill_by_cap_size.increment(key);
+
+  if (pf_entry.pf_cap_class != cap_size_coverage_events::UNTAGGED) {
+    if (auto va = prefetch_vaddr(pf_entry.address); va.has_value()) {
+      const auto base = cap.base.to<uint64_t>();
+      const auto top = base + cap.length.to<uint64_t>();
+      if (va->to<uint64_t>() < base || va->to<uint64_t>() >= top)
+        sim_stats.pf_out_of_bounds_at_issue_by_cap_size.increment(key);
+    }
+  }
+}
+
+// Count a prefetch used by a demand in its issuing class, and whether that demand was in the same object
+void CACHE::record_useful_prefetch(champsim::stats::event_counter<pf_cap_key>& counter, cap_size_coverage_events pf_class, champsim::address pf_base,
+                                   uint32_t pf_cpu, const champsim::capability& demand_cap)
+{
+  const pf_cap_key key{pf_class, pf_cpu};
+  counter.increment(key);
+  if (!demand_cap.tag)
+    sim_stats.pf_useful_demand_untagged_by_cap_size.increment(key);
+  else if (pf_class != cap_size_coverage_events::UNTAGGED && demand_cap.base == pf_base)
+    sim_stats.pf_useful_same_object_by_cap_size.increment(key);
+}
+
 // The triggering access's capability, re-pointed at the prefetched line: offset = prefetch VA - base.
 // Base, length, permissions and tag are unchanged. If the prefetch VA is unknown (physical cache, different
 // physical page than the trigger) or below the base, the trigger's offset is kept and counted.
@@ -173,11 +222,7 @@ champsim::capability CACHE::inherited_prefetch_cap(champsim::address pf_addr)
   if (!cap.tag)
     return cap;
 
-  std::optional<champsim::address> pf_vaddr;
-  if (virtual_prefetch)
-    pf_vaddr = pf_addr;
-  else if (champsim::page_number{pf_addr} == champsim::page_number{prefetch_trigger->address})
-    pf_vaddr = champsim::address{champsim::splice(champsim::page_number{prefetch_trigger->v_address}, champsim::page_offset{pf_addr})};
+  auto pf_vaddr = prefetch_vaddr(pf_addr);
 
   // An offset below the base would wrap, which cheri::capability_cursor() asserts against.
   if (pf_vaddr.has_value() && pf_vaddr->to<uint64_t>() >= cap.base.to<uint64_t>())
@@ -271,11 +316,15 @@ bool CACHE::handle_fill(const fill_type& fill)
   if (way != set_end) {
     if (way->valid && way->prefetch) {
       ++sim_stats.pf_useless;
+      sim_stats.pf_useless_by_cap_size.increment(pf_cap_key{way->pf_cap_class, way->cpu});
     }
 
     if (fill.type == access_type::PREFETCH) {
       ++sim_stats.pf_fill;
     }
+
+    if (fill.prefetch_from_this) // this fill sets the prefetch bit
+      sim_stats.pf_fill_own_by_cap_size.increment(pf_cap_key{fill.pf_cap_class, fill.cpu});
 
     *way = fill_block(fill, metadata_thru);
   }
@@ -328,6 +377,8 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+    if (handle_pkt.prefetch_from_this)
+      sim_stats.pf_redundant_by_cap_size.increment(pf_cap_key{handle_pkt.pf_cap_class, handle_pkt.cpu});
 
     // CHERI CACHE STATS
     champsim::capability response_cap = champsim::cap_mem[cpu]
@@ -355,6 +406,10 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     // update prefetch stats and reset prefetch bit
     if (useful_prefetch) {
       ++sim_stats.pf_useful;
+      if (handle_pkt.type == access_type::PREFETCH) // a prefetch from the upper level used it, not a demand
+        sim_stats.pf_useful_timely_upper_pf_by_cap_size.increment(pf_cap_key{way->pf_cap_class, way->cpu});
+      else
+        record_useful_prefetch(sim_stats.pf_useful_timely_demand_by_cap_size, way->pf_cap_class, way->pf_cap_base, way->cpu, handle_pkt.cap);
       way->prefetch = false;
     }
 
@@ -428,6 +483,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
       // Mark the prefetch as useful
       if (fill_entry->prefetch_from_this) {
         ++sim_stats.pf_useful;
+        // Read the issuing class/base now: fill_type::merge below keeps the demand's identity
+        record_useful_prefetch(sim_stats.pf_useful_late_by_cap_size, fill_entry->pf_cap_class, fill_entry->pf_cap_base, fill_entry->cpu, handle_pkt.cap);
       }
     }
 
@@ -713,6 +770,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
+  record_prefetch_issue(internal_PQ.back(), fill_this_level);
   return true;
 }
 
@@ -735,6 +793,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
+  record_prefetch_issue(internal_PQ.back(), fill_this_level);
   return true;
 }
 
@@ -757,6 +816,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
 
   internal_PQ.emplace_back(pf_packet, true, !fill_this_level);
   ++sim_stats.pf_issued;
+  record_prefetch_issue(internal_PQ.back(), fill_this_level);
   return true;
 }
 
@@ -1052,6 +1112,18 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.cap_data_misses = sim_stats.cap_data_misses;
   roi_stats.capabilities_per_cl_hit = sim_stats.capabilities_per_cl_hit;
   roi_stats.capabilities_per_cl_miss = sim_stats.capabilities_per_cl_miss;
+
+  roi_stats.pf_issued_by_cap_size = sim_stats.pf_issued_by_cap_size;
+  roi_stats.pf_issued_skip_fill_by_cap_size = sim_stats.pf_issued_skip_fill_by_cap_size;
+  roi_stats.pf_redundant_by_cap_size = sim_stats.pf_redundant_by_cap_size;
+  roi_stats.pf_fill_own_by_cap_size = sim_stats.pf_fill_own_by_cap_size;
+  roi_stats.pf_useful_timely_demand_by_cap_size = sim_stats.pf_useful_timely_demand_by_cap_size;
+  roi_stats.pf_useful_timely_upper_pf_by_cap_size = sim_stats.pf_useful_timely_upper_pf_by_cap_size;
+  roi_stats.pf_useful_late_by_cap_size = sim_stats.pf_useful_late_by_cap_size;
+  roi_stats.pf_useless_by_cap_size = sim_stats.pf_useless_by_cap_size;
+  roi_stats.pf_useful_same_object_by_cap_size = sim_stats.pf_useful_same_object_by_cap_size;
+  roi_stats.pf_useful_demand_untagged_by_cap_size = sim_stats.pf_useful_demand_untagged_by_cap_size;
+  roi_stats.pf_out_of_bounds_at_issue_by_cap_size = sim_stats.pf_out_of_bounds_at_issue_by_cap_size;
 
 
   for (auto* ul : upper_levels) {

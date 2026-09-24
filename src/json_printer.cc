@@ -55,6 +55,35 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
   statsmap.emplace("useless prefetch", stats.pf_useless);
   statsmap.emplace("prefetch cap offset unadjusted", stats.pf_cap_offset_unadjusted);
 
+  // Prefetch outcomes by issuing capability size class: {counter: {class: [per-cpu raw counts]}}
+  {
+    const std::array<std::pair<const char*, const champsim::stats::event_counter<pf_cap_key>*>, 11> by_size{{
+        {"issued", &stats.pf_issued_by_cap_size},
+        {"issued skip fill", &stats.pf_issued_skip_fill_by_cap_size},
+        {"redundant", &stats.pf_redundant_by_cap_size},
+        {"out of bounds at issue", &stats.pf_out_of_bounds_at_issue_by_cap_size},
+        {"fill own", &stats.pf_fill_own_by_cap_size},
+        {"useful timely demand", &stats.pf_useful_timely_demand_by_cap_size},
+        {"useful timely upper-level prefetch", &stats.pf_useful_timely_upper_pf_by_cap_size},
+        {"useful late", &stats.pf_useful_late_by_cap_size},
+        {"useless", &stats.pf_useless_by_cap_size},
+        {"useful same object", &stats.pf_useful_same_object_by_cap_size},
+        {"useful demand untagged", &stats.pf_useful_demand_untagged_by_cap_size},
+    }};
+    std::map<std::string, nlohmann::json> by_size_json;
+    for (const auto& [counter_name, counter] : by_size) {
+      std::map<std::string, std::vector<long>> per_class;
+      for (auto cls : cap_size_coverage_events_with_untagged) {
+        std::vector<long> per_cpu;
+        for (std::size_t cpu = 0; cpu < NUM_CPUS; ++cpu)
+          per_cpu.push_back(counter->value_or(pf_cap_key{cls, cpu}, 0L));
+        per_class.emplace(cap_size_coverage_events_names.at(static_cast<std::size_t>(cls)), per_cpu);
+      }
+      by_size_json.emplace(counter_name, per_class);
+    }
+    statsmap.emplace("prefetch by capability size", by_size_json);
+  }
+
   uint64_t total_downstream_demands = stats.fill.total();
   for (std::size_t cpu = 0; cpu < NUM_CPUS; ++cpu)
     total_downstream_demands -= stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});
