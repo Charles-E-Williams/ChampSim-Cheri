@@ -152,11 +152,11 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **Wiring:** all counters are in `end_phase`'s `roi_stats` copy and in `operator-`.
   - **Output:**
     - Plain text: two per-CPU tables for L1D/L2C/LLC, printed after the existing CHERI sections. Rows whose cells are all zero are skipped, and a table with no rows is not printed. Long column names use two header lines. Counter names and JSON keys are unchanged.
-      - **"Prefetch Outcomes by Object Size (ROI)":** Object Size | Issued (`issued`) | Already Cached (`redundant`) | Filled (`fill_own`) | Used On Time (`timely_demand`) | Used Late (`late`) | Evicted Unused (`useless`) | Still Cached | Accuracy | On-Time % | Late %.
+      - **"Prefetch Outcomes by Object Size (ROI)":** Object Size | Issued (`issued`) | Already Cached (`redundant`) | Filled (`fill_own`) | Used On Time (`timely_demand`) | Used Late (`late`) | Evicted Unused (`useless`) | Accuracy | On-Time % | Late %.
         - The derived columns use prefetch fills = Filled + Used Late as the denominator (the Berti, MICRO'22 definition). Upstream does not count a late prefetch as a fill, because the merged demand takes over its MSHR entry, but the prefetch still brought the line in.
         - Accuracy = (Used On Time + Used Late) / prefetch fills (demand-only useful).
         - On-Time % = Used On Time / prefetch fills; Late % = Used Late / prefetch fills; On-Time % + Late % = Accuracy.
-        - Still Cached = Filled − Used On Time − `timely_upper_pf` − Evicted Unused. It is informational and counts as not useful.
+        - Filled stays because it is part of the accuracy denominator. An earlier derived "Still Cached" column (Filled − Used On Time − `timely_upper_pf` − Evicted Unused) was dropped; see warmup carryover below.
       - **"Prefetch Consumers by Object Size (ROI)":** Object Size | Same Object (`same_object`) | Other Object (Used On Time + Used Late − Same Object − Untagged Demand) | Untagged Demand (`demand_untagged`) | Upper-Level Prefetch Hit (`timely_upper_pf`, not counted in accuracy) | Sent To Lower Level (`skip_fill`, issued with `fill_this_level == false` and never credited).
     - JSON: `"prefetch by capability size"` → counter → class → per-CPU raw counts.
     - Coverage by size is computed offline against the authority-capability LOAD miss table.
@@ -166,7 +166,10 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `pf_fill` excludes fills that bypass the cache.
     - `invalidate_entry` counts nothing.
   - **Same-object rule:** "same object" also requires a tagged issuing capability.
-  - **Resident blocks:** resident-at-end can be off by the rare invalidation.
+  - **Warmup carryover:** like upstream's prefetch counters, the by-size counters include prefetches issued during warmup whose fill, use or eviction happens in the ROI.
+    - `begin_phase` resets the counters but not the prefetch bits or in-flight entries.
+    - Each prefetch has at most one outcome, so per cache the carryover is at most its line count plus its MSHR and prefetch-queue entries.
+  - **Invalidations:** `invalidate_entry` clears a block without counting it, so a rare invalidated prefetch has no outcome.
   - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases: 437-1 to 437-8 and 437-10 to 437-12; 437-9 was removed with the out-of-bounds counter).
 
 - **The core presents the authorizing capability with its cursor at the effective address.**

@@ -317,8 +317,7 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     // Prefetch outcomes by the size class of the capability on the prefetch packet (the issuing object), in two tables.
     // Outcomes: accuracy follows Berti (MICRO'22): useful / prefetch fills, where prefetch fills = Filled + Used Late
     // (a late prefetch still brought its line in, although the merged demand took over its MSHR entry) and useful is
-    // demand-only (Used On Time + Used Late). On-Time % + Late % = Accuracy. Still Cached = Filled - Used On Time -
-    // Upper-Level Prefetch Hit - Evicted Unused.
+    // demand-only (Used On Time + Used Late). On-Time % + Late % = Accuracy.
     // Consumers: who used the useful prefetches. Other Object = Used On Time + Used Late - Same Object - Untagged Demand.
     // Coverage by size is computed offline against the authority-capability LOAD miss table above.
     if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos) {
@@ -367,17 +366,16 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
         const long timely_upper_pf = count(stats.pf_useful_timely_upper_pf_by_cap_size, cls);
         const long late = count(stats.pf_useful_late_by_cap_size, cls);
         const long useless = count(stats.pf_useless_by_cap_size, cls);
-        const long still_cached = fill_own - timely_demand - timely_upper_pf - useless;
         const long prefetch_fills = fill_own + late;
         const long same_object = count(stats.pf_useful_same_object_by_cap_size, cls);
         const long untagged_demand = count(stats.pf_useful_demand_untagged_by_cap_size, cls);
         const long other_object = timely_demand + late - same_object - untagged_demand;
         const long skip_fill = count(stats.pf_issued_skip_fill_by_cap_size, cls);
 
-        if (issued != 0 || redundant != 0 || fill_own != 0 || timely_demand != 0 || late != 0 || useless != 0 || still_cached != 0)
+        if (issued != 0 || redundant != 0 || fill_own != 0 || timely_demand != 0 || late != 0 || useless != 0)
           outcome_rows.push_back({cls,
                                   {std::to_string(issued), std::to_string(redundant), std::to_string(fill_own), std::to_string(timely_demand),
-                                   std::to_string(late), std::to_string(useless), std::to_string(still_cached), pct(timely_demand + late, prefetch_fills),
+                                   std::to_string(late), std::to_string(useless), pct(timely_demand + late, prefetch_fills),
                                    pct(timely_demand, prefetch_fills), pct(late, prefetch_fills)}});
         if (same_object != 0 || other_object != 0 || untagged_demand != 0 || timely_upper_pf != 0 || skip_fill != 0)
           consumer_rows.push_back({cls,
@@ -392,7 +390,6 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
                   {"", "Used On Time"},
                   {"", "Used Late"},
                   {"Evicted", "Unused"},
-                  {"", "Still Cached"},
                   {"", "Accuracy"},
                   {"", "On-Time %"},
                   {"", "Late %"}},
