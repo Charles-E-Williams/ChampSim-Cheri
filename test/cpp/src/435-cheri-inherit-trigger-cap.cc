@@ -62,7 +62,8 @@ struct result {
   uint64_t unadjusted = 0;
 };
 
-// virtual_upper: the upper cache prefetches in the virtual address space (like L1D) and translates through a mock.
+// virtual_upper: the upper cache prefetches in the virtual address space and translates through a mock.
+// (The test defaults do not set virtual_prefetch on default_l1d, so it is set explicitly.)
 result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::address> targets, champsim::address cycle)
 {
   in_hook_targets = std::move(targets);
@@ -79,12 +80,15 @@ result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::addr
                            .lower_level(&upper_to_lower)
                            .prefetcher<::legacy_issuer>();
   if (virtual_upper)
-    upper_builder.lower_translate(&mock_lt.queues);
+    upper_builder.lower_translate(&mock_lt.queues).set_virtual_prefetch();
+  else
+    upper_builder.reset_virtual_prefetch();
   if (inherit)
     upper_builder.set_inherit_trigger_cap();
   else
     upper_builder.reset_inherit_trigger_cap();
   CACHE upper{upper_builder};
+  REQUIRE(upper.virtual_prefetch == virtual_upper);
   CACHE lower{champsim::cache_builder{champsim::defaults::default_llc}
                   .name("435-lower")
                   .upper_levels({&upper_to_lower})
