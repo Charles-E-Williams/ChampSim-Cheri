@@ -317,48 +317,92 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
     if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos)
       lines.push_back(fmt::format("cpu{}->{} PREFETCH CAP OFFSET UNADJUSTED: {:10}", cpu, stats.name, stats.pf_cap_offset_unadjusted));
 
-    // Prefetch outcomes by the size class of the capability on the prefetch packet. Raw counts first; the last four columns
-    // are derived over prefetch fills = FillOwn + Late (Berti, MICRO'22: accuracy = useful / prefetch fills; a late prefetch
-    // still brought its line in, although the merged demand took over its MSHR entry). Useful here is demand-only:
-    // TimelyDem + Late. TimelyUpPf (a PREFETCH from the upper level hit the block) is shown but not counted as useful.
-    // Timely% + Late% = Accuracy.
+    // Prefetch outcomes by the size class of the capability on the prefetch packet (the issuing object), in two tables.
+    // Outcomes: accuracy follows Berti (MICRO'22): useful / prefetch fills, where prefetch fills = Filled + Used Late
+    // (a late prefetch still brought its line in, although the merged demand took over its MSHR entry) and useful is
+    // demand-only (Used On Time + Used Late). On-Time % + Late % = Accuracy. Still Cached = Filled - Used On Time -
+    // Upper-Level Prefetch Hit - Evicted Unused.
+    // Consumers: who used the useful prefetches. Other Object = Used On Time + Used Late - Same Object - Untagged Demand.
     // Coverage by size is computed offline against the authority-capability LOAD miss table above.
     if (stats.name.find("L1D") != std::string::npos || stats.name.find("L2C") != std::string::npos || stats.name.find("LLC") != std::string::npos) {
       auto count = [&](const auto& counter, cap_size_coverage_events cls) { return counter.value_or(pf_cap_key{cls, cpu}, 0L); };
-      bool any = false;
-      for (auto cls : cap_size_coverage_events_with_untagged)
-        any = any || count(stats.pf_issued_by_cap_size, cls) > 0 || count(stats.pf_redundant_by_cap_size, cls) > 0
-              || count(stats.pf_useful_timely_demand_by_cap_size, cls) > 0 || count(stats.pf_useful_timely_upper_pf_by_cap_size, cls) > 0
-              || count(stats.pf_useful_late_by_cap_size, cls) > 0
-              || count(stats.pf_useless_by_cap_size, cls) > 0 || count(stats.pf_fill_own_by_cap_size, cls) > 0;
+      auto pct = [](long num, long denom) -> std::string {
+        if (denom <= 0)
+          return "-";
+        return fmt::format("{:.1f}%", 100.0 * static_cast<double>(num) / static_cast<double>(denom));
+      };
 
-      if (any) {
-        auto ratio = [](long num, long denom) -> std::string {
-          if (denom <= 0)
-            return fmt::format("{:>9s}", "-");
-          return fmt::format("{:8.1f}%", 100.0 * static_cast<double>(num) / static_cast<double>(denom));
-        };
-        lines.push_back(fmt::format("cpu{}->{} Prefetch Usefulness by Capability Size", cpu, stats.name));
-        lines.push_back(fmt::format("  {:<10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>10s} {:>9s} {:>9s} {:>9s} {:>10s}", "Object",
-                                    "Issued", "SkipFill", "Redundant", "FillOwn", "TimelyDem", "TimelyUpPf", "Late", "Useless", "SameObj",
-                                    "DemUntag", "Accuracy", "Timely%", "Late%", "UnusedEnd"));
-        for (auto cls : cap_size_coverage_events_with_untagged) {
-          const long timely_demand = count(stats.pf_useful_timely_demand_by_cap_size, cls);
-          const long timely_upper_pf = count(stats.pf_useful_timely_upper_pf_by_cap_size, cls);
-          const long late = count(stats.pf_useful_late_by_cap_size, cls);
-          const long useless = count(stats.pf_useless_by_cap_size, cls);
-          const long fill_own = count(stats.pf_fill_own_by_cap_size, cls);
-          const long prefetch_fills = fill_own + late;
-          lines.push_back(fmt::format("  {:<10s} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {:10d} {} {} {} {:10d}",
-                                      cap_size_coverage_events_names.at(static_cast<std::size_t>(cls)), count(stats.pf_issued_by_cap_size, cls),
-                                      count(stats.pf_issued_skip_fill_by_cap_size, cls), count(stats.pf_redundant_by_cap_size, cls),
-                                      fill_own, timely_demand, timely_upper_pf, late, useless,
-                                      count(stats.pf_useful_same_object_by_cap_size, cls), count(stats.pf_useful_demand_untagged_by_cap_size, cls),
-                                      ratio(timely_demand + late, prefetch_fills), ratio(timely_demand, prefetch_fills), ratio(late, prefetch_fills),
-                                      fill_own - timely_demand - timely_upper_pf - useless));
+      struct column {
+        const char* top; // first header line; empty when the name fits on one line
+        const char* bottom;
+      };
+      using row_type = std::pair<cap_size_coverage_events, std::vector<std::string>>;
+
+      // Prints a table; rows whose numeric cells are all zero were already dropped, and an empty table is not printed
+      auto emit_table = [&](const char* title, const std::vector<column>& columns, const std::vector<row_type>& rows) {
+        if (rows.empty())
+          return;
+        lines.push_back(fmt::format("cpu{}->{} {}", cpu, stats.name, title));
+        std::string top = fmt::format("  {:<11s}", "");
+        std::string bottom = fmt::format("  {:<11s}", "Object Size");
+        for (const auto& col : columns) {
+          top += fmt::format(" {:>12s}", col.top);
+          bottom += fmt::format(" {:>12s}", col.bottom);
+        }
+        lines.push_back(top);
+        lines.push_back(bottom);
+        for (const auto& [cls, cells] : rows) {
+          std::string row = fmt::format("  {:<11s}", cap_size_coverage_events_names.at(static_cast<std::size_t>(cls)));
+          for (const auto& cell : cells)
+            row += fmt::format(" {:>12s}", cell);
+          lines.push_back(row);
         }
         lines.emplace_back("");
+      };
+
+      std::vector<row_type> outcome_rows;
+      std::vector<row_type> consumer_rows;
+      for (auto cls : cap_size_coverage_events_with_untagged) {
+        const long issued = count(stats.pf_issued_by_cap_size, cls);
+        const long redundant = count(stats.pf_redundant_by_cap_size, cls);
+        const long fill_own = count(stats.pf_fill_own_by_cap_size, cls);
+        const long timely_demand = count(stats.pf_useful_timely_demand_by_cap_size, cls);
+        const long timely_upper_pf = count(stats.pf_useful_timely_upper_pf_by_cap_size, cls);
+        const long late = count(stats.pf_useful_late_by_cap_size, cls);
+        const long useless = count(stats.pf_useless_by_cap_size, cls);
+        const long still_cached = fill_own - timely_demand - timely_upper_pf - useless;
+        const long prefetch_fills = fill_own + late;
+        const long same_object = count(stats.pf_useful_same_object_by_cap_size, cls);
+        const long untagged_demand = count(stats.pf_useful_demand_untagged_by_cap_size, cls);
+        const long other_object = timely_demand + late - same_object - untagged_demand;
+        const long skip_fill = count(stats.pf_issued_skip_fill_by_cap_size, cls);
+
+        if (issued != 0 || redundant != 0 || fill_own != 0 || timely_demand != 0 || late != 0 || useless != 0 || still_cached != 0)
+          outcome_rows.push_back({cls,
+                                  {std::to_string(issued), std::to_string(redundant), std::to_string(fill_own), std::to_string(timely_demand),
+                                   std::to_string(late), std::to_string(useless), std::to_string(still_cached), pct(timely_demand + late, prefetch_fills),
+                                   pct(timely_demand, prefetch_fills), pct(late, prefetch_fills)}});
+        if (same_object != 0 || other_object != 0 || untagged_demand != 0 || timely_upper_pf != 0 || skip_fill != 0)
+          consumer_rows.push_back({cls,
+                                   {std::to_string(same_object), std::to_string(other_object), std::to_string(untagged_demand),
+                                    std::to_string(timely_upper_pf), std::to_string(skip_fill)}});
       }
+
+      emit_table("Prefetch Outcomes by Object Size (ROI)",
+                 {{"", "Issued"},
+                  {"Already", "Cached"},
+                  {"", "Filled"},
+                  {"", "Used On Time"},
+                  {"", "Used Late"},
+                  {"Evicted", "Unused"},
+                  {"", "Still Cached"},
+                  {"", "Accuracy"},
+                  {"", "On-Time %"},
+                  {"", "Late %"}},
+                 outcome_rows);
+      emit_table("Prefetch Consumers by Object Size (ROI)",
+                 {{"", "Same Object"}, {"", "Other Object"}, {"Untagged", "Demand"}, {"Upper-Level", "Prefetch Hit"}, {"Sent To", "Lower Level"}},
+                 consumer_rows);
     }
 
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});

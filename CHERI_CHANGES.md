@@ -151,12 +151,13 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `pf_useful_same_object_by_cap_size` (demand cap tagged with the issuing base) and `pf_useful_demand_untagged_by_cap_size`. Both are counted only for demand uses (timely-demand and late).
   - **Wiring:** all counters are in `end_phase`'s `roi_stats` copy and in `operator-`.
   - **Output:**
-    - Plain text: a per-CPU "Prefetch Usefulness by Capability Size" table for L1D/L2C/LLC, printed after the existing CHERI sections and only when a count is nonzero. It shows raw counts plus derived columns over prefetch fills = fill_own + late (the Berti, MICRO'22 definition; upstream does not count a late prefetch as a fill because the merged demand takes over its MSHR entry, but it still brought the line in):
-      - accuracy = (timely_demand + late) / prefetch fills (demand-only useful);
-      - timely % = timely_demand / prefetch fills;
-      - late % = late / prefetch fills (timely % + late % = accuracy);
-      - unused at end = fill_own − timely_demand − timely_upper_pf − useless (informational; counts as not useful).
-      - Upper-level-prefetch hits have their own raw column (`TimelyUpPf`) and are not in accuracy.
+    - Plain text: two per-CPU tables for L1D/L2C/LLC, printed after the existing CHERI sections. Rows whose cells are all zero are skipped, and a table with no rows is not printed. Long column names use two header lines. Counter names and JSON keys are unchanged.
+      - **"Prefetch Outcomes by Object Size (ROI)":** Object Size | Issued (`issued`) | Already Cached (`redundant`) | Filled (`fill_own`) | Used On Time (`timely_demand`) | Used Late (`late`) | Evicted Unused (`useless`) | Still Cached | Accuracy | On-Time % | Late %.
+        - The derived columns use prefetch fills = Filled + Used Late as the denominator (the Berti, MICRO'22 definition). Upstream does not count a late prefetch as a fill, because the merged demand takes over its MSHR entry, but the prefetch still brought the line in.
+        - Accuracy = (Used On Time + Used Late) / prefetch fills (demand-only useful).
+        - On-Time % = Used On Time / prefetch fills; Late % = Used Late / prefetch fills; On-Time % + Late % = Accuracy.
+        - Still Cached = Filled − Used On Time − `timely_upper_pf` − Evicted Unused. It is informational and counts as not useful.
+      - **"Prefetch Consumers by Object Size (ROI)":** Object Size | Same Object (`same_object`) | Other Object (Used On Time + Used Late − Same Object − Untagged Demand) | Untagged Demand (`demand_untagged`) | Upper-Level Prefetch Hit (`timely_upper_pf`, not counted in accuracy) | Sent To Lower Level (`skip_fill`, issued with `fill_this_level == false` and never credited).
     - JSON: `"prefetch by capability size"` → counter → class → per-CPU raw counts.
     - Coverage by size is computed offline against the authority-capability LOAD miss table.
   - **Counting semantics are upstream's**, verified in the port:
