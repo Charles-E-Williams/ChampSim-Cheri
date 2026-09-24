@@ -18,6 +18,8 @@ void cheri_ptr_chase::prefetcher_initialize()
 uint32_t cheri_ptr_chase::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
                                                    bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
+  if (!cheri::is_tag_valid(cap))
+    return metadata_in;
 
 
   auto stored = champsim::cap_mem[intern_->cpu].load_capability(addr);

@@ -988,6 +988,9 @@ uint32_t berti_cheri::prefetcher_cache_operate(champsim::address addr, champsim:
                                         uint8_t cache_hit, bool useful_prefetch, access_type type,
                                         uint32_t metadata_in, uint32_t metadata_hit)
 {
+  if (!cheri::is_tag_valid(cap))
+    return metadata_in;
+
   // We select the structures for every cpu
   LatencyTable* tlatencyt = latencyt[me];
   ShadowCache* tscache = scache[me];
