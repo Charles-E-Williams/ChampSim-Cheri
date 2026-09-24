@@ -39,7 +39,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 | Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. (The fork's `CACHE::v_addr` / `vaddr_evicted` side-channel members were removed after the port.) |
 | DRAM | `src/dram_controller.cc` | `cap` passes through responses. |
 | Stats | `inc/cache_stats.h`, `src/cache_stats.cc`, `src/plain_printer.cc` | `cap_auth_*` and `cap_data_*` hit/miss by size class; `capabilities_per_cl_{hit,miss}`. Plain text only (original CHERI distributions). Downstream plot scripts parse this format, so do not change it. |
-| Utilities | `inc/cheri_prefetch_utils.h` | Permission bits, `CAPS_PER_CL`, `TLBClone`, bounds helpers |
+| Utilities | `inc/cheri_prefetch_utils.h` | Permission bits, `CAPS_PER_CL`, bounds helpers (`TLBClone` was removed after the port) |
 | Misc | `inc/msl/lru_table.h`, `inc/ptw.h`, `src/ptw.cc`, `src/vmem.cc`, `inc/register_allocator.h`, `inc/champsim.h`, `src/modules.cc`, `Makefile` | Small supporting edits. `REG_RETURN` was added for RISC-V branches. |
 
 ### C. Modules
@@ -60,7 +60,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 - **2026-02-18 / 02-26:** First CHERI prefetcher (`ip_stride_cheri`), then CHERI cache stats.
 - **2026-03-17:** Auth/transferred caps plus a `cap_op` bitmask. PRESIMPOINT entries load `cap_mem` without entering the pipeline. Rule: only capability *stores* update `cap_mem`, at store completion.
 - **2026-03-28:** DPC4 infrastructure (`is_instr`). Untagged-authority fallback paths removed from the CHERI prefetchers (`3a6144aa`).
-- **2026-03-29 to 2026-04-03:** `TLBClone` added (`99932c81`), removed (`2dc0d48d`), then kept in utils.
+- **2026-03-29 to 2026-04-03:** `TLBClone` added (`99932c81`), removed (`2dc0d48d`), then kept in utils. It had no users and was deleted in 2026-09.
 - **2026-04-08:** Compact capability memory. `finalize()` made idempotent to fix the trace-wrap crash.
 - **2026-04-13:** `evicted_cap` threaded through the fill hook (for AMPM-CHERI zone cleanup).
 - **2026-05-04:** More hook parameters (`d62f8668`); the explicit `cap` argument replaced `intern_->get_authorizing_capability()`.
