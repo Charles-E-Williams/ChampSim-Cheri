@@ -65,7 +65,7 @@ public:
 
   static uint64_t make_zone_key(uint64_t cap_base, uint64_t cap_zone_id);
   auto zone_key_and_offset(champsim::address va, const champsim::capability& cap) const-> std::pair<region_key_type, std::size_t>;
-  void add_to_map(champsim::address va, champsim::address pa, const champsim::capability& cap, bool prefetch);
+  void add_to_map(champsim::address va, const champsim::capability& cap, bool prefetch);
   bool check_map(champsim::address va, const champsim::capability& cap, bool prefetch);
   void do_prefetch(CACHE* cache, champsim::address pa, champsim::address va, const champsim::capability& cap, uint32_t metadata_in, int degree, bool two_level);
 

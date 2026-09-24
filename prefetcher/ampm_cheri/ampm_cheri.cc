@@ -50,7 +50,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
   champsim::address va = *va_line;
 
   // Record access in object-relative bitmap
-  add_to_map(va, addr, cap, false);
+  add_to_map(va, cap, false);
 
 
 

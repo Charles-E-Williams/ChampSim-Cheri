@@ -45,7 +45,7 @@ auto ampm_cheri::zone_key_and_offset(champsim::address va,  const champsim::capa
 }
 
 
-void ampm_cheri::add_to_map(champsim::address va, champsim::address pa, const champsim::capability& cap, bool prefetch)
+void ampm_cheri::add_to_map(champsim::address va, const champsim::capability& cap, bool prefetch)
 {
   auto [key, offset] = zone_key_and_offset(va, cap);
 
@@ -133,7 +133,7 @@ void ampm_cheri::do_prefetch(CACHE* cache, champsim::address pa, champsim::addre
           champsim::address pf_addr{pf_pa};
 
           if (cache->prefetch_line(pf_addr, two_level, metadata_in)) {
-            add_to_map(va_candidate, pf_addr, cap, true);
+            add_to_map(va_candidate, cap, true);
             pf_count++;
           }
         }

@@ -81,7 +81,7 @@ TEST_CASE("439-3: AMPM-CHERI eviction cleanup works from evicted_cap, and is ski
   const champsim::address line_pa{0x9040};
   const auto line_cap = make_cap(base, 1 << 20, 0x2040); // e.g. an own prefetch's re-pointed capability
 
-  p.add_to_map(line_va, line_pa, line_cap, true);
+  p.add_to_map(line_va, line_cap, true);
   REQUIRE(p.check_map(line_va, line_cap, true));
 
   SECTION("cursor in the evicted line: the zone bit is cleared")
