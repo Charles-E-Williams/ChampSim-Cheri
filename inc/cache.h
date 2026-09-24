@@ -79,7 +79,6 @@ class CACHE : public champsim::operable
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
-    bool is_instr = false;
     champsim::chrono::clock::time_point event_cycle = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -108,7 +107,6 @@ public:
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
-    bool is_instr = false;
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -147,9 +145,6 @@ private:
 
   template <typename T>
   champsim::address module_address(const T& element) const;
-
-  template <typename T>
-  bool module_is_instr(const T& element) const;
 
   template <typename T>
   champsim::address module_vaddress(const T& element) const;

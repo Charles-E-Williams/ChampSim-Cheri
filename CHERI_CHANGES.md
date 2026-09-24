@@ -20,7 +20,7 @@ Commits: `ae7b5d6` (2026-03-04, DPC4 prefetchers), `c64598a1` (2026-03-28, prefe
   - An intermediate fill form, `(addr, set, way, prefetch, evicted_addr, metadata_in, evicted_cap)`, is also accepted.
   - All upstream legacy signatures still dispatch through the `if constexpr` chain in `inc/cache.h`.
 - **Silent-mismatch pitfall.** A prefetcher whose signature matches no form is silently ignored: it compiles, but issues zero prefetches. This bit the project in Jun 2025 and again on 2026-04-01 (`spp_ppf_cheri`).
-- **`is_instr` gating.** `is_instr` sits on `channel::request`, `CACHE::tag_lookup_type` and `CACHE::fill_type`, and `CACHE::module_is_instr()` reads it. Fetch packets set it in `O3_CPU::do_fetch_instruction`. Prefetchers are activated only on data accesses (`should_activate_prefetcher(...) && !module_is_instr(...)`) and trained only on data fills. As a result, L2C/LLC prefetchers never see instruction-fetch misses, which differs from stock upstream even for non-CHERI prefetchers.
+- **`is_instr` gating.** `is_instr` sits on `channel::request`, `CACHE::tag_lookup_type` and `CACHE::fill_type`, and `CACHE::module_is_instr()` reads it. Fetch packets set it in `O3_CPU::do_fetch_instruction`. Prefetchers are activated only on data accesses (`should_activate_prefetcher(...) && !module_is_instr(...)`) and trained only on data fills. As a result, L2C/LLC prefetchers never see instruction-fetch misses, which differs from stock upstream even for non-CHERI prefetchers. **Removed after the port; see "Behaviour changes after the port".**
 - **`BLOCK::cpu`** is recorded at fill and used for `cpu_evict`.
 
 ### B. CHERI core simulator
@@ -115,6 +115,17 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Every occurrence is counted in `cpu_stats::untagged_auth_loads` and `untagged_auth_stores`. These are printed per core as `cpuN UNTAGGED AUTHORITY CAPABILITY LOADS: x STORES: y`, and included in JSON.
   - Like the other core stats, the counters reset at each phase, so the final (ROI) numbers exclude warmup.
   - Test `198-core-plain-printer.cc` expects the new line.
+
+- **`is_instr` gating removed (brief §10 task 1).**
+  - What was removed: the `is_instr` field on `channel::request`, `CACHE::tag_lookup_type` and `CACHE::fill_type`; `CACHE::module_is_instr()`; the flag set in `O3_CPU::do_fetch_instruction`.
+  - Prefetcher activation in `try_hit` is upstream's `should_activate_prefetcher(handle_pkt)` again, so each cache's JSON `prefetch_activate` list alone decides. `handle_fill` calls `prefetcher_cache_fill` for every fill, as upstream does.
+  - Consequences:
+    - L2C/LLC prefetchers now see instruction-fetch misses (LOAD) and instruction-line fills, and L1I prefetchers are trained on their fills.
+    - Instruction fetches carry no authorizing capability. CHERI prefetchers return early from `cache_operate` on them (untagged-cap policy). Their fill hooks either ignore the untagged `cap`/`evicted_cap` or check the tag (`ampm_cheri`).
+    - Stock and third-party prefetchers at L2C/LLC now train on instruction misses, so baseline (`champsim_riscv_*`) results change too.
+    - The CHERI cache stats were never gated, so they are unchanged.
+  - Test: `436-l1i-miss-activates-l2c-prefetcher.cc`.
+  - Upstream's `_is_instruction_cache` / `_is_instruction_prefetcher` in `config/` and `test/python/` are unrelated upstream config flags and remain.
 
 ## Known issues (intentionally not changed)
 - **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
