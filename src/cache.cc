@@ -232,23 +232,8 @@ champsim::capability CACHE::repoint_prefetch_cap(champsim::capability cap, champ
     return cap;
 
   const auto pf_vaddr = prefetch_vaddr(pf_addr);
-  if (!pf_vaddr.has_value()) {
+  if (!pf_vaddr.has_value() || !cheri::repoint_cap_to_line(cap, *pf_vaddr))
     ++sim_stats.pf_cap_offset_unadjusted;
-    return cap;
-  }
-
-  const uint64_t va = pf_vaddr->to<uint64_t>();
-  const uint64_t line_start = va & ~static_cast<uint64_t>(BLOCK_SIZE - 1);
-  const uint64_t base = cap.base.to<uint64_t>();
-  const uint64_t cursor = base + cap.offset.to<uint64_t>(); // raw; capability_cursor() would assert on a wrapped offset
-  if (cursor >= line_start && cursor - line_start < BLOCK_SIZE)
-    return cap;
-
-  if (cheri::overlaps_bounds(champsim::block_number{*pf_vaddr}, cap.base, cheri::capability_top(cap)))
-    cap.offset = champsim::address{std::max(va, base) - base};
-  else
-    ++sim_stats.pf_cap_offset_unadjusted;
-
   return cap;
 }
 
@@ -256,13 +241,6 @@ template <typename T>
 champsim::address CACHE::module_address(const T& element) const
 {
   auto address = virtual_prefetch ? element.v_address : element.address;
-  return champsim::address{address.slice_upper(match_offset_bits ? champsim::data::bits{} : OFFSET_BITS)};
-}
-
-template <typename T>
-champsim::address CACHE::module_vaddress(const T& element) const
-{
-  auto address = element.v_address;
   return champsim::address{address.slice_upper(match_offset_bits ? champsim::data::bits{} : OFFSET_BITS)};
 }
 
@@ -321,11 +299,9 @@ bool CACHE::handle_fill(const fill_type& fill)
   const uint32_t cpu_evict = evicted_valid ? way->cpu : static_cast<uint32_t>(NUM_CPUS);
   if (evicted_valid) {
     evicting_address = module_address(*way);
-    vaddr_evicted = module_vaddress(*way);
     evicted_cap = way->auth_cap;
   }
 
-  v_addr = module_vaddress(fill);
   auto metadata_thru = impl_prefetcher_cache_fill(module_address(fill), fill.ip, fill.cpu, fill.cap, useless, get_set_index(fill.address), way_idx,
                                                   (fill.type == access_type::PREFETCH), evicting_address, evicted_cap, fill.data_promise->pf_metadata,
                                                   metadata_evict, cpu_evict);
@@ -381,7 +357,6 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   if (should_activate_prefetcher(handle_pkt)) {
     const uint32_t metadata_hit = hit ? way->pf_metadata : 0u;
-    v_addr = module_vaddress(handle_pkt);
     if (inherit_trigger_cap)
       prefetch_trigger = prefetch_trigger_type{handle_pkt.cap, handle_pkt.address, handle_pkt.v_address};
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, handle_pkt.cpu, handle_pkt.cap, hit, useful_prefetch,

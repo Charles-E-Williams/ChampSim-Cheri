@@ -12,6 +12,8 @@
 #include "cheri_prefetch_utils.h"
 
 struct sms_cheri : public champsim::modules::prefetcher {
+  friend struct sms_cheri_test_access; // unit tests (test/cpp/src/439-*)
+
 private:
   //  Configuration 
   constexpr static uint32_t AT_SIZE = 32;
@@ -40,8 +42,9 @@ private:
     uint32_t offset;        // CL index within the region
     uint64_t cap_base;
     uint64_t cap_top;
-    uint64_t demand_pa_page;
-    uint64_t demand_va_page;
+    uint64_t demand_pa_line;        // physical line address of the demand
+    uint64_t demand_obj_line;       // demand's line index within the object (cursor offset >> LOG2_BLOCK_SIZE)
+    uint64_t region_first_obj_line; // object line index of the region's first line
   };
 
   region_info decompose(uint64_t pa, const champsim::capability& cap) const;
@@ -74,7 +77,9 @@ private:
                                 const region_info& ri,
                                 std::vector<uint64_t>& pref_addr);
 
-  void buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap);
+  // Buffers each target with the demand's capability re-pointed at the target line (cheri::repoint_cap_to_line), so
+  // prefetches issued later from cycle_operate carry correct cursors.
+  void buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap, const region_info& ri);
   void issue_prefetch();
 
   //  Statistics 

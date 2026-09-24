@@ -36,7 +36,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 | Capability memory | `inc/capability_memory.h`, `src/capability_memory.cc` | Per-CPU shadow of 16-byte slots. A presimpoint map is compacted by the idempotent `finalize()` into a sorted vector plus an interned descriptor table. Later stores and invalidations are tracked in separate structures. |
 | Core | `src/ooo_cpu.cc`, `inc/ooo_cpu.h` | `LSQ_ENTRY` carries the auth and transferred caps. Loads and stores put `auth_cap` on the packet and warn when it is untagged. `do_complete_store` is the only runtime writer of `cap_mem`: a tagged transferred cap is stored, anything else invalidates the slot. |
 | Packets | `inc/channel.h` | `request.cap`, `response.cap`, a 6-arg `response` constructor. The upstream 5-arg constructor is kept. |
-| Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. `CACHE::v_addr` and `vaddr_evicted` side-channel members. |
+| Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. (The fork's `CACHE::v_addr` / `vaddr_evicted` side-channel members were removed after the port.) |
 | DRAM | `src/dram_controller.cc` | `cap` passes through responses. |
 | Stats | `inc/cache_stats.h`, `src/cache_stats.cc`, `src/plain_printer.cc` | `cap_auth_*` and `cap_data_*` hit/miss by size class; `capabilities_per_cl_{hit,miss}`. Plain text only. Downstream plot scripts parse this format, so do not change it. |
 | Utilities | `inc/cheri_prefetch_utils.h` | Permission bits, `CAPS_PER_CL`, `TLBClone`, bounds helpers |
@@ -180,6 +180,28 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **Effect:** this changes every CHERI prefetcher that derives position from the cursor: `lines_from_cap_base()`, `capability_cursor()`, `sms_cheri`'s region offset and `ampm_cheri`'s zone offset. The authorizing caps stored on blocks (`auth_cap`, later `evicted_cap`) and passed down the hierarchy change too.
   - Test `198-core-plain-printer.cc` expects the new line.
 
+- **`CACHE::v_addr` / `vaddr_evicted` side channel removed.**
+  - What it was: two members written in `try_hit`/`handle_fill` just before the prefetcher hooks and read by three CHERI prefetchers.
+    - At a physical cache the cache's own prefetches carry `v_address = 0`, so for evicted own-prefetched lines it gave AMPM-CHERI a VA of 0, and their zone cleanup was silently skipped.
+  - Removed: both members, every write, and the now-unused `CACHE::module_vaddress()`.
+  - Readers now derive what they need from the capability, which the core presents with its cursor at the effective address. Choice per reader:
+    - **`spp_cheri` operate, option (A).** The demand's virtual line comes from `cheri::line_va_from_cursor(cap, addr)`: accepted only if the cap is tagged and the cursor's line position within the page equals the physical address's. On failure, return early (untagged-cap policy), counted as `Cursor/line check failed` in its final stats. The VA only feeds the candidate VAs for `prefetch_safe` and lookahead, so results match the old side channel whenever the check passes.
+    - **`sms_cheri` decompose, option (B).** Everything comes from the cursor and the physical address. Target physical line = demand's physical line + (target object line − demand object line)·64, kept only if it stays on the demand's physical page (the next-region path too). The bounds checks are unchanged, expressed object-relatively.
+      - Each buffered target now stores the demand's capability re-pointed at the target line (`cheri::repoint_cap_to_line`, the same line-overlap rule as `CACHE::repoint_prefetch_cap`). Its prefetches, issued later from `cycle_operate`, therefore carry correct cursors. At a physical cache the cache still counts them in `pf_cap_offset_unadjusted`, because it can't see their VA.
+      - Results differ slightly from before for objects with an unaligned `base`. The old target address was `cap_base + line·64`, which isn't line-aligned; the new one is the demand's line plus a whole number of lines.
+    - **`ampm_cheri` operate and fill, option (A)**, so zone keys match.
+      - Operate: the VA comes from `cheri::line_va_from_cursor(cap, addr)`. When the check fails, a large-cap access uses AMPM's page-based fallback engine, counted as `Cursor/line check failed (to page path)`.
+      - Fill: the VA of the evicted line is the line of `evicted_cap`'s cursor, checked against `evicted_addr`. On failure the cleanup is skipped and counted (`Eviction cleanup skipped`). The `evicted_addr == {}` early return is kept.
+      - This fixes cleanup for L2C own-prefetched lines, whose re-pointed caps point into their line. More zone bits are cleared than before, which changes AMPM-CHERI's later prefetch decisions.
+  - **Invalid victim ways:** `handle_fill` passes a default (untagged) `evicted_cap` whenever the victim way is invalid (`evicted_valid = way != set_end && way->valid`), including after `invalidate_entry`, so a stale `auth_cap` is never passed.
+  - **Shared helpers** in `inc/cheri_prefetch_utils.h`: `line_va_from_cursor()` (option A) and `repoint_cap_to_line()`. `CACHE::repoint_prefetch_cap` now uses the latter too.
+  - **Limitations:**
+    - At a physical cache, a cross-page prefetch has no usable VA: its cap can't be re-pointed, so its cursor stays in another page and the (A) check rejects it.
+    - The (A) check compares only the line position within the page, so a cursor off by a whole number of pages would pass.
+    - (B) trusts the cursor without a check.
+  - `grep -rn "v_addr\b"` over `inc src prefetcher` still matches upstream identifiers that have nothing to do with the side channel: the `response` constructor parameters in `inc/channel.h`, the deadlock-print format strings in `src/cache.cc`, stock `va_ampm_lite`, and comments in the `berti` baselines. `grep -rn "intern_->v_addr\|vaddr_evicted\|CACHE::v_addr\|module_vaddress" inc src prefetcher` returns nothing.
+  - Test: `439-cheri-cursor-derived-va.cc`.
+
 - **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
   - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.
@@ -187,19 +209,6 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **`pf_out_of_bounds_at_issue_by_cap_size` removed** (counter, ROI copy, `operator-`, the plain-text `OOBIssue` column, the JSON field, test 437-9, and its entry in the counter list that 437-10/437-11 use). It measured what task 2 would drop, and it would always read zero for CHERI prefetchers.
 
 ## Known issues (intentionally not changed)
-- **Order-dependent side channels `CACHE::v_addr` / `vaddr_evicted`.**
-  - Where they are written:
-    - `v_addr` is set in `try_hit` just before `prefetcher_cache_operate`, and in `handle_fill` just before `prefetcher_cache_fill`.
-    - `vaddr_evicted` is set in `handle_fill` only when the fill evicts a valid block; otherwise it keeps the previous eviction's value.
-  - Every prefetcher read, all inside those two hooks (none in `prefetcher_cycle_operate` or other deferred paths, so none sees a value from a different access):
-    - `spp_cheri.cc` `prefetcher_cache_operate`: `intern_->v_addr`
-    - `sms_cheri_aux.cc` `decompose()`, called only from `sms_cheri::prefetcher_cache_operate`: `intern_->v_addr`
-    - `ampm_cheri.cc` `prefetcher_cache_operate`: `intern_->v_addr`
-    - `ampm_cheri.cc` `prefetcher_cache_fill`: `intern_->vaddr_evicted`. This is reached only after the early return on `evicted_addr == {}` and only when `evicted_cap.tag`, so the stale no-eviction value is never used.
-  - **Caveat:** on a physical cache (L2C/LLC), the cache's own prefetches carry `v_address = 0` (`prefetch_line` sets it only on `virtual_prefetch` caches), and so do the blocks they fill.
-    - `cache_operate` is not affected: `should_activate_prefetcher` excludes a cache's own prefetches.
-    - For an evicted own-prefetched block, `vaddr_evicted` is 0. `ampm_cheri`'s eviction cleanup then gets `zone_key_and_offset(0, cap) == {0, 0}` and skips it.
-    - Since `inherit_trigger_cap` those blocks carry a tagged `evicted_cap`. Before it they were untagged and skipped earlier, so the result is the same: AMPM-CHERI at L2C does not clear zone bits for its own evicted prefetched lines.
 - **`cache_stats` `operator-`** does not subtract `miss_merge`/`fill`. This matches upstream behaviour.
 - **Unported side branches.** `cheri_ampm` (`01c5aa6`, `af1cbd3`) rewrites `ampm_cheri` with feedback throttling. `hook_extensions` (the same two commits plus `eb12d5c`) adds a `vaddr` hook parameter. Both branch from `1671e64`, conflict with `e0e3600`, and are not ported.
 

@@ -181,6 +181,7 @@ struct spp_cheri : public champsim::modules::prefetcher {
 
   // CHERI statistics
   uint64_t stat_pf_bounded_by_cap = 0;  // prefetches clipped by capability bounds
+  uint64_t stat_cursor_check_failed = 0; // tagged accesses whose cursor is not in the accessed line (no usable VA)
   uint64_t stat_cross_page_in_cap = 0;  // cross-page deltas within same capability
   uint64_t stat_cross_page_pf = 0;
   using prefetcher::prefetcher;

@@ -29,13 +29,13 @@ uint64_t ampm_cheri::make_zone_key(uint64_t cap_base, uint64_t cap_zone_id)
   return h & 0x7FFFFFFFFFFFFFFFULL;
 }
 
-auto ampm_cheri::zone_key_and_offset(champsim::address v_addr,  const champsim::capability& cap) const -> std::pair<region_key_type, std::size_t>
+auto ampm_cheri::zone_key_and_offset(champsim::address va,  const champsim::capability& cap) const -> std::pair<region_key_type, std::size_t>
 {
 
-  if (!cheri::in_bounds(v_addr, cap.base, champsim::address{cap.length.to<uint64_t>()+cap.base.to<uint64_t>()}))
+  if (!cheri::in_bounds(va, cap.base, champsim::address{cap.length.to<uint64_t>()+cap.base.to<uint64_t>()}))
     return {region_key_type{0}, 0};
 
-  uint64_t obj_cl = (v_addr.to<uint64_t>() - cap.base.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
+  uint64_t obj_cl = (va.to<uint64_t>() - cap.base.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
   uint64_t lpz    = lines_per_zone();
 
   // only capabilities that span multiple zones end up here
@@ -45,9 +45,9 @@ auto ampm_cheri::zone_key_and_offset(champsim::address v_addr,  const champsim::
 }
 
 
-void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa, const champsim::capability& cap, bool prefetch)
+void ampm_cheri::add_to_map(champsim::address va, champsim::address pa, const champsim::capability& cap, bool prefetch)
 {
-  auto [key, offset] = zone_key_and_offset(v_addr, cap);
+  auto [key, offset] = zone_key_and_offset(va, cap);
 
   if (key.to<uint64_t>() == 0) //shouldn't end up here....
     return;
@@ -81,9 +81,9 @@ void ampm_cheri::add_to_map(champsim::address v_addr, champsim::address pa, cons
   }
 }
 
-bool ampm_cheri::check_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch)
+bool ampm_cheri::check_map(champsim::address va, const champsim::capability& cap, bool prefetch)
 {
-  auto [key, offset] = zone_key_and_offset(v_addr, cap);
+  auto [key, offset] = zone_key_and_offset(va, cap);
   auto region = regions.check_hit(region_type{key});
 
   if (!region.has_value()) //region miss

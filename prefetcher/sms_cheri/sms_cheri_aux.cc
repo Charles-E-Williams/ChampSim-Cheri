@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <optional>
 
 #include "cache.h"
 
@@ -18,20 +19,22 @@ sms_cheri::region_info sms_cheri::decompose(uint64_t pa, const champsim::capabil
 {
   region_info ri{};
 
+  // Everything is derived from the capability cursor (the core places it at the effective address) and the physical
+  // address; no virtual address is needed.
   uint64_t cap_base = cap.base.to<uint64_t>();
   uint64_t cap_top  = cheri::capability_top(cap).to<uint64_t>(); 
-  uint64_t va       = intern_->v_addr.to<uint64_t>(); 
 
   uint64_t obj_cl_off   = cap.offset.to<uint64_t>() >> LOG2_BLOCK_SIZE;
   uint32_t rcls         = region_cls();
   uint64_t region_idx   = obj_cl_off / rcls;
 
-  ri.region_id      = cap_base + (region_idx * REGION_SIZE);
-  ri.offset         = static_cast<uint32_t>(obj_cl_off % rcls);
-  ri.cap_base       = cap_base;
-  ri.cap_top        = cap_top;
-  ri.demand_pa_page = pa & ~((1ULL << LOG2_PAGE_SIZE) - 1);
-  ri.demand_va_page = va & ~((1ULL << LOG2_PAGE_SIZE) - 1);
+  ri.region_id             = cap_base + (region_idx * REGION_SIZE);
+  ri.offset                = static_cast<uint32_t>(obj_cl_off % rcls);
+  ri.cap_base              = cap_base;
+  ri.cap_top               = cap_top;
+  ri.demand_pa_line        = pa & ~static_cast<uint64_t>(BLOCK_SIZE - 1);
+  ri.demand_obj_line       = obj_cl_off;
+  ri.region_first_obj_line = region_idx * rcls;
   return ri;
 }
 
@@ -212,50 +215,51 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
     return 0;
 
   PHTEntry* entry = (*it);
-  uint64_t region_va_start = ri.region_id;
-  uint64_t page_mask = (1ULL << LOG2_PAGE_SIZE) - 1;
+  const uint64_t cap_length = ri.cap_top - ri.cap_base;
+
+  // Physical line of an object line: the demand's physical line plus the object-relative line distance. Kept only if
+  // it stays on the demand's physical page.
+  auto target_pa_of = [&ri](uint64_t target_obj_line) -> std::optional<uint64_t> {
+    const auto delta = static_cast<int64_t>(target_obj_line) - static_cast<int64_t>(ri.demand_obj_line);
+    const uint64_t target_pa = ri.demand_pa_line + static_cast<uint64_t>(delta * static_cast<int64_t>(BLOCK_SIZE));
+    if ((target_pa >> LOG2_PAGE_SIZE) != (ri.demand_pa_line >> LOG2_PAGE_SIZE))
+      return std::nullopt;
+    return target_pa;
+  };
 
   for (uint32_t i = 0; i < region_cls(); ++i) {
     if (!entry->pattern[i] || i == ri.offset)
       continue;
 
-    uint64_t target_va = region_va_start + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
+    const uint64_t target_obj_line = ri.region_first_obj_line + i;
 
-    // capability bounds check.
-    if (!cheri::in_bounds(champsim::address{target_va},
-                      champsim::address{ri.cap_base},
-                      champsim::address{ri.cap_top})){
+    // capability bounds check: base + target_obj_line * BLOCK_SIZE inside [base, top)
+    if (target_obj_line * BLOCK_SIZE >= cap_length) {
       stat_pref_bounds_clip++;
       continue;
     }
 
-    // check if access is on the same page as the demand access
-    uint64_t target_pa = 0;
-    if ((target_va & ~page_mask) == ri.demand_va_page) {
-      // Same page as demand access
-      target_pa = ri.demand_pa_page | (target_va & page_mask); 
-      pref_addr.push_back(target_pa);
-    } 
+    if (auto target_pa = target_pa_of(target_obj_line); target_pa.has_value())
+      pref_addr.push_back(*target_pa);
   }
 
-  uint64_t cap_length = ri.cap_top - ri.cap_base;
   if (cap_length > REGION_SIZE) {
-    uint64_t next_region_va_base = region_va_start + REGION_SIZE;
-    uint64_t next_region_va_end  = next_region_va_base + REGION_SIZE - 1;
+    const uint64_t next_first_obj_line = ri.region_first_obj_line + region_cls();
+    const uint64_t next_last_obj_line  = next_first_obj_line + region_cls() - 1;
 
-    bool same_page = ((next_region_va_base & ~page_mask) == ri.demand_va_page) && ((next_region_va_end  & ~page_mask) == ri.demand_va_page);
+    // the whole next region on the demand's physical page
+    bool same_page = target_pa_of(next_first_obj_line).has_value() && target_pa_of(next_last_obj_line).has_value();
 
     if (same_page) {
 
-      bool whole_region_in_cap = cheri::in_bounds(champsim::address{next_region_va_end}, champsim::address{ri.cap_base},  champsim::address{ri.cap_top});
+      // base + (the next region's last byte) inside [base, top)
+      bool whole_region_in_cap = (next_first_obj_line * BLOCK_SIZE + REGION_SIZE - 1) < cap_length;
 
       if (whole_region_in_cap) {
         for (uint32_t i = 0; i < region_cls(); ++i) {
           if (!entry->pattern[i])
             continue;
-          uint64_t target_va = next_region_va_base + (static_cast<uint64_t>(i) << LOG2_BLOCK_SIZE);
-          uint64_t target_pa = ri.demand_pa_page | (target_va & page_mask);
-          pref_addr.push_back(target_pa);
+          pref_addr.push_back(*target_pa_of(next_first_obj_line + i));
           stat_next_region_pf++;
         }
       }
@@ -267,12 +271,16 @@ std::size_t sms_cheri::generate_prefetch(uint64_t pc, uint64_t pa,
 }
 
 
-void sms_cheri::buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap)
+void sms_cheri::buffer_prefetch(std::vector<uint64_t> pref_addr, const champsim::capability& cap, const region_info& ri)
 {
+  // The target's virtual line = the cursor's line plus the same line distance as its physical line from the demand's
+  const uint64_t cursor_line_va = (cap.base.to<uint64_t>() + cap.offset.to<uint64_t>()) & ~static_cast<uint64_t>(BLOCK_SIZE - 1);
   for (uint32_t i = 0; i < pref_addr.size(); ++i) {
     if (pref_buffer.size() >= PREF_BUFFER_SIZE)
       break;
-    pref_buffer.emplace_back(pref_addr[i], cap);
+    auto target_cap = cap;
+    cheri::repoint_cap_to_line(target_cap, champsim::address{cursor_line_va + (pref_addr[i] - ri.demand_pa_line)});
+    pref_buffer.emplace_back(pref_addr[i], target_cap);
   }
 }
 

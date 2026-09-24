@@ -151,8 +151,6 @@ private:
   template <typename T>
   champsim::address module_address(const T& element) const;
 
-  template <typename T>
-  champsim::address module_vaddress(const T& element) const;
 
   auto matches_address(champsim::address address) const;
   champsim::capability repoint_prefetch_cap(champsim::capability cap, champsim::address pf_addr);
@@ -200,8 +198,6 @@ public:
     champsim::address v_address;
   };
   std::optional<prefetch_trigger_type> prefetch_trigger{};
-  champsim::address v_addr{};
-  champsim::address vaddr_evicted{};
 
   long operate() final;
   void initialize() final;

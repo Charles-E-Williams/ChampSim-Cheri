@@ -64,9 +64,9 @@ public:
 
 
   static uint64_t make_zone_key(uint64_t cap_base, uint64_t cap_zone_id);
-  auto zone_key_and_offset(champsim::address v_addr, const champsim::capability& cap) const-> std::pair<region_key_type, std::size_t>;
-  void add_to_map(champsim::address v_addr, champsim::address pa, const champsim::capability& cap, bool prefetch);
-  bool check_map(champsim::address v_addr, const champsim::capability& cap, bool prefetch);
+  auto zone_key_and_offset(champsim::address va, const champsim::capability& cap) const-> std::pair<region_key_type, std::size_t>;
+  void add_to_map(champsim::address va, champsim::address pa, const champsim::capability& cap, bool prefetch);
+  bool check_map(champsim::address va, const champsim::capability& cap, bool prefetch);
   void do_prefetch(CACHE* cache, champsim::address pa, champsim::address va, const champsim::capability& cap, uint32_t metadata_in, int degree, bool two_level);
 
   ampm::AMPM_Module page_engine; //baseline AMPM fallback
@@ -75,6 +75,8 @@ public:
   uint64_t pf_bounded      = 0;
   uint64_t zone_collision  = 0;
   uint64_t page_access     = 0;   // accesses routed to page path
+  uint64_t cursor_check_failed = 0;       // large-cap accesses with no usable VA, routed to the page path
+  uint64_t evict_cursor_check_failed = 0; // evictions whose cap cursor is not in the evicted line; cleanup skipped
 
   uint64_t useful_by_size[NUM_SIZES]  = {};
   uint64_t access_by_size[NUM_SIZES]  = {};

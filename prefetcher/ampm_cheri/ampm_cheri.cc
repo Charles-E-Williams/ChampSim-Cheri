@@ -1,6 +1,7 @@
 #include "ampm_cheri.h"
 
 #include <iostream>
+#include <optional>
 
 #include "cache.h"
 
@@ -28,7 +29,16 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
   }
 
 
-  if (cap_lines <= SMALL_CAP_THRESHOLD) {
+  // Virtual line address from the capability cursor, checked against the physical address's line position in the page
+  // (cheri::line_va_from_cursor). Small capabilities, or no usable VA, take the page-based fallback path.
+  std::optional<champsim::address> va_line;
+  if (cap_lines > SMALL_CAP_THRESHOLD) {
+    va_line = cheri::line_va_from_cursor(cap, addr);
+    if (!va_line.has_value())
+      cursor_check_failed++;
+  }
+
+  if (!va_line.has_value()) {
     page_access++;
     bool two_level = intern_->get_mshr_occupancy_ratio() < 0.5;
     page_engine.add_to_pagemap(addr, false);
@@ -37,7 +47,7 @@ uint32_t ampm_cheri::prefetcher_cache_operate(champsim::address addr,
     return metadata_in;
   }
 
-  champsim::address va = intern_->v_addr;
+  champsim::address va = *va_line;
 
   // Record access in object-relative bitmap
   add_to_map(va, addr, cap, false);
@@ -69,15 +79,20 @@ uint32_t ampm_cheri::prefetcher_cache_fill(champsim::address addr, champsim::add
 
 
   // capability path
+  // VA of the evicted line = the line of evicted_cap's cursor, checked against evicted_addr's line position in the page
   if (evicted_cap.tag) {
-    champsim::address evicted_va = intern_->vaddr_evicted;
-    auto [key, offset] = zone_key_and_offset(evicted_va, evicted_cap);
-    if (key.to<uint64_t>() != 0) {
-      auto region = regions.check_hit(region_type{key});
-      if (region.has_value()) {
-        region->access_map.at(offset)   = false;
-        region->prefetch_map.at(offset) = false;
-        regions.fill(region.value());
+    const auto evicted_va = cheri::line_va_from_cursor(evicted_cap, evicted_addr);
+    if (!evicted_va.has_value()) {
+      evict_cursor_check_failed++;
+    } else {
+      auto [key, offset] = zone_key_and_offset(*evicted_va, evicted_cap);
+      if (key.to<uint64_t>() != 0) {
+        auto region = regions.check_hit(region_type{key});
+        if (region.has_value()) {
+          region->access_map.at(offset)   = false;
+          region->prefetch_map.at(offset) = false;
+          regions.fill(region.value());
+        }
       }
     }
   }
@@ -92,7 +107,9 @@ void ampm_cheri::prefetcher_final_stats()
             << "  Bounded by cap:        " << pf_bounded << "\n"
             << "  Zone hash collisions:  " << zone_collision << "\n"
             << "\n ==== Page Path fallback =====\n"
-            << "  Page path accesses:    " << page_access << "\n";
+            << "  Page path accesses:    " << page_access << "\n"
+            << "  Cursor/line check failed (to page path): " << cursor_check_failed << "\n"
+            << "  Eviction cleanup skipped (cursor/line check failed): " << evict_cursor_check_failed << "\n";
 
   std::cout << "\n  Prefetch metrics with respect to capability size\n";
 

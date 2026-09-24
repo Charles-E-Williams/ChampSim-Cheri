@@ -53,8 +53,14 @@ uint32_t spp_cheri::prefetcher_cache_operate(champsim::address addr, champsim::a
   uint64_t cap_length_val = cap.length.to<uint64_t>();
   uint64_t cap_offset_val = cap.offset.to<uint64_t>();
  
-  // Demand virtual address from capability cursor
-  uint64_t demand_va = intern_->v_addr.to<uint64_t>();
+  // Demand virtual line address from the capability cursor, checked against the physical address's line position in
+  // the page (cheri::line_va_from_cursor). Without a usable VA, follow the untagged-cap policy.
+  const auto demand_line_va = cheri::line_va_from_cursor(cap, addr);
+  if (!demand_line_va.has_value()) {
+    stat_cursor_check_failed++;
+    return metadata_in;
+  }
+  uint64_t demand_va = demand_line_va->to<uint64_t>();
  
  
   if constexpr (SPP_DEBUG_PRINT) {
@@ -482,4 +488,5 @@ void spp_cheri::prefetcher_final_stats()
   std::cout << std::endl;
   std::cout << "spp_cheri final stats" << std::endl;
   std::cout << "  Prefetches bounded by cap:       " << stat_pf_bounded_by_cap << std::endl;
+  std::cout << "  Cursor/line check failed:        " << stat_cursor_check_failed << std::endl;
 }

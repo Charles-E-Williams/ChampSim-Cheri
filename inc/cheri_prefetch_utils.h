@@ -1,6 +1,7 @@
 #ifndef CHERI_PREFETCH_UTILS_H
 #define CHERI_PREFETCH_UTILS_H
 
+#include <algorithm>
 #include <cstdint>
 #include <iostream>
 #include <optional>
@@ -183,6 +184,40 @@ inline bool has_prefetchable_range(const champsim::capability& cap)
 {
     return has_prefetchable_range_forward(cap) || 
            has_prefetchable_range_backward(cap);
+}
+
+// Virtual line address of an access, derived from its authorizing capability's cursor (the core places the cursor at
+// the effective address). Accepted only if cap is tagged and the cursor's line position within the page equals the
+// physical address's (pa may be a VA on a virtual_prefetch cache; the check then compares it with itself). Returns the
+// line-aligned VA, or nullopt. Limitation: a cursor off by a whole number of pages would pass the check.
+inline std::optional<champsim::address> line_va_from_cursor(const champsim::capability& cap, champsim::address pa)
+{
+  if (!cap.tag)
+    return std::nullopt;
+  const uint64_t cursor = cap.base.to<uint64_t>() + cap.offset.to<uint64_t>(); // raw: capability_cursor() asserts on a wrapped offset
+  const uint64_t line_in_page_mask = (uint64_t{1} << (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE)) - 1;
+  if (((cursor >> LOG2_BLOCK_SIZE) & line_in_page_mask) != ((pa.to<uint64_t>() >> LOG2_BLOCK_SIZE) & line_in_page_mask))
+    return std::nullopt;
+  return champsim::address{cursor & ~static_cast<uint64_t>(BLOCK_SIZE - 1)};
+}
+
+// Re-point cap's cursor at the cache line containing va; only the offset changes. With line = that cache line and the
+// object [base, base + length):
+//  - the cursor is already inside line: unchanged;
+//  - line overlaps the object: offset = max(va, base) - base, so the cursor stays inside the object;
+//  - line lies entirely outside the object: unchanged, and returns false.
+inline bool repoint_cap_to_line(champsim::capability& cap, champsim::address va)
+{
+  const uint64_t addr = va.to<uint64_t>();
+  const uint64_t line_start = addr & ~static_cast<uint64_t>(BLOCK_SIZE - 1);
+  const uint64_t base = cap.base.to<uint64_t>();
+  const uint64_t cursor = base + cap.offset.to<uint64_t>(); // raw: capability_cursor() asserts on a wrapped offset
+  if (cursor >= line_start && cursor - line_start < BLOCK_SIZE)
+    return true;
+  if (!overlaps_bounds(champsim::block_number{va}, cap.base, capability_top(cap)))
+    return false;
+  cap.offset = champsim::address{std::max(addr, base) - base};
+  return true;
 }
 
 // True if issuing a prefetch for pf_addr is safe under cap: load permission, and the cache line containing pf_addr
