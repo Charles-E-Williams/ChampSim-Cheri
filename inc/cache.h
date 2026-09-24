@@ -193,7 +193,6 @@ public:
   std::deque<fill_type> MSHR;
   std::deque<fill_type> inflight_fills;
 
-  champsim::capability auth_capability{};
   // The access currently inside the prefetcher's cache_operate hook (set only when inherit_trigger_cap)
   struct prefetch_trigger_type {
     champsim::capability cap;

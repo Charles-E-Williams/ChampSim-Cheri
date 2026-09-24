@@ -33,8 +33,6 @@
 #include "util/span.h"
 #include "capability_memory.h"
 
-extern std::vector<champsim::capability_memory> cap_mem;
-
 long O3_CPU::operate()
 {
   long progress{0};

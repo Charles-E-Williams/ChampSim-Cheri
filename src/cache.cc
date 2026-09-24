@@ -31,6 +31,23 @@
 #include "util/algorithm.h"
 #include "util/bits.h"
 #include "util/span.h"
+#include "cheri_prefetch_utils.h"
+
+namespace
+{
+// Number of tagged capabilities stored in the cache line that contains v_address
+unsigned tagged_caps_in_line(const champsim::capability_memory& mem, champsim::address v_address)
+{
+  const uint64_t line_va = v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
+  unsigned count = 0;
+  for (unsigned slot = 0; slot < cheri::CAPS_PER_CL; slot++) {
+    auto cap_opt = mem.load_capability(champsim::address{line_va + slot * cheri::CAP_ALIGNMENT_BYTES});
+    if (cap_opt.has_value() && cap_opt->tag)
+      count++;
+  }
+  return count;
+}
+} // namespace
 
 CACHE::CACHE(CACHE&& other)
     : operable(other),
@@ -415,13 +432,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
     // count number of capabilities seen in a cache line 
     if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::PREFETCH) {
-      uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
-      unsigned count = 0;
-      for (unsigned i = 0; i < 4; i++) {
-        auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
-        if (cap_opt.has_value() && cap_opt->tag)
-          count++;
-      }
+      const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
       sim_stats.capabilities_per_cl_hit.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
     }
   }
@@ -524,13 +535,7 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   });
 
   if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE ||handle_pkt.type == access_type::PREFETCH) {
-    uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
-    unsigned count = 0;
-    for (unsigned i = 0; i < 4; i++) {
-      auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
-      if (cap_opt.has_value() && cap_opt->tag)
-        count++;
-    }
+    const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
     sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
   }
   
@@ -562,13 +567,7 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
       handle_pkt.cpu
   });
 
-  uint64_t base_va = handle_pkt.v_address.to<uint64_t>() & ~(uint64_t)(BLOCK_SIZE - 1);
-  unsigned count = 0;
-  for (unsigned i = 0; i < 4; i++) {
-    auto cap_opt = champsim::cap_mem[handle_pkt.cpu].load_capability(champsim::address{base_va + i * 16});
-    if (cap_opt.has_value() && cap_opt->tag)
-      count++;
-  }
+  const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
   sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
   
   return true;

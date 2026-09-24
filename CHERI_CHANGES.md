@@ -158,12 +158,27 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases).
 
 ## Known issues (intentionally not changed)
-- **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
-- **Order-dependent side channels.** `CACHE::v_addr` and `vaddr_evicted` are written in `try_hit`/`handle_fill` and read by prefetchers.
-- **Hardcoded constants.** The caps-per-cache-line loops in `cache.cc` use `4` and `16` instead of `cheri::CAPS_PER_CL` / the alignment constant; the pattern is repeated three times.
+- **Order-dependent side channels `CACHE::v_addr` / `vaddr_evicted`.**
+  - Where they are written:
+    - `v_addr` is set in `try_hit` just before `prefetcher_cache_operate`, and in `handle_fill` just before `prefetcher_cache_fill`.
+    - `vaddr_evicted` is set in `handle_fill` only when the fill evicts a valid block; otherwise it keeps the previous eviction's value.
+  - Every prefetcher read, all inside those two hooks (none in `prefetcher_cycle_operate` or other deferred paths, so none sees a value from a different access):
+    - `spp_cheri.cc` `prefetcher_cache_operate`: `intern_->v_addr`
+    - `sms_cheri_aux.cc` `decompose()`, called only from `sms_cheri::prefetcher_cache_operate`: `intern_->v_addr`
+    - `ampm_cheri.cc` `prefetcher_cache_operate`: `intern_->v_addr`
+    - `ampm_cheri.cc` `prefetcher_cache_fill`: `intern_->vaddr_evicted`. This is reached only after the early return on `evicted_addr == {}` and only when `evicted_cap.tag`, so the stale no-eviction value is never used.
+  - **Caveat:** on a physical cache (L2C/LLC), the cache's own prefetches carry `v_address = 0` (`prefetch_line` sets it only on `virtual_prefetch` caches), and so do the blocks they fill.
+    - `cache_operate` is not affected: `should_activate_prefetcher` excludes a cache's own prefetches.
+    - For an evicted own-prefetched block, `vaddr_evicted` is 0. `ampm_cheri`'s eviction cleanup then gets `zone_key_and_offset(0, cap) == {0, 0}` and skips it.
+    - Since `inherit_trigger_cap` those blocks carry a tagged `evicted_cap`. Before it they were untagged and skipped earlier, so the result is the same: AMPM-CHERI at L2C does not clear zone bits for its own evicted prefetched lines.
 - **`cache_stats` `operator-`** does not subtract `miss_merge`/`fill`. This matches upstream behaviour.
-- **`CACHE::auth_capability`** is declared but not read by the core.
 - **Unported side branches.** `cheri_ampm` (`01c5aa6`, `af1cbd3`) rewrites `ampm_cheri` with feedback throttling. `hook_extensions` (the same two commits plus `eb12d5c`) adds a `vaddr` hook parameter. Both branch from `1671e64`, conflict with `e0e3600`, and are not ported.
+
+### Resolved (2026-09)
+- The unused global `extern std::vector<champsim::capability_memory> cap_mem;` in `src/ooo_cpu.cc` is removed.
+- The unused `CACHE::auth_capability` member is removed; nothing read it, including prefetchers.
+- The three caps-per-cache-line loops in `src/cache.cc` now share `tagged_caps_in_line()`, using `cheri::CAPS_PER_CL` and `cheri::CAP_ALIGNMENT_BYTES` instead of `4` and `16`.
+- The untagged-authority warning flood is rate-limited (see "Behaviour changes after the port").
 
 ## Keeping in sync with upstream
 ```
