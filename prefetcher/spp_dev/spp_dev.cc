@@ -29,8 +29,8 @@ void spp_dev::prefetcher_initialize()
 
 void spp_dev::prefetcher_cycle_operate() {}
 
-uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint8_t cache_hit, bool useful_prefetch, access_type type,
-                                           uint32_t metadata_in)
+uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
+                                           bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
   champsim::page_number page{addr};
   uint32_t last_sig = 0, curr_sig = 0, depth = 0;
@@ -134,7 +134,9 @@ uint32_t spp_dev::prefetcher_cache_operate(champsim::address addr, champsim::add
   return metadata_in;
 }
 
-uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, long set, long way, uint8_t prefetch, champsim::address evicted_addr, uint32_t metadata_in)
+uint32_t spp_dev::prefetcher_cache_fill(champsim::address addr, champsim::address ip, uint32_t cpu, champsim::capability cap, bool useless, long set, long way,
+                                        bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
+                                        uint32_t metadata_evict, uint32_t cpu_evict)
 {
   if constexpr (FILTER_ON) {
     if constexpr (SPP_DEBUG_PRINT) {
@@ -493,7 +495,7 @@ void spp_dev::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confide
 {
   // NOTE: GHR implementation is slightly different from the original paper
   // Instead of matching (last_offset + delta), GHR simply stores and matches the pf_offset
-  uint32_t min_conf = 100, victim_way = MAX_GHR_ENTRY;
+  uint32_t min_conf = 100, victim_way = 0;
 
   if constexpr (SPP_DEBUG_PRINT) {
     std::cout << "[GHR] Crossing the page boundary pf_sig: " << std::hex << pf_sig << std::dec;
@@ -519,7 +521,7 @@ void spp_dev::GLOBAL_REGISTER::update_entry(uint32_t pf_sig, uint32_t pf_confide
 
     // GHR replacement policy is based on the stored confidence value
     // An entry with the lowest confidence is selected as a victim
-    if (confidence[i] < min_conf) {
+    if (confidence[i] <= min_conf) {
       min_conf = confidence[i];
       victim_way = i;
     }
