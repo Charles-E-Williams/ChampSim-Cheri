@@ -8,7 +8,6 @@
 
 #include "capability_memory.h"
 #include "champsim.h"
-#include "msl/lru_table.h"
 
 namespace cheri {
 
