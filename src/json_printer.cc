@@ -38,7 +38,8 @@ void to_json(nlohmann::json& j, const O3_CPU::stats_type& stats)
                      {"Avg ROB occupancy at mispredict", std::ceil(stats.total_rob_occupancy_at_branch_mispredict) / std::ceil(total_mispredictions)},
                      {"mispredict", mpki},
                      {"untagged authority loads", stats.untagged_auth_loads},
-                     {"untagged authority stores", stats.untagged_auth_stores}};
+                     {"untagged authority stores", stats.untagged_auth_stores},
+                     {"authority capability does not cover access", stats.auth_cap_va_out_of_bounds}};
 }
 
 void to_json(nlohmann::json& j, const CACHE::stats_type& stats)

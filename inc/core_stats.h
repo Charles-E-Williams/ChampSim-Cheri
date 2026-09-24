@@ -16,6 +16,7 @@ struct cpu_stats {
   uint64_t total_rob_occupancy_at_branch_mispredict = 0;
   uint64_t untagged_auth_loads = 0;  // loads whose authorizing capability is untagged
   uint64_t untagged_auth_stores = 0; // stores whose authorizing capability is untagged
+  uint64_t auth_cap_va_out_of_bounds = 0; // tagged loads/stores whose effective address is outside the authorizing capability
 
   champsim::stats::event_counter<branch_type> total_branch_types = {};
   champsim::stats::event_counter<branch_type> branch_type_misses = {};

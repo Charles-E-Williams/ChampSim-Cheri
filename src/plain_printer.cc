@@ -63,6 +63,7 @@ std::vector<std::string> champsim::plain_printer::format(O3_CPU::stats_type stat
   }
 
   lines.push_back(fmt::format("{} UNTAGGED AUTHORITY CAPABILITY LOADS: {} STORES: {}", stats.name, stats.untagged_auth_loads, stats.untagged_auth_stores));
+  lines.push_back(fmt::format("{} AUTHORITY CAPABILITY DOES NOT COVER ACCESS: {}", stats.name, stats.auth_cap_va_out_of_bounds));
 
   return lines;
 }

@@ -9,6 +9,7 @@ cpu_stats operator-(cpu_stats lhs, cpu_stats rhs)
   lhs.total_rob_occupancy_at_branch_mispredict -= rhs.total_rob_occupancy_at_branch_mispredict;
   lhs.untagged_auth_loads -= rhs.untagged_auth_loads;
   lhs.untagged_auth_stores -= rhs.untagged_auth_stores;
+  lhs.auth_cap_va_out_of_bounds -= rhs.auth_cap_va_out_of_bounds;
 
   lhs.total_branch_types -= rhs.total_branch_types;
   lhs.branch_type_misses -= rhs.branch_type_misses;

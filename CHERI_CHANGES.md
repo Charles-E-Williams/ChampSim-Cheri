@@ -168,6 +168,18 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - **Resident blocks:** resident-at-end can be off by the rare invalidation.
   - Test: `437-cheri-prefetch-usefulness-by-cap-size.cc` (11 cases: 437-1 to 437-8 and 437-10 to 437-12; 437-9 was removed with the out-of-bounds counter).
 
+- **The core presents the authorizing capability with its cursor at the effective address.**
+  - **What the trace records:** the authorizing-capability register as it was before the instruction's immediate is added. CHERI bounds-checks the effective address (cursor + immediate).
+  - **Evidence:** a temporary debug counter compared `base + offset` with each tagged demand access's VA at L1D.
+    - Totals: exact 1,189,694; same line 343,685; different line 627,212 (29%).
+    - The same IP always showed the same constant `cursor − va`. Examples: stack loads and stores through the 1 GiB stack capability at −12, −32 and −60, and a register-save prologue at −64 … −176.
+  - **Change:** `O3_CPU::present_auth_cap_at()`, called in `execute_load` and `do_complete_store` (per LSQ entry, so each memory operand gets its own VA), sets `offset = v_address − base` on the packet's tagged authorizing cap.
+    - Base, length, permissions and tag are unchanged.
+    - `cap_mem` is untouched: transferred capabilities are data and keep their own cursors.
+    - If the VA is outside `[base, base + length)`, the offset is left alone and counted in the new per-CPU core stat `auth_cap_va_out_of_bounds`. A wrap below base would trip `capability_cursor()`'s assert. The first occurrence prints `[OOO_CPU] WARNING: Memory access outside the bounds of its tagged authority capability...` once; the total is printed per core as `cpuN AUTHORITY CAPABILITY DOES NOT COVER ACCESS: n` and in JSON. A valid CHERI trace should produce none.
+  - **Effect:** this changes every CHERI prefetcher that derives position from the cursor: `lines_from_cap_base()`, `capability_cursor()`, `sms_cheri`'s region offset and `ampm_cheri`'s zone offset. The authorizing caps stored on blocks (`auth_cap`, later `evicted_cap`) and passed down the hierarchy change too.
+  - Test `198-core-plain-printer.cc` expects the new line.
+
 - **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
   - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.

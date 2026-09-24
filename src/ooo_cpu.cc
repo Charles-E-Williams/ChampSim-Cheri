@@ -586,6 +586,24 @@ void O3_CPU::do_finish_store(const LSQ_ENTRY& sq_entry)
   }
 }
 
+// The trace records the authorizing capability register before the instruction's immediate is added, but CHERI
+// bounds-checks the effective address (cursor + immediate). Present the capability with its cursor at this memory
+// operand's effective address: offset = va - base. Base, length, permissions and tag are unchanged. If va is outside
+// [base, base + length) the offset is left alone (a wrap below base would trip capability_cursor()'s assert) and counted.
+void O3_CPU::present_auth_cap_at(champsim::capability& cap, champsim::address va)
+{
+  const uint64_t base = cap.base.to<uint64_t>();
+  const uint64_t addr = va.to<uint64_t>();
+  if (addr >= base && addr - base < cap.length.to<uint64_t>()) {
+    cap.offset = champsim::address{addr - base};
+    return;
+  }
+
+  ++sim_stats.auth_cap_va_out_of_bounds;
+  if (!std::exchange(warned_auth_cap_va_out_of_bounds, true))
+    fmt::print("[OOO_CPU] WARNING: Memory access outside the bounds of its tagged authority capability. This is a problem with your trace.\n");
+}
+
 bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
 {
   CacheBus::request_type data_packet;
@@ -598,6 +616,8 @@ bool O3_CPU::do_complete_store(const LSQ_ENTRY& sq_entry)
     ++sim_stats.untagged_auth_stores;
     if (!std::exchange(warned_untagged_auth_store, true))
       fmt::print("[OOO_CPU] WARNING: Store Instruction missing tagged authority capability. This is a problem with your trace.\n");
+  } else {
+    present_auth_cap_at(data_packet.cap, data_packet.v_address);
   }
 
   if constexpr (champsim::debug_print) {
@@ -624,6 +644,8 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
     ++sim_stats.untagged_auth_loads;
     if (!std::exchange(warned_untagged_auth_load, true))
       fmt::print("[OOO_CPU] WARNING: Load Instruction missing tagged authority capability. This is a problem with your trace.\n");
+  } else {
+    present_auth_cap_at(data_packet.cap, data_packet.v_address);
   }
 
 
