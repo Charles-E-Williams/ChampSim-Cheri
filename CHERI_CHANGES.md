@@ -1,0 +1,103 @@
+# ChampSim-CHERI: changes relative to upstream ChampSim
+
+This branch is upstream [ChampSim/ChampSim](https://github.com/ChampSim/ChampSim) `master` plus the CHERI fork's changes.
+
+| | |
+|---|---|
+| Upstream base of the original fork | `19f8c80` (2025-02-15, "Merge PR #595 livelock-period-extension"). First fork commit `b1df8f4` (2025-04-02). |
+| Original fork head | `fe067a5a`, tagged `cheri-cal-2026`. 118 fork commits, plus the ranks=2 config commit made before the port. |
+| Port target | upstream `master` `410cee62` (2026-09-04, PR #722). |
+| Port method | `git diff 19f8c80 cheri-cal-2026` split by path into layers, re-applied onto upstream `master` (one commit per layer). The full per-commit history remains reachable through the `cheri-cal-2026` tag and the old `master`. |
+
+## Layers
+
+### A. DPC4 hook infrastructure (not CHERI-specific)
+Commits: `ae7b5d6` (2026-03-04, DPC4 prefetchers), `c64598a1` (2026-03-28, prefetcher API), `838f78e2` (2026-03-28, `is_instr` gating), `d62f8668` (2026-05-04, more hook params).
+
+- **Extended prefetcher hooks, dispatched first:**
+  - `prefetcher_cache_operate(addr, ip, cpu, cap, cache_hit, useful_prefetch, type, metadata_in, metadata_hit)`
+  - `prefetcher_cache_fill(addr, ip, cpu, cap, useless, set, way, prefetch, evicted_addr, evicted_cap, metadata_in, metadata_evict, cpu_evict)`
+  - An intermediate fill form, `(addr, set, way, prefetch, evicted_addr, metadata_in, evicted_cap)`, is also accepted.
+  - All upstream legacy signatures still dispatch through the `if constexpr` chain in `inc/cache.h`.
+- **Silent-mismatch pitfall.** A prefetcher whose signature matches no form is silently ignored: it compiles, but issues zero prefetches. This bit the project in Jun 2025 and again on 2026-04-01 (`spp_ppf_cheri`).
+- **`is_instr` gating.** `is_instr` sits on `channel::request`, `CACHE::tag_lookup_type` and `CACHE::fill_type`, and `CACHE::module_is_instr()` reads it. Fetch packets set it in `O3_CPU::do_fetch_instruction`. Prefetchers are activated only on data accesses (`should_activate_prefetcher(...) && !module_is_instr(...)`) and trained only on data fills. As a result, L2C/LLC prefetchers never see instruction-fetch misses, which differs from stock upstream even for non-CHERI prefetchers.
+- **`BLOCK::cpu`** is recorded at fill and used for `cpu_evict`.
+
+### B. CHERI core simulator
+Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `82b09f63` (2026-02-26, cap stats), `f7a40a39` / `3c12146f` (2026-03-17, PRESIMPOINT and auth/transferred trace format), `53d7a0be` (2026-04-08, compact capability memory), `0297503e` (2026-04-13, `evicted_cap`).
+
+| Area | Files | Change |
+|---|---|---|
+| Capability type | `inc/cheri.h` | `champsim::capability {offset, base, length, permissions, tag}`, `cap_op_type {NONE, AUTH, TRANSFERRED, BOTH, PRESIMPOINT}` |
+| Trace format | `inc/trace_instruction.h` | `cheri_instr`: 128 bytes, layout pinned by `static_assert`s. This is a binary contract with the CHERI-QEMU tracer and `cheri-trace-filter`. |
+| Instruction | `inc/instruction.h` | `auth_cap`, `transferred_cap`, `cap_op`, `is_presimpoint`, and a `cheri_instr` constructor |
+| Trace reader | `inc/tracereader.h`, `src/tracereader.cc` | PRESIMPOINT entries write `cap_mem` and are never emitted as instructions. They are skipped once `cap_mem` is finalized, i.e. after a trace wrap. The first non-presimpoint entry finalizes `cap_mem` and prints `[TRACE] ... presimpoint phase complete`. |
+| CLI | `src/main.cc` | `-p/--cheri-purecap`. `initialize_capability_memory(NUM_CPUS)` is always called. |
+| Capability memory | `inc/capability_memory.h`, `src/capability_memory.cc` | Per-CPU shadow of 16-byte slots. A presimpoint map is compacted by the idempotent `finalize()` into a sorted vector plus an interned descriptor table. Later stores and invalidations are tracked in separate structures. |
+| Core | `src/ooo_cpu.cc`, `inc/ooo_cpu.h` | `LSQ_ENTRY` carries the auth and transferred caps. Loads and stores put `auth_cap` on the packet and warn when it is untagged. `do_complete_store` is the only runtime writer of `cap_mem`: a tagged transferred cap is stored, anything else invalidates the slot. |
+| Packets | `inc/channel.h` | `request.cap`, `response.cap`, a 6-arg `response` constructor. The upstream 5-arg constructor is kept. |
+| Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. `CACHE::v_addr` and `vaddr_evicted` side-channel members. |
+| DRAM | `src/dram_controller.cc` | `cap` passes through responses. |
+| Stats | `inc/cache_stats.h`, `src/cache_stats.cc`, `src/plain_printer.cc` | `cap_auth_*` and `cap_data_*` hit/miss by size class; `capabilities_per_cl_{hit,miss}`. Plain text only. Downstream plot scripts parse this format, so do not change it. |
+| Utilities | `inc/cheri_prefetch_utils.h` | Permission bits, `CAPS_PER_CL`, `TLBClone`, bounds helpers |
+| Misc | `inc/msl/lru_table.h`, `inc/ptw.h`, `src/ptw.cc`, `src/vmem.cc`, `inc/register_allocator.h`, `inc/champsim.h`, `src/modules.cc`, `Makefile` | Small supporting edits. `REG_RETURN` was added for RISC-V branches. |
+
+### C. Modules
+- **CHERI-aware prefetchers:** `ip_stride_cheri`, `ip_stride_cheri_dynamic`, `next_line_cheri`, `ampm_cheri`, `sms_cheri`, `spp_cheri`, `spp_ppf_cheri`, `ipcp_cheri`, `berti_cheri`, `cheri_ptr_chase`.
+- **Third-party baselines,** carried as-is: `ampm`, `sms`, `ipcp`, `berti`, `spp_ppf`, `asd`, `hasd`, and branch predictor `tage_sc`.
+- **Stock modules edited to the extended hooks:** `no`, `ip_stride`, `next_line`, `spp_dev`, `va_ampm_lite`.
+- Berti's "dropped packet" branch (`way == NUM_WAY` with an empty `evicted_addr`) arrived with the Berti import `5c3b28a9` (2026-04-09), not with the `is_instr` change.
+
+### D. Configs and scripts
+- The `champsim_{cheri,riscv}_*_config.json` and `champsim_no_pf_config.json` files, `scripts/build_all.sh`, and `scripts/update_configs.py`.
+- Upstream's `champsim_config.json`, which the old fork had deleted, is restored.
+- The QEMU trace converters that used to live under `tracer/` were removed in `fb661361`, because QEMU now emits ChampSim traces directly.
+
+## Design timeline (commit dates)
+- **2025-04 to 2025-09:** QEMU tracer and converters, RISC-V branch handling, first capability-aware trace format (`b2914368`, 2025-09-02).
+- **2025-10-27:** `cap_mem` memory map (`a8f6633a`). Capabilities reach prefetchers through cache-side state, with no hook changes.
+- **2026-02-18 / 02-26:** First CHERI prefetcher (`ip_stride_cheri`), then CHERI cache stats.
+- **2026-03-17:** Auth/transferred caps plus a `cap_op` bitmask. PRESIMPOINT entries load `cap_mem` without entering the pipeline. Rule: only capability *stores* update `cap_mem`, at store completion.
+- **2026-03-28:** DPC4 infrastructure (`is_instr`). Untagged-authority fallback paths removed from the CHERI prefetchers (`3a6144aa`).
+- **2026-03-29 to 2026-04-03:** `TLBClone` added (`99932c81`), removed (`2dc0d48d`), then kept in utils.
+- **2026-04-08:** Compact capability memory. `finalize()` made idempotent to fix the trace-wrap crash.
+- **2026-04-13:** `evicted_cap` threaded through the fill hook (for AMPM-CHERI zone cleanup).
+- **2026-05-04:** More hook parameters (`d62f8668`); the explicit `cap` argument replaced `intern_->get_authorizing_capability()`.
+- **2026-05-08 to 2026-06-05:** AMPM-CHERI design with a page-based fallback, followed by tuning. This is the state used for the IEEE CAL results.
+
+## Port notes (2026-09)
+- **Upstream's 2025-05 cache/channel refactor:**
+  - `cap` and `is_instr` moved from `mshr_type` to `fill_type`.
+  - The fork's `cap` edit to channel collision/forwarding code was dropped along with that code.
+  - Every response in `CACHE` (fill, hit) and in `DRAM_CHANNEL` (warmup, dbus, write-forward) carries `cap`.
+  - CHERI stats sit in the same places in `try_hit`, `handle_miss` and `handle_write`.
+- The heartbeat moved to upstream event listeners. The fork's heartbeat declarations in `ooo_cpu.cc` were dropped.
+- `src/channel.cc`, `inc/msl/fwcounter.h` and `src/register_allocator.cc` are identical to upstream: the fork's fixes already existed there, or the code was removed.
+- **Tests added with the port** (`test/cpp/src/`):
+  - `002-cheri-cap-mem-setup.cc`: a Catch2 listener that resets `champsim::cap_mem` before each test case. `CACHE` indexes `cap_mem` by CPU, so without it every cache test reads an empty vector.
+  - `086-cheri-tracereader.cc`: PRESIMPOINT entries never become instructions, `cap_mem` is loaded and finalized, and a wrapped trace does not reload it.
+  - `090-capability-memory.cc`: finalize idempotence, and store/invalidate/load after finalize.
+  - `433-cheri-capability-hooks.cc`: the demand `cap` reaches `cache_operate` at two chained levels, and the victim's `auth_cap` reaches `cache_fill` as `evicted_cap`.
+  - `453-va-ampm-lite-behavior.cc` was updated to call the extended `impl_prefetcher_*` signatures.
+  - `static_assert`s in `inc/trace_instruction.h` pin the `cheri_instr` layout.
+- Upstream `master` links `libCLI11`. Run `./vcpkg/bootstrap-vcpkg.sh && ./vcpkg/vcpkg install` after `git submodule update --init`.
+
+## Known issues (intentionally not changed)
+- **`champsim_cheri_config.json` is broken.** It selects L2C prefetcher `kratos`, which was deleted in `ed9b7113`, so `config.sh` fails on it. It was already broken on the old fork.
+- **Stray `extern` in `src/ooo_cpu.cc`.** It declares `extern std::vector<champsim::capability_memory> cap_mem;` at global scope. It is unused; the real object is `champsim::cap_mem`.
+- **Untagged-cap warning floods stock traces.** `execute_load` and `do_complete_store` print a warning for every access with an untagged authority cap.
+- **Order-dependent side channels.** `CACHE::v_addr` and `vaddr_evicted` are written in `try_hit`/`handle_fill` and read by prefetchers.
+- **Hardcoded constants.** The caps-per-cache-line loops in `cache.cc` use `4` and `16` instead of `cheri::CAPS_PER_CL` / the alignment constant; the pattern is repeated three times.
+- **`cache_stats` `operator-`** does not subtract `miss_merge`/`fill`. This matches upstream behaviour.
+- **`CACHE::auth_capability`** is declared but not read by the core.
+- **Unported side branches.** `cheri_ampm` (`01c5aa6`, `af1cbd3`) rewrites `ampm_cheri` with feedback throttling. `hook_extensions` (the same two commits plus `eb12d5c`) adds a `vaddr` hook parameter. Both branch from `1671e64`, conflict with `e0e3600`, and are not ported.
+
+## Keeping in sync with upstream
+```
+git fetch upstream
+git merge upstream/master          # never rebase published history, never force-push
+git submodule update --init vcpkg && ./vcpkg/vcpkg install   # if the vcpkg baseline moved
+```
+Remotes: `origin` = `Charles-E-Williams/ChampSim-Cheri`, `upstream` = `ChampSim/ChampSim`.
+
+Upcoming: upstream PR #564 ("module_inheritance", on `develop` since 2026-06-04) turns modules into an inheritance-based system with one flattened hook set. When it reaches `master`, the extended DPC4/CHERI hooks (layer A) and every module in layer C will need to be reworked.

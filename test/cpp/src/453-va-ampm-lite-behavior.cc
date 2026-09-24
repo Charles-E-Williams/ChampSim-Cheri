@@ -124,7 +124,7 @@ TEST_CASE("va_ampm_lite benchmark")
                   .lower_level(&mock_ll.queues)
                   .lower_translate(&mock_lt.queues)
                   .prefetcher<va_ampm_lite>()};
-    meter.measure([&] { return uut.impl_prefetcher_cache_operate(champsim::address{}, champsim::address{}, false, false, access_type::LOAD, uint32_t{}); });
+    meter.measure([&] { return uut.impl_prefetcher_cache_operate(champsim::address{}, champsim::address{}, uint32_t{}, champsim::capability{}, false, false, access_type::LOAD, uint32_t{}, uint32_t{}); });
   };
 
   BENCHMARK_ADVANCED("va_ampm_lite::prefetcher_cycle_operate()")(Catch::Benchmark::Chronometer meter)
@@ -156,7 +156,7 @@ TEST_CASE("va_ampm_lite benchmark")
                   .lower_level(&mock_ll.queues)
                   .lower_translate(&mock_lt.queues)
                   .prefetcher<va_ampm_lite>()};
-    meter.measure([&] { return uut.impl_prefetcher_cache_fill(champsim::address{}, long{}, long{}, uint8_t{}, champsim::address{}, uint32_t{}); });
+    meter.measure([&] { return uut.impl_prefetcher_cache_fill(champsim::address{}, champsim::address{}, uint32_t{}, champsim::capability{}, false, long{}, long{}, false, champsim::address{}, champsim::capability{}, uint32_t{}, uint32_t{}, uint32_t{}); });
   };
 
   BENCHMARK_ADVANCED("va_ampm_lite::prefetcher_branch_operate()")(Catch::Benchmark::Chronometer meter)

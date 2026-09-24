@@ -17,6 +17,7 @@
 #ifndef TRACE_INSTRUCTION_H
 #define TRACE_INSTRUCTION_H
 
+#include <cstddef>
 #include <limits>
 
 // special registers that help us identify branches
@@ -98,5 +99,22 @@ struct cheri_instr {
   // What's present (bitmask)
   unsigned char cap_op;
 };
+
+// cheri_instr is a binary contract with the CHERI-QEMU tracer and cheri-trace-filter.
+// These values were recorded from the fork (cheri-cal-2026); do not change the layout.
+static_assert(sizeof(cheri_instr) == 128);
+static_assert(offsetof(cheri_instr, destination_memory) == 16);
+static_assert(offsetof(cheri_instr, source_memory) == 32);
+static_assert(offsetof(cheri_instr, auth_base) == 64);
+static_assert(offsetof(cheri_instr, auth_length) == 72);
+static_assert(offsetof(cheri_instr, auth_offset) == 80);
+static_assert(offsetof(cheri_instr, auth_perms) == 88);
+static_assert(offsetof(cheri_instr, auth_tag) == 92);
+static_assert(offsetof(cheri_instr, cap_base) == 96);
+static_assert(offsetof(cheri_instr, cap_length) == 104);
+static_assert(offsetof(cheri_instr, cap_offset) == 112);
+static_assert(offsetof(cheri_instr, cap_perms) == 120);
+static_assert(offsetof(cheri_instr, cap_tag) == 124);
+static_assert(offsetof(cheri_instr, cap_op) == 125);
 
 #endif
