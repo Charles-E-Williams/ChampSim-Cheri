@@ -33,7 +33,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 | Instruction | `inc/instruction.h` | `auth_cap`, `transferred_cap`, `cap_op`, `is_presimpoint`, and a `cheri_instr` constructor |
 | Trace reader | `inc/tracereader.h`, `src/tracereader.cc` | PRESIMPOINT entries write `cap_mem` and are never emitted as instructions. They are skipped once `cap_mem` is finalized, i.e. after a trace wrap. The first non-presimpoint entry finalizes `cap_mem` and prints `[TRACE] ... presimpoint phase complete`. |
 | CLI | `src/main.cc` | `-p/--cheri-purecap`. `initialize_capability_memory(NUM_CPUS)` is always called. |
-| Capability memory | `inc/capability_memory.h`, `src/capability_memory.cc` | Per-CPU shadow of 16-byte slots. A presimpoint map is compacted by the idempotent `finalize()` into a sorted vector plus an interned descriptor table. Later stores and invalidations are tracked in separate structures. |
+| Capability memory | `inc/capability_memory.h`, `src/capability_memory.cc` | Per-CPU shadow of 16-byte slots. A presimpoint map is compacted by the idempotent `finalize()` into a sorted vector plus an interned descriptor table. Later stores and invalidations are tracked in separate structures. (Replaced after the port by a compact layout; see "Compact `capability_memory`".) |
 | Core | `src/ooo_cpu.cc`, `inc/ooo_cpu.h` | `LSQ_ENTRY` carries the auth and transferred caps. Loads and stores put `auth_cap` on the packet and warn when it is untagged. `do_complete_store` is the only runtime writer of `cap_mem`: a tagged transferred cap is stored, anything else invalidates the slot. |
 | Packets | `inc/channel.h` | `request.cap`, `response.cap`, a 6-arg `response` constructor. The upstream 5-arg constructor is kept. |
 | Caches | `inc/cache.h`, `src/cache.cc`, `inc/block.h` | `cap` on lookup and fill entries, `BLOCK::auth_cap`. The hit response carries the cap loaded from `cap_mem`. The victim's `auth_cap` becomes `evicted_cap`. Cap-carrying `prefetch_line` overloads. (The fork's `CACHE::v_addr` / `vaddr_evicted` side-channel members were removed after the port.) |
@@ -211,6 +211,19 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Test: `439-cheri-cursor-derived-va.cc`.
 
 - **Prefetch `v_address` at physical caches:** `prefetch_line` now stamps the prefetch's VA from `prefetch_vaddr` (trigger page + page offset, when on the trigger's page) instead of leaving it empty. The `cap_mem`-based statistics in `try_hit`, `handle_miss` and `handle_write` (`cap_data_*`, `capabilities_per_cl_*`) skip accesses whose VA is still unknown, instead of reading VA 0. Test: `440-cheri-empty-va-stats.cc`.
+- **Compact `capability_memory`** (same trace format, same public API, same `load`/`has` results).
+  - **Before:** presimpoint loading used an `unordered_map<uint64_t, capability>` (~72 B per slot; ~96 B per slot at the `finalize()` peak, while the 24 B sorted vector was built). After `finalize()`, each new slot cost a ~72 B `simpoint_region_map_` node, and every ordinary store to a presimpoint slot added a never-freed ~40 B `invalidated_keys_` node, so memory grew with the number of stores.
+  - **Now:** every slot is one 16-byte entry `{key, offset, cap_id}`. `cap_id` indexes an interned descriptor of every field except the offset (base, length, permissions, tag); offsets ≥ 2³² are flagged and kept in a side map.
+    - Before `finalize()`, stores and invalidations append to a log, compacted by `std::stable_sort` (last record per key wins) when it doubles (at least 1M records) and before any query.
+    - After `finalize()`, the sorted main vector is updated in place (invalidation = tombstone). Only keys absent from main go to a delta map, which is merged into main (dropping tombstones) past `max(1M, main/8)` entries.
+  - **Footprint** (unmeasured estimates):
+    - The loading peak is roughly 16 B per record plus `stable_sort`'s buffer and vector growth slack, so up to ~2–3× that transiently.
+    - The steady state is ~16 B per slot.
+    - A delta merge briefly holds two copies of main.
+    - The descriptor intern table grows with the number of unique descriptors and is never freed.
+    - Ordinary stores no longer grow memory.
+  - **`size()` fix:** `size()` after `finalize()` previously double-counted a presimpoint key that a capability store had overwritten or re-stored (it sat in both the vector and `simpoint_region_map_`); it is now exact.
+  - Tests: `090-capability-memory.cc` (the step-by-step `size()` checks, big offsets, loading-phase overwrites, a forced delta merge, no-op invalidation).
 - **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
   - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.

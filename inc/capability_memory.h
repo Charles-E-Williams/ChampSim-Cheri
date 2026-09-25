@@ -18,29 +18,57 @@
 #define CAPABILITY_MEMORY_H
 
 #include <algorithm>
+#include <cstdint>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 #include "cheri.h"
 
 namespace champsim {
 
+// Per-CPU shadow of the tagged 16-byte capability slots in memory, keyed by (virtual address >> 4).
+//
+// Layout:
+//  - Every slot is a 16-byte entry {key, offset, cap_id}. cap_id indexes an interned descriptor holding every
+//    capability field except the offset (base, length, permissions, tag).
+//  - cap_id == TOMBSTONE marks an invalidated slot. Otherwise, BIG_OFFSET_FLAG in cap_id means the offset does not
+//    fit in 32 bits and is kept in big_offsets_. Always test for TOMBSTONE before testing the flag.
+//  - big_offsets_ holds exactly the keys whose current live value carries BIG_OFFSET_FLAG. It is updated on every
+//    store and invalidation of that key.
+//
+// Before finalize() (presimpoint loading): entries_ is an append-only log. The last record for a key wins, and a
+// TOMBSTONE record erases the key. The log is compacted (stable sort by key, keep the last record per key, drop
+// tombstones) when it reaches max(2 x the size after the previous compaction, MIN_COMPACT_RECORDS), and before
+// any query.
+//
+// After finalize(): entries_ is "main", sorted by key with unique keys; delta_ holds keys absent from main.
+// Invariant: every key lives in exactly one of main or delta. A store to a key present in main (including a
+// tombstoned one) updates it in place; only keys absent from main go to delta, and delta never holds tombstones.
+// Lookups may skip the delta probe when delta_ is empty. delta_ is merged into main (dropping tombstones) when
+// it grows past max(MIN_DELTA_MERGE, main / 8).
 class capability_memory {
 private:
   static constexpr uint64_t CAP_ALIGNMENT_BITS = 4;
+
+  static constexpr uint32_t TOMBSTONE = std::numeric_limits<uint32_t>::max();
+  static constexpr uint32_t BIG_OFFSET_FLAG = uint32_t{1} << 31;
+  static constexpr uint32_t MAX_DESC_ID = BIG_OFFSET_FLAG - 2; // 2^31 - 2; with the flag set it never equals TOMBSTONE
+  static constexpr std::size_t MIN_COMPACT_RECORDS = 1'000'000;
+  static constexpr std::size_t MIN_DELTA_MERGE = 1'000'000;
 
   struct cap_descriptor {
     uint64_t base;
     uint64_t length;
     uint32_t permissions;
+    bool tag;
 
     bool operator==(const cap_descriptor& o) const
     {
-      return base == o.base && length == o.length && permissions == o.permissions;
+      return base == o.base && length == o.length && permissions == o.permissions && tag == o.tag;
     }
   };
 
@@ -50,35 +78,53 @@ private:
       uint64_t h = o.base;
       h ^= o.length + 0x9e3779b9 + (h << 6) + (h >> 2);
       h ^= (static_cast<uint64_t>(o.permissions) * 0xff51afd7ed558ccdULL);
+      h ^= static_cast<uint64_t>(o.tag) << 63;
       h ^= (h >> 33);
       return static_cast<size_t>(h);
     }
   };
 
-  struct presimpoint_entry {
-    uint64_t va_key;
-    uint64_t offset;
+  struct packed_value {
+    uint32_t offset;
     uint32_t cap_id;
-
-    bool operator<(const presimpoint_entry& o) const { return va_key < o.va_key; }
   };
 
-  std::unordered_map<uint64_t, capability> presimpoint_map_;
+  struct entry {
+    uint64_t key;
+    uint32_t offset;
+    uint32_t cap_id;
+  };
+  static_assert(sizeof(entry) == 16);
 
-  std::vector<presimpoint_entry> presimpoint_entries_;
+  mutable std::vector<entry> entries_;     // the log before finalize(), main after
+  mutable std::size_t compacted_size_ = 0; // entries_.size() after the last compaction
+  mutable bool log_dirty_ = false;         // the log has records since the last compaction
+
+  std::unordered_map<uint64_t, packed_value> delta_;
+  std::unordered_map<uint64_t, uint64_t> big_offsets_;
+
   std::vector<cap_descriptor> cap_table_;
-  bool finalized_ = false;
+  std::unordered_map<cap_descriptor, uint32_t, cap_descriptor_hash> intern_;
 
-  std::unordered_map<uint64_t, capability> simpoint_region_map_;
-  std::unordered_set<uint64_t> invalidated_keys_;
+  std::size_t live_ = 0; // live (non-tombstone) keys across main and delta, after finalize()
+  bool finalized_ = false;
 
   static uint64_t addr_to_key(champsim::address addr)
   {
     return addr.to<uint64_t>() >> CAP_ALIGNMENT_BITS;
   }
 
-  capability rebuild(const presimpoint_entry& e) const;
-  const presimpoint_entry* find_in_presimpoint(uint64_t key) const;
+  uint32_t intern(const capability& cap);
+  packed_value encode(uint64_t key, const capability& cap);
+  std::optional<capability> decode(uint64_t key, uint32_t offset, uint32_t cap_id) const;
+
+  void compact_log() const;
+  void maybe_compact();
+  void maybe_merge();
+
+  const entry* find_main(uint64_t key) const;
+  entry* find_main(uint64_t key);
+  std::optional<packed_value> find(uint64_t key) const;
 
 public:
   capability_memory() = default;
