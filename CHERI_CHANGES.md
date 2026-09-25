@@ -210,6 +210,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - `grep -rn "v_addr\b"` over `inc src prefetcher` still matches upstream identifiers that have nothing to do with the side channel: the `response` constructor parameters in `inc/channel.h`, the deadlock-print format strings in `src/cache.cc`, stock `va_ampm_lite`, and comments in the `berti` baselines. `grep -rn "intern_->v_addr\|vaddr_evicted\|CACHE::v_addr\|module_vaddress" inc src prefetcher` returns nothing.
   - Test: `439-cheri-cursor-derived-va.cc`.
 
+- **Prefetch `v_address` at physical caches:** `prefetch_line` now stamps the prefetch's VA from `prefetch_vaddr` (trigger page + page offset, when on the trigger's page) instead of leaving it empty. The `cap_mem`-based statistics in `try_hit`, `handle_miss` and `handle_write` (`cap_data_*`, `capabilities_per_cl_*`) skip accesses whose VA is still unknown, instead of reading VA 0. Test: `440-cheri-empty-va-stats.cc`.
 - **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
   - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.

@@ -371,15 +371,19 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       sim_stats.pf_redundant_by_cap_size.increment(pf_cap_key{handle_pkt.pf_cap_class, handle_pkt.cpu});
 
     // CHERI CACHE STATS
-    champsim::capability response_cap = champsim::cap_mem[cpu]
-                                    .load_capability(handle_pkt.v_address)
-                                    .value_or(champsim::capability{});
+    // An empty v_address (e.g. a prefetch issued at a non-virtual_prefetch cache, or a writeback of a block it filled)
+    // has no known VA: skip the cap_mem lookups and their statistics for it.
+    const bool has_va = handle_pkt.v_address != champsim::address{};
+    champsim::capability response_cap =
+        has_va ? champsim::cap_mem[cpu].load_capability(handle_pkt.v_address).value_or(champsim::capability{}) : champsim::capability{};
 
     auto auth_coverage_events = classify_capability(handle_pkt.cap);
     if (handle_pkt.cap.tag)
       sim_stats.cap_auth_hits.increment(cap_dist_key{auth_coverage_events, handle_pkt.type, handle_pkt.cpu});
-    auto cap_data_coverage_events = classify_capability(response_cap);
-    sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+    if (has_va) {
+      auto cap_data_coverage_events = classify_capability(response_cap);
+      sim_stats.cap_data_hits.increment(cap_dist_key{cap_data_coverage_events, handle_pkt.type, handle_pkt.cpu});
+    }
     
     response_type response{handle_pkt.address, handle_pkt.v_address, way->data, metadata_thru, 
                           response_cap, handle_pkt.instr_depend_on_me};
@@ -404,7 +408,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
     }
 
     // count number of capabilities seen in a cache line 
-    if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::PREFETCH) {
+    if (has_va && (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE || handle_pkt.type == access_type::PREFETCH)) {
       const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
       sim_stats.capabilities_per_cl_hit.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
     }
@@ -500,14 +504,18 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   if (handle_pkt.cap.tag)
     sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
-  sim_stats.cap_data_misses.increment(cap_dist_key{
-    capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
-    handle_pkt.type, 
-    handle_pkt.cpu
-  });
+  // An empty v_address has no known VA: skip the cap_mem lookups and their statistics
+  const bool has_va = handle_pkt.v_address != champsim::address{};
+  if (has_va) {
+    auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+    sim_stats.cap_data_misses.increment(cap_dist_key{
+      capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
+      handle_pkt.type, 
+      handle_pkt.cpu
+    });
+  }
 
-  if (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE ||handle_pkt.type == access_type::PREFETCH) {
+  if (has_va && (handle_pkt.type == access_type::LOAD || handle_pkt.type == access_type::WRITE ||handle_pkt.type == access_type::PREFETCH)) {
     const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
     sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
   }
@@ -533,15 +541,19 @@ bool CACHE::handle_write(const tag_lookup_type& handle_pkt)
   if (handle_pkt.cap.tag)
     sim_stats.cap_auth_misses.increment(cap_dist_key{classify_capability(handle_pkt.cap), handle_pkt.type, handle_pkt.cpu});
 
-  auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
-  sim_stats.cap_data_misses.increment(cap_dist_key{
-      capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
-      handle_pkt.type, 
-      handle_pkt.cpu
-  });
+  // An empty v_address (e.g. a writeback of a block filled by a non-virtual_prefetch prefetch) has no known VA: skip the
+  // cap_mem lookups and their statistics
+  if (handle_pkt.v_address != champsim::address{}) {
+    auto capability_optional = champsim::cap_mem[handle_pkt.cpu].load_capability(handle_pkt.v_address);
+    sim_stats.cap_data_misses.increment(cap_dist_key{
+        capability_optional ? classify_capability(*capability_optional) : cap_size_coverage_events::UNTAGGED, 
+        handle_pkt.type, 
+        handle_pkt.cpu
+    });
 
-  const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
-  sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
+    const unsigned count = tagged_caps_in_line(champsim::cap_mem[handle_pkt.cpu], handle_pkt.v_address);
+    sim_stats.capabilities_per_cl_miss.increment(cl_cap_key{count, handle_pkt.type, handle_pkt.cpu});
+  }
   
   return true;
 }
@@ -736,7 +748,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.pf_metadata = prefetch_metadata;
   pf_packet.cpu = cpu;
   pf_packet.address = pf_addr;
-  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.v_address = prefetch_vaddr(pf_addr).value_or(champsim::address{}); // the VA when known (see prefetch_vaddr), else empty
   pf_packet.is_translated = !virtual_prefetch;
   pf_packet.cap = repoint_prefetch_cap(cap, pf_addr);
 
@@ -758,7 +770,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.pf_metadata = prefetch_metadata;
   pf_packet.cpu = pf_cpu;
   pf_packet.address = pf_addr;
-  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.v_address = prefetch_vaddr(pf_addr).value_or(champsim::address{}); // the VA when known (see prefetch_vaddr), else empty
   pf_packet.is_translated = !virtual_prefetch;
   pf_packet.cap = repoint_prefetch_cap(cap, pf_addr);
   pf_packet.ip = pf_ip;
@@ -781,7 +793,7 @@ bool CACHE::prefetch_line(champsim::address pf_addr, bool fill_this_level, uint3
   pf_packet.pf_metadata = prefetch_metadata;
   pf_packet.cpu = cpu;
   pf_packet.address = pf_addr;
-  pf_packet.v_address = virtual_prefetch ? pf_addr : champsim::address{};
+  pf_packet.v_address = prefetch_vaddr(pf_addr).value_or(champsim::address{}); // the VA when known (see prefetch_vaddr), else empty
   pf_packet.is_translated = !virtual_prefetch;
   if (prefetch_trigger.has_value())
     pf_packet.cap = repoint_prefetch_cap(prefetch_trigger->cap, pf_addr);
