@@ -57,7 +57,6 @@ CACHE::CACHE(CACHE&& other)
       cpu(other.cpu), NAME(std::move(other.NAME)), NUM_SET(other.NUM_SET), NUM_WAY(other.NUM_WAY), MSHR_SIZE(other.MSHR_SIZE), PQ_SIZE(other.PQ_SIZE),
       HIT_LATENCY(other.HIT_LATENCY), FILL_LATENCY(other.FILL_LATENCY), OFFSET_BITS(other.OFFSET_BITS), block(std::move(other.block)), MAX_TAG(other.MAX_TAG),
       MAX_FILL(other.MAX_FILL), prefetch_as_load(other.prefetch_as_load), match_offset_bits(other.match_offset_bits), virtual_prefetch(other.virtual_prefetch),
-      inherit_trigger_cap(other.inherit_trigger_cap),
       pref_activate_mask(std::move(other.pref_activate_mask)),
 
       sim_stats(std::move(other.sim_stats)), roi_stats(std::move(other.roi_stats)),
@@ -96,7 +95,6 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
   this->prefetch_as_load = other.prefetch_as_load;
   this->match_offset_bits = other.match_offset_bits;
   this->virtual_prefetch = other.virtual_prefetch;
-  this->inherit_trigger_cap = other.inherit_trigger_cap;
   this->pref_activate_mask = std::move(other.pref_activate_mask);
 
   this->sim_stats = std::move(other.sim_stats);
@@ -356,8 +354,7 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
 
   if (should_activate_prefetcher(handle_pkt)) {
     const uint32_t metadata_hit = hit ? way->pf_metadata : 0u;
-    if (inherit_trigger_cap)
-      prefetch_trigger = prefetch_trigger_type{handle_pkt.cap, handle_pkt.address, handle_pkt.v_address};
+    prefetch_trigger = prefetch_trigger_type{handle_pkt.cap, handle_pkt.address, handle_pkt.v_address};
     metadata_thru = impl_prefetcher_cache_operate(module_address(handle_pkt), handle_pkt.ip, handle_pkt.cpu, handle_pkt.cap, hit, useful_prefetch,
                                                   handle_pkt.type, metadata_thru, metadata_hit);
     prefetch_trigger.reset();

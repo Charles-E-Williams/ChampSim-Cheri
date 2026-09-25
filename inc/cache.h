@@ -181,7 +181,6 @@ public:
   bool prefetch_as_load;
   bool match_offset_bits;
   bool virtual_prefetch;
-  bool inherit_trigger_cap;
   std::vector<access_type> pref_activate_mask;
 
   using stats_type = cache_stats;
@@ -191,7 +190,7 @@ public:
   std::deque<fill_type> MSHR;
   std::deque<fill_type> inflight_fills;
 
-  // The access currently inside the prefetcher's cache_operate hook (set only when inherit_trigger_cap)
+  // The access currently inside the prefetcher's cache_operate hook; no-cap prefetches issued there inherit its capability
   struct prefetch_trigger_type {
     champsim::capability cap;
     champsim::address address;
@@ -349,7 +348,7 @@ public:
       : champsim::operable(b.m_clock_period), upper_levels(b.m_uls), lower_level(b.m_ll), lower_translate(b.m_lt), NAME(b.m_name), NUM_SET(b.get_num_sets()),
         NUM_WAY(b.get_num_ways()), MSHR_SIZE(b.get_num_mshrs()), PQ_SIZE(b.m_pq_size), HIT_LATENCY(b.get_hit_latency() * b.m_clock_period),
         FILL_LATENCY(b.get_fill_latency() * b.m_clock_period), OFFSET_BITS(b.m_offset_bits), MAX_TAG(b.get_tag_bandwidth()), MAX_FILL(b.get_fill_bandwidth()),
-        prefetch_as_load(b.m_pref_load), match_offset_bits(b.m_wq_full_addr), virtual_prefetch(b.m_va_pref), inherit_trigger_cap(b.m_inherit_trigger_cap), pref_activate_mask(b.m_pref_act_mask),
+        prefetch_as_load(b.m_pref_load), match_offset_bits(b.m_wq_full_addr), virtual_prefetch(b.m_va_pref), pref_activate_mask(b.m_pref_act_mask),
         pref_module_pimpl(std::make_unique<prefetcher_module_model<Ps...>>(this)), repl_module_pimpl(std::make_unique<replacement_module_model<Rs...>>(this))
   {
   }

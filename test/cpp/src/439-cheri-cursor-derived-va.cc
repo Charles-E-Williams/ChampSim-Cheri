@@ -132,20 +132,15 @@ struct physical_rig {
   CACHE uut;
   std::array<champsim::operable*, 3> elements{{&mock_ll, &mock_ul, &uut}};
 
-  physical_rig(long ways, bool inherit)
-      : uut{[&] {
-          auto b = champsim::cache_builder{champsim::defaults::default_l2c}
-                       .name("439-rig")
-                       .sets(1)
-                       .ways(ways)
-                       .upper_levels({&mock_ul.queues})
-                       .lower_level(&mock_ll.queues)
-                       .reset_virtual_prefetch()
-                       .template prefetcher<P>();
-          if (inherit)
-            b.set_inherit_trigger_cap();
-          return b;
-        }()}
+  explicit physical_rig(long ways)
+      : uut{champsim::cache_builder{champsim::defaults::default_l2c}
+                .name("439-rig")
+                .sets(1)
+                .ways(ways)
+                .upper_levels({&mock_ul.queues})
+                .lower_level(&mock_ll.queues)
+                .reset_virtual_prefetch()
+                .template prefetcher<P>()}
   {
     for (auto elem : elements) {
       elem->initialize();
@@ -172,7 +167,7 @@ struct physical_rig {
 TEST_CASE("439-4: an own-prefetched line at a physical cache keeps a cursor that yields its VA for eviction cleanup")
 {
   // Before the side channel was removed, such a block's v_address was 0, so AMPM-CHERI's cleanup skipped it
-  physical_rig<next_line_no_cap> r{4, true};
+  physical_rig<next_line_no_cap> r{4};
   const uint64_t base = 0x7fff12340000;
   r.load(0xdeadbe40, 0x7fff12345e40, make_cap(base, 0x10000, 0x5e40)); // demand; prefetches the next line 0xdeadbe80
 
@@ -189,7 +184,7 @@ TEST_CASE("439-4: an own-prefetched line at a physical cache keeps a cursor that
 
 TEST_CASE("439-5: a fill into an invalid way passes an untagged evicted_cap, even after an invalidation")
 {
-  physical_rig<evicted_cap_recorder> r{1, false};
+  physical_rig<evicted_cap_recorder> r{1};
   ::fill_evicted_caps[&r.uut].clear();
   const auto cap = make_cap(0x40000, 0x10000, 0x100);
 

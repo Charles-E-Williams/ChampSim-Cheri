@@ -63,7 +63,6 @@
     "prefetch_as_load": false,
     "virtual_prefetch": true,
     "prefetch_activate": "LOAD,PREFETCH",
-    "inherit_trigger_cap": true,
     "prefetcher": "berti_cheri"
   },
   "L2C": {
@@ -79,7 +78,6 @@
     "prefetch_as_load": false,
     "virtual_prefetch": false,
     "prefetch_activate": "LOAD,PREFETCH",
-    "inherit_trigger_cap": true,
     "prefetcher": "no"
   },
   "ITLB": {
@@ -146,7 +144,6 @@
     "prefetch_as_load": false,
     "virtual_prefetch": false,
     "prefetch_activate": "LOAD,PREFETCH",
-    "inherit_trigger_cap": true,
     "prefetcher": "no",
     "replacement": "lru"
   },

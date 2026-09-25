@@ -94,9 +94,9 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Now: `try_hit` updates it only when `handle_pkt.cap.tag && handle_pkt.type != access_type::PREFETCH`. Fills still set `auth_cap` from the fill entry.
   - Test: `434-cheri-auth-cap-on-hit.cc`.
 
-- **Prefetches inherit the triggering access's capability** (per-cache JSON knob `inherit_trigger_cap`, default `false`). This started as the first part of brief task 2; task 2 itself was later dropped (see below).
+- **Prefetches inherit the triggering access's capability** (always on). This started as the first part of brief task 2; task 2 itself was later dropped (see below).
   - **Mechanism:**
-    - `CACHE::impl_prefetcher_cache_operate` records the triggering access's `cap` on entry and clears it on exit.
+    - `try_hit` records the triggering access's `cap` (with its physical and virtual addresses) just before calling the prefetcher's `cache_operate`, and clears it on return.
     - The no-cap `CACHE::prefetch_line(addr, fill_this_level, metadata)` attaches that recorded cap to the prefetch packet when it is called inside the hook.
     - Calls outside `cache_operate` (cycle and fill hooks) through the no-cap overload still get an untagged cap.
     - **Every tagged cap on a prefetch is re-pointed at the prefetched line**, explicit or inherited (`CACHE::repoint_prefetch_cap`, in all three `prefetch_line` overloads).
@@ -116,7 +116,10 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
     - `cheri::hash_capability()` hashes only `base` and `length`, so re-pointing does not change it.
     - Test: `438-cheri-prefetch-cap-repoint.cc`.
   - **Why:** every CHERI prefetcher issued through the no-cap overload, so every prefetch packet was untagged. At L2C/LLC, `prefetch_activate` is `LOAD,PREFETCH`, so every PREFETCH access there reached the prefetcher untagged and hit the untagged-cap early return. CHERI prefetchers at L2C/LLC therefore never trained on L1D (or L2C) prefetches. The fill's `cap` and `BLOCK::auth_cap` of prefetched lines were untagged for the same reason.
-  - **Enabled** at L1D, L2C and LLC in all `champsim_cheri_*` configs. It stays off (the default) in `champsim_config.json`, `champsim_no_pf_config.json` and all `champsim_riscv_*` configs, and at L1I everywhere, so baseline runs are unchanged. Stock and third-party prefetchers were not edited.
+  - **Always on, in every cache and every config.**
+    - It was first a per-cache JSON knob, `inherit_trigger_cap`, enabled only at L1D/L2C/LLC in the `champsim_cheri_*` configs. The knob was then removed: its builder methods, the `CACHE` member, the `config/` handling and the field in every JSON config.
+    - **Effect on stock and third-party prefetchers:** none on their behaviour. They use the legacy hook signatures and never read the capability. What changes is statistics: their prefetch packets now carry the trigger's capability, so the by-size prefetch counters, and the fill's `cap` / `BLOCK::auth_cap` of their prefetched lines, reflect it. With untagged triggers (non-CHERI traces) nothing changes.
+    - Tests: 435's knob-off case was removed. 437-11 now checks that prefetches triggered by untagged accesses land in UNTAGGED.
   - **Cycle-hook issuers** now keep the triggering cap with each buffered candidate and use the cap overload:
     - `ip_stride_cheri` / `ip_stride_cheri_dynamic`: `active_lookahead.cap`.
     - `sms_cheri`: `pref_buffer` now stores `(address, capability)` pairs, filled from the trigger in `cache_operate`.
@@ -141,7 +144,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - Upstream's `_is_instruction_cache` / `_is_instruction_prefetcher` in `config/` and `test/python/` are unrelated upstream config flags and remain.
 
 - **Prefetch usefulness by capability size (brief §10 task 3, revised 2026-09-24).** Stats only; no timing or control-flow change.
-  - **Issuing capability:** the cap on the prefetch packet (explicit, or inherited and offset-adjusted via `inherit_trigger_cap`); UNTAGGED if none.
+  - **Issuing capability:** the cap on the prefetch packet (explicit, or inherited from the trigger and offset-adjusted); UNTAGGED if none.
     - Its size class and base are stamped in `prefetch_line` on the `tag_lookup_type`, copied to `fill_type`, and stored on `BLOCK` (`pf_cap_class`, `pf_cap_base`, separate from `auth_cap`) when the fill sets the prefetch bit.
     - For late-useful prefetches they are read from the in-flight entry before `fill_type::merge`.
   - **Counters,** keyed by (size class, CPU of the prefetch):
@@ -210,7 +213,7 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
 - **Brief §10 task 2 dropped** (the central out-of-bounds prefetch drop in `CACHE::prefetch_line`, and the bounds-only ablation for stock prefetchers).
   - CHERI prefetchers already bound their own prefetches (`cheri::prefetch_safe()` and prefetcher-specific bounds logic), so a cache-side filter would never fire for them.
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.
-  - `inherit_trigger_cap` and prefetch-cap re-pointing, which started as part of task 2, stay; they feed the CHERI prefetchers and the task 3 stats.
+  - Trigger-capability inheritance and prefetch-cap re-pointing, which started as part of task 2, stay; they feed the CHERI prefetchers and the task 3 stats.
   - **`pf_out_of_bounds_at_issue_by_cap_size` removed** (counter, ROI copy, `operator-`, the plain-text `OOBIssue` column, the JSON field, test 437-9, and its entry in the counter list that 437-10/437-11 use). It measured what task 2 would drop, and it would always read zero for CHERI prefetchers.
 
 ## Known issues (intentionally not changed)

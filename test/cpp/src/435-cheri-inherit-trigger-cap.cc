@@ -63,7 +63,7 @@ struct result {
 
 // virtual_upper: the upper cache prefetches in the virtual address space and translates through a mock.
 // (The test defaults do not set virtual_prefetch on default_l1d, so it is set explicitly.)
-result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::address> targets, champsim::address cycle)
+result run_scenario(bool virtual_upper, std::vector<champsim::address> targets, champsim::address cycle)
 {
   in_hook_targets = std::move(targets);
   cycle_target = cycle;
@@ -82,10 +82,6 @@ result run_scenario(bool inherit, bool virtual_upper, std::vector<champsim::addr
     upper_builder.lower_translate(&mock_lt.queues).set_virtual_prefetch();
   else
     upper_builder.reset_virtual_prefetch();
-  if (inherit)
-    upper_builder.set_inherit_trigger_cap();
-  else
-    upper_builder.reset_inherit_trigger_cap();
   CACHE upper{upper_builder};
   REQUIRE(upper.virtual_prefetch == virtual_upper);
   CACHE lower{champsim::cache_builder{champsim::defaults::default_llc}
@@ -135,7 +131,7 @@ TEST_CASE("On a physical cache, an inherited capability is re-pointed at the pre
 {
   const champsim::address same_page{trigger_pa + 0x40};                // VA 0x7fff12345e80 -> offset 0xe80
   const champsim::address other_page{((trigger_pa >> 12) + 1) << 12}; // VA unknown -> trigger's offset, unchanged
-  auto res = run_scenario(true, false, {same_page, other_page}, champsim::address{trigger_pa + 0x80});
+  auto res = run_scenario(false, {same_page, other_page}, champsim::address{trigger_pa + 0x80});
 
   CHECK(res.tagged_offsets == std::vector<uint64_t>{0xe40, 0xe80});
   CHECK(res.untagged == 1); // the cycle_operate prefetch has no trigger
@@ -145,16 +141,8 @@ TEST_CASE("On a virtual-prefetch cache, an inherited capability is re-pointed at
 {
   const champsim::address next_line{trigger_va + 0x40};   // offset 0xe80
   const champsim::address next_page{cap_base + 0x1040};   // offset 0x1040
-  auto res = run_scenario(true, true, {next_line, next_page}, champsim::address{trigger_va + 0x80});
+  auto res = run_scenario(true, {next_line, next_page}, champsim::address{trigger_va + 0x80});
 
   CHECK(res.tagged_offsets == std::vector<uint64_t>{0xe80, 0x1040});
   CHECK(res.untagged == 1);
-}
-
-TEST_CASE("Without inherit_trigger_cap, a no-cap prefetch issued inside cache_operate stays untagged")
-{
-  auto res = run_scenario(false, false, {champsim::address{trigger_pa + 0x40}}, champsim::address{trigger_pa + 0x80});
-
-  CHECK(res.tagged_offsets.empty());
-  CHECK(res.untagged == 2);
 }

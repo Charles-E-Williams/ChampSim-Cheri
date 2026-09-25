@@ -39,7 +39,7 @@ long sum(const champsim::stats::event_counter<pf_cap_key>& counter)
   return total;
 }
 
-// Prefetcher used by the knob-off test: issues a no-cap prefetch to the next line on every LOAD
+// Prefetcher used by the untagged-trigger test: issues a no-cap prefetch to the next line on every LOAD
 struct next_line_legacy : champsim::modules::prefetcher {
   using prefetcher::prefetcher;
   uint32_t prefetcher_cache_operate(champsim::address addr, champsim::address, uint32_t, champsim::capability, bool, bool, access_type type,
@@ -73,8 +73,7 @@ struct rig {
                  .hit_latency(1)
                  .fill_latency(1)
                  .upper_levels({{&rq.queues, &pq.queues}})
-                 .lower_level(&ll.queues)
-                 .reset_inherit_trigger_cap();
+                 .lower_level(&ll.queues);
     if (virtual_prefetch)
       b.lower_translate(&lt.queues).set_virtual_prefetch();
     else
@@ -323,12 +322,12 @@ TEST_CASE("437-10: begin_phase clears the counters, end_phase copies them to roi
     CHECK(count(diff.*member, cls::B_4KB_64KB) == 2);
 }
 
-TEST_CASE("437-11: with inherit_trigger_cap off, no-cap prefetches land in UNTAGGED")
+TEST_CASE("437-11: no-cap prefetches triggered by untagged accesses land in UNTAGGED")
 {
   rig<next_line_legacy> r{1, 4};
-  r.demand(0x1000, cap_4KB); // miss; the prefetcher issues 0x1040 without a capability
+  r.demand(0x1000, champsim::capability{}); // miss; the prefetcher issues 0x1040 without a capability and inherits the untagged trigger
   r.run(100);
-  r.demand(0x1040, cap_4KB); // hits the prefetched line
+  r.demand(0x1040, champsim::capability{}); // hits the prefetched line
   r.run(100);
 
   REQUIRE(r.stats().pf_issued > 0);
@@ -336,7 +335,7 @@ TEST_CASE("437-11: with inherit_trigger_cap off, no-cap prefetches land in UNTAG
   CHECK(count(r.stats().pf_issued_by_cap_size, cls::UNTAGGED) == static_cast<long>(r.stats().pf_issued));
   CHECK(count(r.stats().pf_useful_timely_demand_by_cap_size, cls::UNTAGGED) == 1);
   CHECK(sum(r.stats().pf_useful_same_object_by_cap_size) == 0); // issuing capability unknown
-  CHECK(sum(r.stats().pf_useful_demand_untagged_by_cap_size) == 0);
+  CHECK(count(r.stats().pf_useful_demand_untagged_by_cap_size, cls::UNTAGGED) == 1);
   for (auto member : all_by_size)
     for (auto c : cap_size_coverage_events_all)
       CHECK(count(r.stats().*member, c) == 0);

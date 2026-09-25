@@ -57,7 +57,6 @@ struct cache_builder_base {
   bool m_pref_load{};
   bool m_wq_full_addr{};
   bool m_va_pref{};
-  bool m_inherit_trigger_cap{};
 
   std::vector<access_type> m_pref_act_mask{access_type::LOAD, access_type::PREFETCH};
   std::vector<champsim::channel*> m_uls{};
@@ -212,17 +211,6 @@ public:
    * Specify that prefetchers should operate in the physical address space.
    */
   self_type& reset_virtual_prefetch();
-
-  /**
-   * Specify that prefetches issued without a capability from inside the prefetcher's cache_operate hook
-   * carry the triggering access's capability.
-   */
-  self_type& set_inherit_trigger_cap();
-
-  /**
-   * Specify that prefetches issued without a capability stay untagged.
-   */
-  self_type& reset_inherit_trigger_cap();
 
   /**
    * Specify the ``access_type`` values that should activate the prefetcher.
@@ -494,20 +482,6 @@ template <typename P, typename R>
 auto champsim::cache_builder<P, R>::reset_virtual_prefetch() -> self_type&
 {
   m_va_pref = false;
-  return *this;
-}
-
-template <typename P, typename R>
-auto champsim::cache_builder<P, R>::set_inherit_trigger_cap() -> self_type&
-{
-  m_inherit_trigger_cap = true;
-  return *this;
-}
-
-template <typename P, typename R>
-auto champsim::cache_builder<P, R>::reset_inherit_trigger_cap() -> self_type&
-{
-  m_inherit_trigger_cap = false;
   return *this;
 }
 
