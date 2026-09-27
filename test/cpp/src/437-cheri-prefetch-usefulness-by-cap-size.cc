@@ -21,13 +21,23 @@ const auto cap_64B_b = make_cap(0x90000, 64);    // 0-128B, different object
 const auto cap_4KB = make_cap(0x20000, 4096);    // 128B-4KB
 const auto cap_1MB = make_cap(0x100000, 1 << 20); // 64KB-1MB
 
-constexpr std::array<champsim::stats::event_counter<pf_cap_key> cache_stats::*, 10> all_by_size{
+constexpr std::array<champsim::stats::event_counter<pf_cap_key> cache_stats::*, 20> all_by_size{
     &cache_stats::pf_issued_by_cap_size,          &cache_stats::pf_issued_skip_fill_by_cap_size,
     &cache_stats::pf_redundant_by_cap_size,       &cache_stats::pf_fill_own_by_cap_size,
     &cache_stats::pf_useful_timely_demand_by_cap_size, &cache_stats::pf_useful_timely_upper_pf_by_cap_size,
     &cache_stats::pf_useful_late_by_cap_size,
     &cache_stats::pf_useless_by_cap_size,         &cache_stats::pf_useful_same_object_by_cap_size,
-    &cache_stats::pf_useful_demand_untagged_by_cap_size};
+    &cache_stats::pf_useful_demand_untagged_by_cap_size,
+    &cache_stats::pf_issued_oob_by_cap_size,
+    &cache_stats::pf_fill_own_oob_by_cap_size,
+    &cache_stats::pf_useful_timely_demand_oob_by_cap_size,
+    &cache_stats::pf_useful_late_oob_by_cap_size,
+    &cache_stats::pf_useless_oob_by_cap_size,
+    &cache_stats::pf_issued_bounds_unknown_by_cap_size,
+    &cache_stats::pf_fill_own_bounds_unknown_by_cap_size,
+    &cache_stats::pf_useful_timely_demand_bounds_unknown_by_cap_size,
+    &cache_stats::pf_useful_late_bounds_unknown_by_cap_size,
+    &cache_stats::pf_useless_bounds_unknown_by_cap_size};
 
 long count(const champsim::stats::event_counter<pf_cap_key>& counter, cls c) { return counter.value_or(pf_cap_key{c, 0}, 0L); }
 
@@ -64,7 +74,8 @@ struct rig {
   CACHE uut;
   std::array<champsim::operable*, 5> elements;
 
-  static auto builder(long sets, long ways, bool virtual_prefetch, do_nothing_MRC& ll, do_nothing_MRC& lt, to_rq_MRP& rq, to_pq_MRP& pq)
+  static auto builder(long sets, long ways, bool virtual_prefetch, uint32_t mshrs, do_nothing_MRC& ll, do_nothing_MRC& lt, to_rq_MRP& rq,
+                      to_pq_MRP& pq)
   {
     auto b = champsim::cache_builder{champsim::defaults::default_l2c}
                  .name("437-uut")
@@ -78,14 +89,16 @@ struct rig {
       b.lower_translate(&lt.queues).set_virtual_prefetch();
     else
       b.reset_virtual_prefetch();
+    if (mshrs != 0) // 0 keeps the builder's default, which is 1 for a single-set cache
+      b.mshr_size(mshrs);
     if constexpr (std::is_same_v<P, no_prefetcher_tag>)
       return b;
     else
       return b.template prefetcher<P>();
   }
 
-  rig(long sets, long ways, int memory_latency = 0, bool virtual_prefetch = false)
-      : mock_ll(memory_latency), uut{builder(sets, ways, virtual_prefetch, mock_ll, mock_lt, ul_rq, ul_pq)},
+  rig(long sets, long ways, int memory_latency = 0, bool virtual_prefetch = false, uint32_t mshrs = 0)
+      : mock_ll(memory_latency), uut{builder(sets, ways, virtual_prefetch, mshrs, mock_ll, mock_lt, ul_rq, ul_pq)},
         elements{{&mock_ll, &mock_lt, &ul_rq, &ul_pq, &uut}}
   {
     for (auto elem : elements) {
@@ -102,11 +115,11 @@ struct rig {
         elem->_operate();
   }
 
-  void demand(uint64_t addr, champsim::capability cap)
+  void demand(uint64_t addr, champsim::capability cap, bool known_va = true)
   {
     to_rq_MRP::request_type pkt;
     pkt.address = champsim::address{addr};
-    pkt.v_address = pkt.address;
+    pkt.v_address = known_va ? pkt.address : champsim::address{};
     pkt.cpu = 0;
     pkt.type = access_type::LOAD;
     pkt.cap = cap;
@@ -361,4 +374,72 @@ TEST_CASE("437-12: a PREFETCH from the upper level that hits a prefetched block 
   r.run(100);
   CHECK(r.stats().pf_useful == 1);
   CHECK(sum(r.stats().pf_useful_timely_demand_by_cap_size) == 0);
+}
+
+TEST_CASE("437-13: a prefetch outside its issuing object is out of bounds at issue, at fill and when a demand uses it")
+{
+  rig<next_line_legacy> r{1, 8};
+  const auto obj_64B = make_cap(0x1000, 64);   // [0x1000, 0x1040): the next line is outside
+  const auto obj_4KB = make_cap(0x8000, 4096); // the next line is inside
+  r.demand(0x1000, obj_64B);                   // prefetches 0x1040, out of bounds
+  r.demand(0x8000, obj_4KB);                   // prefetches 0x8040, in bounds
+  r.run(100);
+  CHECK(count(r.stats().pf_issued_oob_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(count(r.stats().pf_issued_oob_by_cap_size, cls::B_128B_4KB) == 0);
+  CHECK(sum(r.stats().pf_issued_bounds_unknown_by_cap_size) == 0);
+  CHECK(count(r.stats().pf_fill_own_oob_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(count(r.stats().pf_fill_own_oob_by_cap_size, cls::B_128B_4KB) == 0);
+
+  // These demands also trigger prefetches (0x1080, out of bounds, and 0x8080), so issued and fill counts change
+  // from here on: check only the useful counters below.
+  r.demand(0x1040, make_cap(0x1040, 64)); // the neighbouring object uses the out-of-bounds prefetch
+  r.demand(0x8040, obj_4KB);              // the in-bounds prefetch is used too
+  r.run(100);
+  CHECK(count(r.stats().pf_useful_timely_demand_oob_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(count(r.stats().pf_useful_timely_demand_by_cap_size, cls::B_128B_4KB) == 1);
+  CHECK(count(r.stats().pf_useful_timely_demand_oob_by_cap_size, cls::B_128B_4KB) == 0);
+}
+
+TEST_CASE("437-14: an unused out-of-bounds prefetch evicted by a later fill is useless out of bounds")
+{
+  rig<next_line_legacy> r{1, 2};
+  r.demand(0x1000, make_cap(0x1000, 64)); // fills 0x1000 and prefetches 0x1040 (out of bounds): both fit
+  r.run(100);
+  REQUIRE(r.stats().pf_useless == 0);
+  r.demand(0x2000, champsim::capability{}); // 0x2000 and its untagged prefetch 0x2040 evict both lines
+  r.run(100);
+  CHECK(count(r.stats().pf_useless_oob_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(sum(r.stats().pf_useless_oob_by_cap_size) == 1);
+}
+
+TEST_CASE("437-15: a demand that joins an in-flight out-of-bounds prefetch is late out of bounds")
+{
+  rig<next_line_legacy> r{1, 4, 30, false, 4}; // at least 2 MSHRs: the demand and the prefetch must both allocate
+  r.demand(0x1000, make_cap(0x1000, 64));      // prefetches 0x1040, out of bounds
+  r.run(10);
+  REQUIRE(r.uut.get_mshr_occupancy() == 2); // the demand and the prefetch, both waiting on memory
+  r.demand(0x1040, make_cap(0x1040, 64));
+  r.run(100);
+  CHECK(count(r.stats().pf_useful_late_oob_by_cap_size, cls::B_0_128B) == 1);
+}
+
+TEST_CASE("437-16: a tagged prefetch with no known VA is bounds unknown, not out of bounds")
+{
+  rig<> r{1, 4};
+  r.own_prefetch(0x1000, cap_64B_a); // issued outside cache_operate at a physical cache: no VA
+  r.run(100);
+  CHECK(count(r.stats().pf_issued_bounds_unknown_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(count(r.stats().pf_fill_own_bounds_unknown_by_cap_size, cls::B_0_128B) == 1);
+  CHECK(sum(r.stats().pf_issued_oob_by_cap_size) == 0);
+  CHECK(sum(r.stats().pf_fill_own_oob_by_cap_size) == 0);
+}
+
+TEST_CASE("437-17: a prefetch triggered by an access with no VA is bounds unknown (prefetch_vaddr does not invent one)")
+{
+  rig<next_line_legacy> r{1, 4};
+  r.demand(0x1000, make_cap(0x1000, 4096), false); // no VA; prefetches 0x1040
+  r.run(100);
+  // Before the prefetch_vaddr fix the prefetch got VA 0x40, outside [0x1000, 0x2000), and was counted out of bounds
+  CHECK(count(r.stats().pf_issued_bounds_unknown_by_cap_size, cls::B_128B_4KB) == 1);
+  CHECK(sum(r.stats().pf_issued_oob_by_cap_size) == 0);
 }

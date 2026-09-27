@@ -38,6 +38,7 @@ struct cache_block {
   // Issuing capability of the prefetch that filled this block; meaningful only while prefetch is set
   cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
   champsim::address pf_cap_base{};
+  pf_bounds_type pf_bounds = pf_bounds_type::IN; // meaningful only while prefetch is set
 
   uint32_t pf_metadata = 0;
   

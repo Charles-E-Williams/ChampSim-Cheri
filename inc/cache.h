@@ -82,6 +82,7 @@ class CACHE : public champsim::operable
     // Issuing capability of this cache's own prefetch (set in prefetch_line)
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};
+    pf_bounds_type pf_bounds = pf_bounds_type::IN;
     champsim::chrono::clock::time_point event_cycle = champsim::chrono::clock::time_point::max();
 
     std::vector<uint64_t> instr_depend_on_me{};
@@ -112,6 +113,7 @@ public:
     champsim::capability cap{};
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};
+    pf_bounds_type pf_bounds = pf_bounds_type::IN;
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};

@@ -47,6 +47,16 @@ unsigned tagged_caps_in_line(const champsim::capability_memory& mem, champsim::a
   }
   return count;
 }
+
+// Count a prefetch outcome in its out-of-bounds or bounds-unknown subset; in-bounds prefetches have no subset counter
+void count_by_bounds(pf_bounds_type bounds, champsim::stats::event_counter<pf_cap_key>& oob, champsim::stats::event_counter<pf_cap_key>& unknown,
+                     pf_cap_key key)
+{
+  if (bounds == pf_bounds_type::OOB)
+    oob.increment(key);
+  else if (bounds == pf_bounds_type::UNKNOWN)
+    unknown.increment(key);
+}
 } // namespace
 
 CACHE::CACHE(CACHE&& other)
@@ -117,7 +127,7 @@ CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref
 
 CACHE::fill_type::fill_type(const tag_lookup_type& req, champsim::chrono::clock::time_point _time_enqueued)
     : address(req.address), v_address(req.v_address), ip(req.ip), instr_id(req.instr_id), cpu(req.cpu), type(req.type),
-      prefetch_from_this(req.prefetch_from_this), cap(req.cap), pf_cap_class(req.pf_cap_class), pf_cap_base(req.pf_cap_base), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
+      prefetch_from_this(req.prefetch_from_this), cap(req.cap), pf_cap_class(req.pf_cap_class), pf_cap_base(req.pf_cap_base), pf_bounds(req.pf_bounds), time_enqueued(_time_enqueued), instr_depend_on_me(req.instr_depend_on_me), to_return(req.to_return)
 {
 }
 
@@ -171,6 +181,7 @@ auto CACHE::fill_block(fill_type fill, uint32_t metadata) -> BLOCK
   if (fill.prefetch_from_this) {
     to_fill.pf_cap_class = fill.pf_cap_class;
     to_fill.pf_cap_base = fill.pf_cap_base;
+    to_fill.pf_bounds = fill.pf_bounds;
   }
 
   return to_fill;
@@ -189,7 +200,8 @@ std::optional<champsim::address> CACHE::prefetch_vaddr(champsim::address pf_addr
 {
   if (virtual_prefetch)
     return pf_addr;
-  if (prefetch_trigger.has_value() && champsim::page_number{pf_addr} == champsim::page_number{prefetch_trigger->address})
+  if (prefetch_trigger.has_value() && prefetch_trigger->v_address != champsim::address{}
+      && champsim::page_number{pf_addr} == champsim::page_number{prefetch_trigger->address})
     return champsim::address{champsim::splice(champsim::page_number{prefetch_trigger->v_address}, champsim::page_offset{pf_addr})};
   return std::nullopt;
 }
@@ -205,6 +217,16 @@ void CACHE::record_prefetch_issue(tag_lookup_type& pf_entry, bool fill_this_leve
   sim_stats.pf_issued_by_cap_size.increment(key);
   if (!fill_this_level)
     sim_stats.pf_issued_skip_fill_by_cap_size.increment(key);
+
+  // Where the prefetched line lies relative to the issuing object. Needs the prefetch's VA, empty when unknown (see
+  // prefetch_vaddr). Untagged prefetches are never classified; their field keeps its default and is not counted.
+  if (pf_entry.pf_cap_class != cap_size_coverage_events::UNTAGGED) {
+    if (pf_entry.v_address == champsim::address{})
+      pf_entry.pf_bounds = pf_bounds_type::UNKNOWN;
+    else if (!cheri::overlaps_bounds(champsim::block_number{pf_entry.v_address}, cap.base, cheri::capability_top(cap)))
+      pf_entry.pf_bounds = pf_bounds_type::OOB;
+    count_by_bounds(pf_entry.pf_bounds, sim_stats.pf_issued_oob_by_cap_size, sim_stats.pf_issued_bounds_unknown_by_cap_size, key);
+  }
 }
 
 // Count a prefetch used by a demand in its issuing class, and whether that demand was in the same object
@@ -309,14 +331,19 @@ bool CACHE::handle_fill(const fill_type& fill)
     if (way->valid && way->prefetch) {
       ++sim_stats.pf_useless;
       sim_stats.pf_useless_by_cap_size.increment(pf_cap_key{way->pf_cap_class, way->cpu});
+      count_by_bounds(way->pf_bounds, sim_stats.pf_useless_oob_by_cap_size, sim_stats.pf_useless_bounds_unknown_by_cap_size,
+                      pf_cap_key{way->pf_cap_class, way->cpu});
     }
 
     if (fill.type == access_type::PREFETCH) {
       ++sim_stats.pf_fill;
     }
 
-    if (fill.prefetch_from_this) // this fill sets the prefetch bit
+    if (fill.prefetch_from_this) { // this fill sets the prefetch bit
       sim_stats.pf_fill_own_by_cap_size.increment(pf_cap_key{fill.pf_cap_class, fill.cpu});
+      count_by_bounds(fill.pf_bounds, sim_stats.pf_fill_own_oob_by_cap_size, sim_stats.pf_fill_own_bounds_unknown_by_cap_size,
+                      pf_cap_key{fill.pf_cap_class, fill.cpu});
+    }
 
     *way = fill_block(fill, metadata_thru);
   }
@@ -402,8 +429,11 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
       ++sim_stats.pf_useful;
       if (handle_pkt.type == access_type::PREFETCH) // a prefetch from the upper level used it, not a demand
         sim_stats.pf_useful_timely_upper_pf_by_cap_size.increment(pf_cap_key{way->pf_cap_class, way->cpu});
-      else
+      else {
         record_useful_prefetch(sim_stats.pf_useful_timely_demand_by_cap_size, way->pf_cap_class, way->pf_cap_base, way->cpu, handle_pkt.cap);
+        count_by_bounds(way->pf_bounds, sim_stats.pf_useful_timely_demand_oob_by_cap_size,
+                        sim_stats.pf_useful_timely_demand_bounds_unknown_by_cap_size, pf_cap_key{way->pf_cap_class, way->cpu});
+      }
       way->prefetch = false;
     }
 
@@ -473,6 +503,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
         ++sim_stats.pf_useful;
         // Read the issuing class/base now: fill_type::merge below keeps the demand's identity
         record_useful_prefetch(sim_stats.pf_useful_late_by_cap_size, fill_entry->pf_cap_class, fill_entry->pf_cap_base, fill_entry->cpu, handle_pkt.cap);
+        count_by_bounds(fill_entry->pf_bounds, sim_stats.pf_useful_late_oob_by_cap_size, sim_stats.pf_useful_late_bounds_unknown_by_cap_size,
+                        pf_cap_key{fill_entry->pf_cap_class, fill_entry->cpu});
       }
     }
 
@@ -1106,6 +1138,16 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useless_by_cap_size = sim_stats.pf_useless_by_cap_size;
   roi_stats.pf_useful_same_object_by_cap_size = sim_stats.pf_useful_same_object_by_cap_size;
   roi_stats.pf_useful_demand_untagged_by_cap_size = sim_stats.pf_useful_demand_untagged_by_cap_size;
+  roi_stats.pf_issued_oob_by_cap_size = sim_stats.pf_issued_oob_by_cap_size;
+  roi_stats.pf_fill_own_oob_by_cap_size = sim_stats.pf_fill_own_oob_by_cap_size;
+  roi_stats.pf_useful_timely_demand_oob_by_cap_size = sim_stats.pf_useful_timely_demand_oob_by_cap_size;
+  roi_stats.pf_useful_late_oob_by_cap_size = sim_stats.pf_useful_late_oob_by_cap_size;
+  roi_stats.pf_useless_oob_by_cap_size = sim_stats.pf_useless_oob_by_cap_size;
+  roi_stats.pf_issued_bounds_unknown_by_cap_size = sim_stats.pf_issued_bounds_unknown_by_cap_size;
+  roi_stats.pf_fill_own_bounds_unknown_by_cap_size = sim_stats.pf_fill_own_bounds_unknown_by_cap_size;
+  roi_stats.pf_useful_timely_demand_bounds_unknown_by_cap_size = sim_stats.pf_useful_timely_demand_bounds_unknown_by_cap_size;
+  roi_stats.pf_useful_late_bounds_unknown_by_cap_size = sim_stats.pf_useful_late_bounds_unknown_by_cap_size;
+  roi_stats.pf_useless_bounds_unknown_by_cap_size = sim_stats.pf_useless_bounds_unknown_by_cap_size;
 
 
   for (auto* ul : upper_levels) {

@@ -57,7 +57,7 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
 
   // Prefetch outcomes by issuing capability size class: {counter: {class: [per-cpu raw counts]}}
   {
-    const std::array<std::pair<const char*, const champsim::stats::event_counter<pf_cap_key>*>, 10> by_size{{
+    const std::array<std::pair<const char*, const champsim::stats::event_counter<pf_cap_key>*>, 20> by_size{{
         {"issued", &stats.pf_issued_by_cap_size},
         {"issued skip fill", &stats.pf_issued_skip_fill_by_cap_size},
         {"redundant", &stats.pf_redundant_by_cap_size},
@@ -68,6 +68,18 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
         {"useless", &stats.pf_useless_by_cap_size},
         {"useful same object", &stats.pf_useful_same_object_by_cap_size},
         {"useful demand untagged", &stats.pf_useful_demand_untagged_by_cap_size},
+        // Out-of-bounds and bounds-unknown subsets: tagged prefetches only, so always 0 under UNTAGGED.
+        // In bounds = total - OOB - unknown holds for tagged classes only.
+        {"issued out of bounds", &stats.pf_issued_oob_by_cap_size},
+        {"fill own out of bounds", &stats.pf_fill_own_oob_by_cap_size},
+        {"useful timely demand out of bounds", &stats.pf_useful_timely_demand_oob_by_cap_size},
+        {"useful late out of bounds", &stats.pf_useful_late_oob_by_cap_size},
+        {"useless out of bounds", &stats.pf_useless_oob_by_cap_size},
+        {"issued bounds unknown", &stats.pf_issued_bounds_unknown_by_cap_size},
+        {"fill own bounds unknown", &stats.pf_fill_own_bounds_unknown_by_cap_size},
+        {"useful timely demand bounds unknown", &stats.pf_useful_timely_demand_bounds_unknown_by_cap_size},
+        {"useful late bounds unknown", &stats.pf_useful_late_bounds_unknown_by_cap_size},
+        {"useless bounds unknown", &stats.pf_useless_bounds_unknown_by_cap_size},
     }};
     std::map<std::string, nlohmann::json> by_size_json;
     for (const auto& [counter_name, counter] : by_size) {

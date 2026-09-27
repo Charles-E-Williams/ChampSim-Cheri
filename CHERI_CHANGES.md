@@ -229,6 +229,20 @@ Key commits: `a8f6633a` (2025-10-27, cap memory map), `6cd3d3d3` (2026-01-30), `
   - A stock prefetcher with a cache-side bounds filter is not a meaningful baseline.
   - Trigger-capability inheritance and prefetch-cap re-pointing, which started as part of task 2, stay; they feed the CHERI prefetchers and the task 3 stats.
   - **`pf_out_of_bounds_at_issue_by_cap_size` removed** (counter, ROI copy, `operator-`, the plain-text `OOBIssue` column, the JSON field, test 437-9, and its entry in the counter list that 437-10/437-11 use). It measured what task 2 would drop, and it would always read zero for CHERI prefetchers.
+- **`prefetch_vaddr` no longer invents a VA when the trigger's is unknown.** It spliced the trigger's VA page with the prefetch's page offset without checking that the trigger's VA was known, so an empty trigger VA gave `0 + offset`. That hit L2C prefetches triggered by L1D prefetches issued from cycle hooks or off the trigger's page, and LLC prefetches triggered by cycle-issued L2C prefetches (e.g. `sms_cheri`). Now it returns `nullopt` unless the trigger's VA is known. The `has_va` statistics paths in `try_hit` / `handle_miss` stop reading `cap_mem` at the bogus VA; re-pointing is unaffected (the bogus line never overlapped the object). Test: 437-17.
+- **Bounds split of the by-size prefetch counters.** Stats only; no timing or control-flow change.
+  - **Why:** to measure, before building a bounds-aware prefetcher, how accurate prefetches outside their issuing object are compared with those inside it. A large gap means capability bounds can remove useless prefetches.
+  - **Definition:** at issue (`record_prefetch_issue`), each tagged prefetch is out of bounds (its line does not overlap the object of the capability on its packet; `cheri::overlaps_bounds`, the same line-overlap test as `prefetch_safe`), bounds unknown (no VA), or in bounds. The state (`pf_bounds_type pf_bounds`) rides on `tag_lookup_type`, `fill_type` and `BLOCK` like `pf_cap_class`. Untagged prefetches are never classified; the field keeps its default and is not counted.
+  - **Meaning depends on the prefetcher,** because the issuing capability does:
+    - stock prefetchers inherit the trigger's capability, so out of bounds means the prefetch overshot the trigger's object; this is the case the split is for;
+    - bounds-checked CHERI prefetchers already filter with `prefetch_safe`, so their count should be about 0 (a sanity check);
+    - `cheri_ptr_chase` issues with the chased pointer's capability, so its count should be about 0 by construction;
+    - explicit-capability prefetches from `prefetcher_cycle_operate` at a physical cache (e.g. `sms_cheri` at L2C) have no VA and are bounds unknown.
+  - **Counters:** out-of-bounds and bounds-unknown subsets of issued, fill own, useful timely demand, useful late and useless (all `_by_cap_size`, ten in total). In bounds = total − both subsets (tagged classes only). Wired into `end_phase`, `operator-` and JSON.
+  - **Table** "Prefetch Bounds by Object Size (ROI)": OOB counts, OOB % Of Fills (the weight; fills rather than issued, since issued includes redundant and skip-fill prefetches), and OOB, In-Bounds and Unknown accuracy over disjoint prefetches. Rows use the outcomes table's any-nonzero condition (ROI outcomes can exist with no ROI issues). Upper-level prefetch hits are not split, as they are not in accuracy. Warmup carryover can push ROI accuracies above 100%, as in the outcomes table; In-Bounds Accuracy, computed by subtraction, is the most exposed.
+  - **JSON:** the subsets cover tagged prefetches only and are always 0 under UNTAGGED, so "in bounds = total − OOB − unknown" holds for tagged classes only.
+  - Unlike the removed `pf_out_of_bounds_at_issue_by_cap_size`, this tracks outcomes, not just issues.
+  - Tests: 437-13 to 437-17; `all_by_size` extended to 20.
 
 ## Known issues (intentionally not changed)
 - **`cache_stats` `operator-`** does not subtract `miss_merge`/`fill`. This matches upstream behaviour.

@@ -397,6 +397,50 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
       emit_table("Prefetch Consumers by Object Size (ROI)",
                  {{"", "Same Object"}, {"", "Other Object"}, {"Untagged", "Demand"}, {"Upper-Level", "Prefetch Hit"}, {"Sent To", "Lower Level"}},
                  consumer_rows);
+
+      // Bounds split: where each tagged prefetch's line lies relative to the object of the capability on its packet
+      // (for stock prefetchers, the trigger's object), decided at issue. In bounds = total - out of bounds - bounds
+      // unknown (no VA at issue), so the three accuracies cover disjoint prefetches. Accuracy uses the same Berti
+      // definition as the outcomes table. OOB % Of Fills weighs the accuracy gap by how many fills it concerns.
+      // As in the outcomes table, warmup carryover can push an ROI accuracy above 100%; In-Bounds Accuracy, being
+      // computed by subtraction, is the most exposed.
+      std::vector<row_type> bounds_rows;
+      for (auto cls : cap_size_coverage_events_all) {
+        const long issued = count(stats.pf_issued_by_cap_size, cls);
+        const long redundant = count(stats.pf_redundant_by_cap_size, cls);
+        const long fill_own = count(stats.pf_fill_own_by_cap_size, cls);
+        const long timely = count(stats.pf_useful_timely_demand_by_cap_size, cls);
+        const long late = count(stats.pf_useful_late_by_cap_size, cls);
+        const long useless = count(stats.pf_useless_by_cap_size, cls);
+        // Same condition as the outcomes table: ROI outcomes can be nonzero with issued == 0 (issued in warmup)
+        if (issued == 0 && redundant == 0 && fill_own == 0 && timely == 0 && late == 0 && useless == 0)
+          continue;
+
+        const long oob_issued = count(stats.pf_issued_oob_by_cap_size, cls);
+        const long oob_fill = count(stats.pf_fill_own_oob_by_cap_size, cls);
+        const long oob_timely = count(stats.pf_useful_timely_demand_oob_by_cap_size, cls);
+        const long oob_late = count(stats.pf_useful_late_oob_by_cap_size, cls);
+        const long oob_useless = count(stats.pf_useless_oob_by_cap_size, cls);
+        const long unk_issued = count(stats.pf_issued_bounds_unknown_by_cap_size, cls);
+        const long unk_fill = count(stats.pf_fill_own_bounds_unknown_by_cap_size, cls);
+        const long unk_timely = count(stats.pf_useful_timely_demand_bounds_unknown_by_cap_size, cls);
+        const long unk_late = count(stats.pf_useful_late_bounds_unknown_by_cap_size, cls);
+
+        const long fills = fill_own + late;
+        const long oob_fills = oob_fill + oob_late;
+        const long unk_fills = unk_fill + unk_late;
+        const long in_useful = timely + late - oob_timely - oob_late - unk_timely - unk_late;
+        const long in_fills = fills - oob_fills - unk_fills;
+        bounds_rows.push_back({cls,
+                               {std::to_string(issued), std::to_string(oob_issued), std::to_string(unk_issued), std::to_string(oob_fill),
+                                std::to_string(oob_timely), std::to_string(oob_late), std::to_string(oob_useless), pct(oob_fills, fills),
+                                pct(oob_timely + oob_late, oob_fills), pct(in_useful, in_fills), pct(unk_timely + unk_late, unk_fills)}});
+      }
+      emit_table("Prefetch Bounds by Object Size (ROI)",
+                 {{"", "Issued"}, {"Out Of", "Bounds"}, {"Bounds", "Unknown"}, {"OOB", "Filled"}, {"OOB Used", "On Time"},
+                  {"OOB Used", "Late"}, {"OOB Evicted", "Unused"}, {"OOB % Of", "Fills"}, {"OOB", "Accuracy"},
+                  {"In-Bounds", "Accuracy"}, {"Unknown", "Accuracy"}},
+                 bounds_rows);
     }
 
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});

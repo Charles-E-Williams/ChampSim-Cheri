@@ -30,6 +30,17 @@ cache_stats operator-(cache_stats lhs, cache_stats rhs)
   result.pf_useless_by_cap_size = lhs.pf_useless_by_cap_size - rhs.pf_useless_by_cap_size;
   result.pf_useful_same_object_by_cap_size = lhs.pf_useful_same_object_by_cap_size - rhs.pf_useful_same_object_by_cap_size;
   result.pf_useful_demand_untagged_by_cap_size = lhs.pf_useful_demand_untagged_by_cap_size - rhs.pf_useful_demand_untagged_by_cap_size;
+  result.pf_issued_oob_by_cap_size = lhs.pf_issued_oob_by_cap_size - rhs.pf_issued_oob_by_cap_size;
+  result.pf_fill_own_oob_by_cap_size = lhs.pf_fill_own_oob_by_cap_size - rhs.pf_fill_own_oob_by_cap_size;
+  result.pf_useful_timely_demand_oob_by_cap_size = lhs.pf_useful_timely_demand_oob_by_cap_size - rhs.pf_useful_timely_demand_oob_by_cap_size;
+  result.pf_useful_late_oob_by_cap_size = lhs.pf_useful_late_oob_by_cap_size - rhs.pf_useful_late_oob_by_cap_size;
+  result.pf_useless_oob_by_cap_size = lhs.pf_useless_oob_by_cap_size - rhs.pf_useless_oob_by_cap_size;
+  result.pf_issued_bounds_unknown_by_cap_size = lhs.pf_issued_bounds_unknown_by_cap_size - rhs.pf_issued_bounds_unknown_by_cap_size;
+  result.pf_fill_own_bounds_unknown_by_cap_size = lhs.pf_fill_own_bounds_unknown_by_cap_size - rhs.pf_fill_own_bounds_unknown_by_cap_size;
+  result.pf_useful_timely_demand_bounds_unknown_by_cap_size =
+      lhs.pf_useful_timely_demand_bounds_unknown_by_cap_size - rhs.pf_useful_timely_demand_bounds_unknown_by_cap_size;
+  result.pf_useful_late_bounds_unknown_by_cap_size = lhs.pf_useful_late_bounds_unknown_by_cap_size - rhs.pf_useful_late_bounds_unknown_by_cap_size;
+  result.pf_useless_bounds_unknown_by_cap_size = lhs.pf_useless_bounds_unknown_by_cap_size - rhs.pf_useless_bounds_unknown_by_cap_size;
   
   result.total_miss_latency_cycles = lhs.total_miss_latency_cycles - rhs.total_miss_latency_cycles;
 

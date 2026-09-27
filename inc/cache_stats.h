@@ -72,6 +72,9 @@ using cap_dist_key = std::tuple<cap_size_coverage_events, access_type, std::remo
 using cl_cap_key = std::tuple<unsigned, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
 using pf_cap_key = std::pair<cap_size_coverage_events, std::remove_cv_t<decltype(NUM_CPUS)>>; // (issuing capability's size class, cpu of the prefetch)
 
+// Where a prefetched line lies relative to the object of the capability on its packet, decided at issue
+enum class pf_bounds_type : uint8_t { IN, OOB, UNKNOWN };
+
 struct cache_stats {
   std::string name;
   // prefetch stats
@@ -108,6 +111,19 @@ struct cache_stats {
   champsim::stats::event_counter<pf_cap_key> pf_useless_by_cap_size = {};                // sums to pf_useless
   champsim::stats::event_counter<pf_cap_key> pf_useful_same_object_by_cap_size = {};     // demand-useful, demand cap tagged with the issuing base
   champsim::stats::event_counter<pf_cap_key> pf_useful_demand_untagged_by_cap_size = {}; // demand-useful, demand cap untagged
+
+  // Subsets of the counters above by where the prefetched line lies relative to the issuing object (decided at issue).
+  // Tagged prefetches only; in bounds = total - OOB - bounds unknown (tagged classes only). Bounds unknown: no VA at issue.
+  champsim::stats::event_counter<pf_cap_key> pf_issued_oob_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_fill_own_oob_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useful_timely_demand_oob_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useful_late_oob_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useless_oob_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_issued_bounds_unknown_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_fill_own_bounds_unknown_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useful_timely_demand_bounds_unknown_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useful_late_bounds_unknown_by_cap_size = {};
+  champsim::stats::event_counter<pf_cap_key> pf_useless_bounds_unknown_by_cap_size = {};
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);
