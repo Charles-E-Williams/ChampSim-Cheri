@@ -79,6 +79,7 @@ class CACHE : public champsim::operable
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
+    bool is_instr = false;
     // Issuing capability of this cache's own prefetch (set in prefetch_line)
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};
@@ -111,6 +112,8 @@ public:
 
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
+    bool is_instr = false;
+
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};
     pf_bounds_type pf_bounds = pf_bounds_type::IN;
@@ -153,7 +156,9 @@ private:
   template <typename T>
   champsim::address module_address(const T& element) const;
 
-
+  template <typename T>
+  bool module_is_instr(const T& element) const;
+  
   auto matches_address(champsim::address address) const;
   champsim::capability repoint_prefetch_cap(champsim::capability cap, champsim::address pf_addr);
   [[nodiscard]] std::optional<champsim::address> prefetch_vaddr(champsim::address pf_addr) const;
