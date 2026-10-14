@@ -20,6 +20,7 @@ uint32_t ip_stride::prefetcher_cache_operate(champsim::address addr, champsim::a
       active_lookahead = {champsim::address{cl_addr}, stride, PREFETCH_DEGREE};
   }
 
+
   // update tracking set
   table.fill({ip, cl_addr, stride});
 

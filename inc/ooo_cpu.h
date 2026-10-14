@@ -186,6 +186,7 @@ public:
   void do_memory_scheduling(ooo_model_instr& instr);
   void do_complete_execution(ooo_model_instr& instr);
   void do_sq_forward_to_lq(LSQ_ENTRY& sq_entry, LSQ_ENTRY& lq_entry);
+  void do_drop_old_x0_register(ooo_model_instr& arch_instr);
 
   void do_finish_store(const LSQ_ENTRY& sq_entry);
   bool do_complete_store(const LSQ_ENTRY& sq_entry);

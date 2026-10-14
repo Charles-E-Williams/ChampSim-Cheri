@@ -128,6 +128,18 @@ void do_stack_pointer_folding(ooo_model_instr& arch_instr)
     }
   }
 }
+
+void do_drop_old_x0_register(ooo_model_instr& arch_instr)
+{
+  // RISC-V traces made before x0/c0 were mapped to 0 encode them as register 69.
+  // x0 is hardwired to zero: never a real dependency.
+  constexpr uint8_t OLD_TRACE_X0 = 69;
+  auto& src = arch_instr.source_registers;
+  auto& dst = arch_instr.destination_registers;
+  src.erase(std::remove(src.begin(), src.end(), OLD_TRACE_X0), src.end());
+  dst.erase(std::remove(dst.begin(), dst.end(), OLD_TRACE_X0), dst.end());
+}
+
 } // namespace
 
 bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
@@ -171,6 +183,7 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
   return stop_fetch;
 }
 
+
 bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
 {
   // fast warmup eliminates register dependencies between instructions branch predictor, cache contents, and prefetchers are still warmed up
@@ -179,6 +192,7 @@ bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
     arch_instr.destination_registers.clear();
   }
 
+  ::do_drop_old_x0_register(arch_instr);
   ::do_stack_pointer_folding(arch_instr);
   return do_predict_branch(arch_instr);
 }

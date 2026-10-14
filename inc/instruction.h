@@ -170,7 +170,15 @@ private:
 
 
     // determine what kind of branch this is, if any
-    if (!reads_sp && !reads_flags && writes_ip && !reads_other && !reads_ip) {
+    if (writes_ip && reads_ip && !writes_sp && !writes_ra && !writes_other
+        && (reads_flags || (reads_other && !reads_sp))) {
+        // conditional branch: reads FLAGS (x86, and RISC-V traces from patch 0002),
+        // or reads IP plus other registers (RISC-V traces from before 0002).
+        // Calls are excluded because they write a link register.
+        is_branch = true;
+        branch_taken = instr.branch_taken;
+        branch = BRANCH_CONDITIONAL;
+    } else if (!reads_sp && !reads_flags && writes_ip && !reads_other && !reads_ip) {
         // direct jump
         is_branch = true;
         branch_taken = true;
@@ -180,23 +188,18 @@ private:
         is_branch = true;
         branch_taken = true;
         branch = BRANCH_INDIRECT;
-    } else if (!reads_sp && reads_ip && !writes_sp && writes_ip && (reads_flags || reads_other)) {
-        // conditional branch
-        is_branch = true;
-        branch_taken = instr.branch_taken;
-        branch = BRANCH_CONDITIONAL;
-    } else if (writes_ip && reads_ip && !reads_flags && !reads_other && !reads_ra && ((reads_sp && writes_sp) || (writes_ra || writes_other)))  {
+    } else if (writes_ip && reads_ip && !reads_flags && !reads_other && !reads_ra && ((reads_sp && writes_sp) || (writes_ra || writes_other))) {
         // direct call
         is_branch = true;
         branch_taken = true;
         branch = BRANCH_DIRECT_CALL;
-    } else if (writes_ip && reads_ip && !reads_flags && (reads_ra || reads_other) && ((reads_sp && writes_sp) || (writes_ra || writes_other))){
+    } else if (writes_ip && reads_ip && !reads_flags && (reads_ra || reads_other) && ((reads_sp && writes_sp) || (writes_ra || writes_other))) {
         // indirect call
         is_branch = true;
         branch_taken = true;
         branch = BRANCH_INDIRECT_CALL;
-    } else if (writes_ip && !reads_ip && ((reads_sp && writes_sp) || (reads_ip && reads_ra && !writes_other && !reads_sp))) {
-        // return
+    } else if (writes_ip && ((!reads_ip && reads_sp && writes_sp) || (reads_ip && reads_ra && !writes_other && !reads_sp))) {
+        // return: x86 style (pops SP) or RISC-V style (reads ra and IP)
         is_branch = true;
         branch_taken = true;
         branch = BRANCH_RETURN;
@@ -208,8 +211,9 @@ private:
     } else {
         branch_taken = false;
     }
-
   }
+
+
 
 public:
   ooo_model_instr(uint8_t cpu, input_instr instr) : ooo_model_instr(instr, {cpu, cpu}, champsim::capability{}, champsim::capability{}, champsim::cap_op_type::NONE) {}
