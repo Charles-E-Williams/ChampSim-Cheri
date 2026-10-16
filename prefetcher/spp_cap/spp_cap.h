@@ -6,7 +6,7 @@
 #include <vector>
 
 #include "cache.h"
-#include "cheri_prefetch_policy.h"
+#include "cheri_oob_filter.h"
 #include "modules.h"
 #include "msl/lru_table.h"
 
