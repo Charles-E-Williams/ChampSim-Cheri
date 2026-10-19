@@ -11,7 +11,6 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <deque>
 #include <memory>
 
 struct tage_sc : champsim::modules::branch_predictor {
@@ -26,7 +25,8 @@ struct tage_sc : champsim::modules::branch_predictor {
     history_state hist;
     uint8_t ghist[HISTBUFFERLENGTH] = {};
 
-    std::deque<prediction_entry> pred_buffer;
+    prediction_entry last_pred;
+    bool last_pred_valid = false;
     bool initialized = false;
 
     void ensure_init();

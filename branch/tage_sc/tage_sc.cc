@@ -19,11 +19,9 @@ bool tage_sc::predict_branch(champsim::address ip,  [[maybe_unused]] champsim::a
 
     uint64_t pc = ip.to<uint64_t>() >> 2;
 
-    if (pred_buffer.size() >= MAX_PRED_ENTRIES)
-        pred_buffer.pop_front();
-
-    pred_buffer.emplace_back();
-    prediction_entry& pe = pred_buffer.back();
+    last_pred = prediction_entry{};
+    last_pred_valid = true;
+    prediction_entry& pe = last_pred;
     pe.pc = pc;
 
     bool prediction = tage.predict(pc, hist, pe);
@@ -46,28 +44,17 @@ void tage_sc::last_branch_result(champsim::address ip,champsim::address branch_t
     uint64_t pc     = ip.to<uint64_t>() >> 2;
     uint64_t target = taken ? branch_target.to<uint64_t>() : ip.to<uint64_t>() + 4;  // use the fall-through PC
 
-    // search from the back to find the most recent prediction for this PC
-    auto it = pred_buffer.end();
-    for (auto rit = pred_buffer.rbegin(); rit != pred_buffer.rend(); ++rit) {
-        if (rit->pc == pc) {
-            it = rit.base() - 1;
-            break;
-        }
-    }
+    if (last_pred_valid && branch_type == BRANCH_CONDITIONAL && last_pred.pc == pc) {
+        const prediction_entry& pe = last_pred;
 
-    if (it != pred_buffer.end() && branch_type == BRANCH_CONDITIONAL) {
-        const prediction_entry& pe = *it;
 
 #ifdef ENABLE_SC
         sc->update(pe, taken);
 #endif
         tage.update(pe, taken, pe.pred_sc, pe.pred_tsc);
-
-        pred_buffer.erase(it);
-    } else if (it != pred_buffer.end()) {
-        pred_buffer.erase(it);
-    }
-
+    } 
+    last_pred_valid = false;
+    
     // update history for all branch types
     tage.update_history(ip.to<uint64_t>(), taken, target, branch_type, hist, ghist);
 }

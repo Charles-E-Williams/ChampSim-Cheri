@@ -227,6 +227,4 @@
 
 #endif // ENABLE_SC
 
-#define MAX_PRED_ENTRIES 256
-
-#endif
+#endif // TAGE_DEFINES_H
