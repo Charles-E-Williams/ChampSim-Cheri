@@ -22,7 +22,7 @@ for config in $configs; do
         echo "[FAILED] Configuration failed for $config. Skipping."
         continue
     fi
-
+    rm -f .csconfig/generated_environment.o
     make -j8
 
     if [ $? -eq 0 ]; then

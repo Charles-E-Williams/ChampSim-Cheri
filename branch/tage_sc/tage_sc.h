@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <deque>
+#include <memory>
 
 struct tage_sc : champsim::modules::branch_predictor {
     using branch_predictor::branch_predictor;
@@ -19,7 +20,8 @@ struct tage_sc : champsim::modules::branch_predictor {
 
     TAGE tage;
 #ifdef ENABLE_SC
-    StatisticalCorrector sc;
+    // heap-allocated so moving tage_sc never moves the corrector (its table pointers point into itself)
+    std::unique_ptr<StatisticalCorrector> sc = std::make_unique<StatisticalCorrector>();
 #endif
 
     history_state hist;
@@ -45,7 +47,7 @@ struct tage_sc : champsim::modules::branch_predictor {
         std::fprintf(stderr, "  TAGE:  %7d bits  (%6.1f KB)\n", tage_bits, tage_bits / 8192.0);
 
     #ifdef ENABLE_SC
-        int sc_bits = sc.compute_storage();
+        int sc_bits = sc->compute_storage();
         total += sc_bits;
         std::fprintf(stderr, "  SC:    %7d bits  (%6.1f KB)  [LOGBIAS=%d, LOGSCALEB=%d, LOCAL=%d]\n",  sc_bits, sc_bits / 8192.0, LOGBIAS, LOGSCALEB, LOCAL_LEVEL);
     #endif

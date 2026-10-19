@@ -25,7 +25,7 @@ bool tage_sc::predict_branch(champsim::address ip)
     bool prediction = tage.predict(pc, hist, pe);
 
 #ifdef ENABLE_SC
-    prediction = sc.predict(pc, pe.tinfo, hist, pe);
+    prediction = sc->predict(pc, pe.tinfo, hist, pe);
 #else
     pe.pred_sc  = prediction;
     pe.pred_tsc = prediction;
@@ -55,7 +55,7 @@ void tage_sc::last_branch_result(champsim::address ip,champsim::address branch_t
         const prediction_entry& pe = *it;
 
 #ifdef ENABLE_SC
-        sc.update(pe, taken);
+        sc->update(pe, taken);
 #endif
         tage.update(pe, taken, pe.pred_sc, pe.pred_tsc);
 
