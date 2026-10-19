@@ -1,16 +1,20 @@
 #include "tage_sc.h"
+#include "instruction.h"
 
 void tage_sc::ensure_init()
 {
     if (initialized) return;
+
     tage.init_histories(hist);
     memset(ghist, 0, sizeof(ghist));
     print_storage_budget();
     initialized = true;
 }
 
-bool tage_sc::predict_branch(champsim::address ip)
+bool tage_sc::predict_branch(champsim::address ip,  [[maybe_unused]] champsim::address predicted_target, [[maybe_unused]] bool always_taken, uint8_t type)
 {
+    if (type != BRANCH_CONDITIONAL) //only train/predict on conditional branches. all branch types still update history in last_branch_result
+        return false;
     ensure_init();
 
     uint64_t pc = ip.to<uint64_t>() >> 2;
@@ -40,7 +44,7 @@ void tage_sc::last_branch_result(champsim::address ip,champsim::address branch_t
     ensure_init();
 
     uint64_t pc     = ip.to<uint64_t>() >> 2;
-    uint64_t target = branch_target.to<uint64_t>();
+    uint64_t target = taken ? branch_target.to<uint64_t>() : ip.to<uint64_t>() + 4;  // use the fall-through PC
 
     // search from the back to find the most recent prediction for this PC
     auto it = pred_buffer.end();
@@ -51,7 +55,7 @@ void tage_sc::last_branch_result(champsim::address ip,champsim::address branch_t
         }
     }
 
-    if (it != pred_buffer.end() && branch_type == BR_CONDITIONAL) {
+    if (it != pred_buffer.end() && branch_type == BRANCH_CONDITIONAL) {
         const prediction_entry& pe = *it;
 
 #ifdef ENABLE_SC
@@ -64,6 +68,6 @@ void tage_sc::last_branch_result(champsim::address ip,champsim::address branch_t
         pred_buffer.erase(it);
     }
 
-    // update history for al branch types
+    // update history for all branch types
     tage.update_history(ip.to<uint64_t>(), taken, target, branch_type, hist, ghist);
 }

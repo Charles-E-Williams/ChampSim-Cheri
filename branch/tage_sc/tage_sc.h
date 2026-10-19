@@ -16,7 +16,6 @@
 
 struct tage_sc : champsim::modules::branch_predictor {
     using branch_predictor::branch_predictor;
-    static constexpr uint8_t BR_CONDITIONAL = 2;
 
     TAGE tage;
 #ifdef ENABLE_SC
@@ -31,7 +30,7 @@ struct tage_sc : champsim::modules::branch_predictor {
     bool initialized = false;
 
     void ensure_init();
-    bool predict_branch(champsim::address ip);
+    bool predict_branch(champsim::address ip, champsim::address predicted_target, bool always_taken, uint8_t type);
     void last_branch_result(champsim::address ip, champsim::address branch_target,
                             bool taken, uint8_t branch_type);
 

@@ -21,6 +21,8 @@ public:
 
     // global history GEHL
 #ifdef ENABLE_SC_GEHL
+    // Seznec's CBP-2025 code masks with a 32-bit (1 << len), which on x86 truncates
+    // 53/39/45 to 21/7/13. We use 1ULL deliberately to get the intended geometric lengths.
     int gm[GNB] = {53, 39, 24, 11, 4};
     int am[ANB] = {31, 17, 7, 2};
     int8_t ggehl_store[GNB][1 << LOGGNB] = {};
