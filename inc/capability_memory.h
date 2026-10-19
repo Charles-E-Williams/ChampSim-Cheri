@@ -142,6 +142,7 @@ public:
 };
 
 extern std::vector<capability_memory> cap_mem;
+extern bool skip_presimpoint_cap_mem; // when set, PRESIMPOINT trace entries are consumed but not stored in cap_mem
 
 void initialize_capability_memory(size_t num_cpus);
 

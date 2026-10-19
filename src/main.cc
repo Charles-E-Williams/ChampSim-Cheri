@@ -76,6 +76,8 @@ int main(int argc, char** argv) // NOLINT(bugprone-exception-escape)
 
   app.add_flag("-c,--cloudsuite", knob_cloudsuite, "Read all traces using the cloudsuite format");
   app.add_flag("-p,--cheri-purecap", knob_cheri, "Read all traces using the CHERI format");
+  app.add_flag("--skip-capmap", champsim::skip_presimpoint_cap_mem,
+               "With CHERI traces, skip PRESIMPOINT entries without adding them to the capability memory map");
   app.add_flag("--hide-heartbeat", set_heartbeat_callback, "Hide the heartbeat output");
   auto* warmup_instr_option = app.add_option("-w,--warmup-instructions", warmup_instructions, "The number of instructions in the warmup phase");
   auto* deprec_warmup_instr_option =

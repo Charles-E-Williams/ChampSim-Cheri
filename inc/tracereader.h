@@ -131,7 +131,7 @@ ooo_model_instr bulk_tracereader<T, F>::operator()()
     for (auto it = begin; it != end; ++it) {
       if constexpr (std::is_same_v<T, cheri_instr>) {
           if (it->cap_op == static_cast<unsigned char>(champsim::cap_op_type::PRESIMPOINT)) {
-              if (!champsim::cap_mem[cpu].is_finalized()) {
+              if (!champsim::skip_presimpoint_cap_mem && !champsim::cap_mem[cpu].is_finalized()) {
                   for (const auto& dmem : it->destination_memory) {
                       if (dmem == 0) continue;
                       champsim::capability cap{

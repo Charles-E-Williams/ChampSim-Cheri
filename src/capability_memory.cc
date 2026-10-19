@@ -22,6 +22,7 @@
 namespace champsim {
 
 std::vector<capability_memory> cap_mem;
+bool skip_presimpoint_cap_mem = false;
 
 void initialize_capability_memory(size_t num_cpus)
 {
