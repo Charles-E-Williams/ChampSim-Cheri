@@ -29,15 +29,15 @@ struct ip_stride_cheri_tdp : public champsim::modules::prefetcher {
     uint32_t md = 0; // TDP key bits of the trigger
   };
 
-  constexpr static std::size_t CAP_TABLE_SETS = 256;
-  constexpr static std::size_t CAP_TABLE_WAYS = 4;
+  constexpr static std::size_t CAP_TABLE_SETS = 1;
+  constexpr static std::size_t CAP_TABLE_WAYS = 24;
 
   constexpr static int PREFETCH_DEGREE = 3;
   
   champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
   std::optional<lookahead_entry> active_lookahead;
-  cheri_tdp::engine tdp; // tag-directed prefetching (TDP) (inc/cheri_tdp.h)
- 
+  cheri_tdp::engine tdp; // tag-directed prefetching (TDP) 
+
   uint64_t cap_prefetches_bounded{};
   uint64_t cap_table_hits{};
   uint64_t cap_table_misses{};
