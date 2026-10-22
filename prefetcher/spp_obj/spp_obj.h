@@ -52,7 +52,7 @@ struct spp_obj : public champsim::modules::prefetcher {
   // occupancy below PROMOTE_MSHR_LIMIT, the issue and L2-fill thresholds are relaxed. PROMOTE_GATE keeps it on only
   // while the L2 fills it adds are used: one filter bit marks them, two counters measure their accuracy, and 1 in 16
   // eligible accesses stays promoted when gated so the measurement continues.
-  constexpr static bool PROMOTE = true;
+  constexpr static bool PROMOTE = false;
   constexpr static bool PROMOTE_GATE = false;
   constexpr static uint64_t PROMOTE_MIN_BYTES = uint64_t{2} << 20;
   constexpr static uint32_t PF_THRESHOLD_PROMOTE = 15;
