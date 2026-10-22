@@ -5,6 +5,7 @@
 
 #include "ipcp_cap.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
 
@@ -32,6 +33,9 @@ void ipcp_cap::prefetcher_initialize()
   throttle[CPLX_TYPE].degree = CPLX_DEGREE;
   for (int index = 0; index < NUM_RST_ENTRIES; index++)
     rst[index].lru = index;
+  for (auto& row : oob_ctr)
+    for (auto& counter : row)
+      counter = OOB_CTR_INIT;
 
   std::cout << "IPCP_CAP (L1D)" << std::endl
             << "NUM_IP_TABLE_ENTRIES " << NUM_IP_TABLE_ENTRIES << std::endl
@@ -56,13 +60,16 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   uint16_t region_id = (vpage << 1) | (cl_offset >> LOG2_LINES_IN_REGION);
   unsigned region_offset = cl_offset & (NUM_LINES_IN_REGION - 1);
 
-  // throttling feedback: first demand use of a prefetched line (class and out-of-object bit kept in its metadata)
+  // feedback from the first demand use of a prefetched line: its class (throttling) and, for an out-of-object line, its
+  // C4 confidence counter, both kept in the line's metadata
   if (useful_prefetch) {
     uint16_t pf_type = (metadata_hit >> 8) & 0x3;
-    if (pf_type != NONE_TYPE)
+    if (pf_type != NONE_TYPE) {
       throttle[pf_type].useful++;
+      stat_class_useful[pf_type]++;
+    }
     if ((metadata_hit >> 10) & 0x1)
-      oob_useful++;
+      oob_feedback(metadata_hit, true);
   }
 
   // tentative NL from misses per kilo-cycle
@@ -81,7 +88,9 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   if (trigger.tagged) {
     trigger.base = cap.base.to<uint64_t>();
     trigger.top = cheri::capability_top(cap).to<uint64_t>();
-    trigger.large = (cap.length.to<uint64_t>() >= LARGE_OBJECT_BYTES) ? 1 : 0;
+    uint64_t length = cap.length.to<uint64_t>();
+    trigger.large = (length >= LARGE_OBJECT_BYTES) ? 1 : 0;
+    trigger.size_class = (length <= 64) ? 0 : ((length <= 128) ? 1 : ((length <= 512) ? 2 : 3));
     stat_tagged++;
   } else {
     stat_untagged++;
@@ -93,6 +102,7 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   rr_insert(cl_addr);
 
   int index = (ip >> NUM_IP_ALIGN_BITS) & ((1 << NUM_IP_INDEX_BITS) - 1);
+  trigger.ip_index = static_cast<uint16_t>(index);
   uint16_t ip_tag = (ip >> (NUM_IP_ALIGN_BITS + NUM_IP_INDEX_BITS)) & ((1 << NUM_IP_TAG_BITS) - 1);
   IP_TABLE& entry = trackers[index];
 
@@ -117,9 +127,9 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
     else
       stat_ip_miss_untagged++;
     // an IP with no class: tentative NL
-    bool oob;
-    if (spec_nl && allowed(trigger, cl_addr + 1, NONE_TYPE, true, false, oob))
-      issue_prefetch(cl_addr + 1, NONE_TYPE, 1, true, oob);
+    bool oob, to_l2;
+    if (spec_nl && allowed(trigger, cl_addr + 1, oob, to_l2))
+      issue_prefetch(cl_addr + 1, NONE_TYPE, 1, true, oob, to_l2, trigger);
     return metadata_in;
   }
   entry.ip_valid = 1;
@@ -142,6 +152,17 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
     return metadata_in;
 
   bool obj_changed = trigger.tagged && entry.obj_valid && entry.obj_tag != obj_tag;
+
+  // C2 applies to this IP only while its C4 confidence is low, i.e. while lines past the end of its objects go unused:
+  // its object changes then cross unrelated memory. With the confidence high it walks packed neighbours, and the
+  // cross-object deltas are the pattern, so the paper's address signature is kept.
+  bool c2_active = oob_ctr[trigger.size_class][trigger.ip_index] < OOB_L1_THRESHOLD;
+  if (obj_changed) {
+    if (c2_active)
+      stat_c2_active++;
+    else
+      stat_c2_inactive++;
+  }
   if (!trigger.tagged)
     stat_path_untagged++;
   else if (!entry.obj_valid)
@@ -175,17 +196,17 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
     }
 
     // update complex stride (CPLX) confidence; update CPLX only if confidence is zero.
-    // C2: a cross-object delta can confirm or refute a prediction, but is never installed.
+    // C2: a cross-object delta can confirm or refute a prediction, but while C2 applies it is never installed.
     CSPT& cspt_entry = cspt[entry.signature];
     if (stride == cspt_entry.stride)
       cspt_entry.conf = (cspt_entry.conf < 3) ? cspt_entry.conf + 1 : 3;
     else
       cspt_entry.conf = (cspt_entry.conf > 0) ? cspt_entry.conf - 1 : 0;
-    if (cspt_entry.conf == 0 && !obj_changed)
+    if (cspt_entry.conf == 0 && (!obj_changed || !c2_active))
       cspt_entry.stride = stride;
   }
 
-  if (obj_changed) { // C2: the IP entered a new object
+  if (obj_changed && c2_active) { // C2: the IP entered a new object
     entry.signature = object_seed(ip, obj_line);
     stat_cplx_seeded++;
   } else if (stride_valid) {
@@ -205,10 +226,10 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   if (entry.str_valid == 1) { // GS IP
     for (int step = 1; step <= throttle[GS_TYPE].degree; step++) {
       uint64_t pf_cl_addr = (entry.str_dir == 1) ? cl_addr + step : cl_addr - step;
-      bool oob;
-      if (!allowed(trigger, pf_cl_addr, GS_TYPE, false, false, oob))
+      bool oob, to_l2;
+      if (!allowed(trigger, pf_cl_addr, oob, to_l2))
         break;
-      issue_prefetch(pf_cl_addr, GS_TYPE, (entry.str_dir == 1) ? 1 : -1, false, oob);
+      issue_prefetch(pf_cl_addr, GS_TYPE, (entry.str_dir == 1) ? 1 : -1, false, oob, to_l2, trigger);
       num_prefs++;
     }
     gs_issued = true;
@@ -220,10 +241,10 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   if (explore && entry.conf > 1 && entry.last_stride != 0) { // CS IP
     for (int step = 1; step <= throttle[CS_TYPE].degree; step++) {
       uint64_t pf_cl_addr = (uint64_t)((int64_t)cl_addr + (int64_t)entry.last_stride * step);
-      bool oob;
-      if (!allowed(trigger, pf_cl_addr, CS_TYPE, false, entry.intra, oob))
+      bool oob, to_l2;
+      if (!allowed(trigger, pf_cl_addr, oob, to_l2))
         break;
-      issue_prefetch(pf_cl_addr, CS_TYPE, entry.last_stride, false, oob);
+      issue_prefetch(pf_cl_addr, CS_TYPE, entry.last_stride, false, oob, to_l2, trigger);
       num_prefs++;
     }
     cs_issued = true;
@@ -238,11 +259,11 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
         break;
       pref_offset += cspt_entry.stride;
       uint64_t pf_cl_addr = (uint64_t)((int64_t)cl_addr + pref_offset);
-      bool oob;
-      if (!allowed(trigger, pf_cl_addr, CPLX_TYPE, false, false, oob))
+      bool oob, to_l2;
+      if (!allowed(trigger, pf_cl_addr, oob, to_l2))
         break;
       if (cspt_entry.conf >= 1) { // prefetch only when conf > 0 for CPLX
-        issue_prefetch(pf_cl_addr, CPLX_TYPE, cspt_entry.stride, false, oob);
+        issue_prefetch(pf_cl_addr, CPLX_TYPE, cspt_entry.stride, false, oob, to_l2, trigger);
         num_prefs++;
         if (obj_changed)
           stat_cplx_from_seed++;
@@ -252,9 +273,9 @@ uint32_t ipcp_cap::prefetcher_cache_operate(champsim::address address, champsim:
   }
 
   // if no prefetches are issued till now, speculatively issue a next-line prefetch
-  bool oob;
-  if (num_prefs == 0 && spec_nl && allowed(trigger, cl_addr + 1, NONE_TYPE, true, false, oob))
-    issue_prefetch(cl_addr + 1, NONE_TYPE, 1, true, oob);
+  bool oob, to_l2;
+  if (num_prefs == 0 && spec_nl && allowed(trigger, cl_addr + 1, oob, to_l2))
+    issue_prefetch(cl_addr + 1, NONE_TYPE, 1, true, oob, to_l2, trigger);
 
   return metadata_in;
 }
@@ -263,28 +284,20 @@ uint32_t ipcp_cap::prefetcher_cache_fill(champsim::address addr, champsim::addre
                                          bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
                                          uint32_t metadata_evict, uint32_t cpu_evict)
 {
-  // the line keeps the 2-bit class of the prefetch that brought it in (Sec. V) and its out-of-object bit (C4);
+  // C4: an out-of-object line evicted before any demand use
+  if (useless && ((metadata_evict >> 10) & 0x1))
+    oob_feedback(metadata_evict, false);
+
+  // the line keeps the 2-bit class of the prefetch that brought it in (Sec. V) and its out-of-object fields (C4);
   // demand fills carry none
   if (!prefetch)
     return 0;
   uint16_t pf_type = (metadata_in >> 8) & 0x3;
-  if (pf_type != NONE_TYPE)
+  if (pf_type != NONE_TYPE) {
     count_fill(pf_type);
-
-  bool oob = (metadata_in >> 10) & 0x1;
-  if (oob && ++oob_fills == OOB_WINDOW) { // C4: re-decide once per window of leader-set out-of-object fills
-    if ((double)oob_useful / (double)oob_fills < ACC_LOW)
-      oob_trust = (oob_trust > 0) ? oob_trust - 1 : 0;
-    else
-      oob_trust = (oob_trust < 3) ? oob_trust + 1 : 3;
-    oob_blocked = (oob_trust == 0);
-    stat_oob_windows++;
-    if (oob_blocked)
-      stat_oob_blocked_windows++;
-    oob_fills = 0;
-    oob_useful = 0;
+    stat_class_fills[pf_type]++;
   }
-  return ((uint32_t)pf_type << 8) | ((uint32_t)oob << 10);
+  return metadata_in & 0x7FF00; // class (8-9), out-of-object bit (10), size class (11-12), IP-table index (13-18)
 }
 
 void ipcp_cap::prefetcher_final_stats()
@@ -308,9 +321,29 @@ void ipcp_cap::prefetcher_final_stats()
             << "  CS strides protected (C1):   " << stat_cs_protected << std::endl
             << "  CPLX object reseeds (C2):    " << stat_cplx_seeded << std::endl
             << "  CPLX issued at object entry: " << stat_cplx_from_seed << std::endl
-            << "  Out-of-object leader issues: " << stat_oob_issued << std::endl
-            << "  Out-of-object filtered (C4): " << stat_oob_filtered << std::endl
-            << "  C4 windows blocked / total:  " << stat_oob_blocked_windows << " / " << stat_oob_windows << std::endl;
+            << "  Object changes with C2 on / off: " << stat_c2_active << " / " << stat_c2_inactive << std::endl
+            << "  Fills / first uses GS: " << stat_class_fills[GS_TYPE] << " / " << stat_class_useful[GS_TYPE] << "  CS: " << stat_class_fills[CS_TYPE]
+            << " / " << stat_class_useful[CS_TYPE] << "  CPLX: " << stat_class_fills[CPLX_TYPE] << " / " << stat_class_useful[CPLX_TYPE] << std::endl
+            << "  C4 by size class (<=64 B, <=128 B, <=512 B, <2 KB): candidates / to L1D / to L2C / dropped / probes / used / evicted unused"
+            << std::endl;
+  for (int cls = 0; cls < OOB_CLASSES; cls++)
+    std::cout << "    class " << cls << ": " << stat_oob_candidates[cls] << " " << stat_oob_to_l1[cls] << " " << stat_oob_to_l2[cls] << " "
+              << stat_oob_dropped[cls] << " " << stat_oob_probes[cls] << " " << stat_oob_used[cls] << " " << stat_oob_unused[cls] << std::endl;
+}
+
+/***************C4: feedback from an out-of-object line********************/
+void ipcp_cap::oob_feedback(uint32_t metadata, bool used)
+{
+  unsigned cls = (metadata >> 11) & 0x3;
+  unsigned ip_index = (metadata >> 13) & 0x3F;
+  int& counter = oob_ctr[cls][ip_index];
+  if (used) {
+    counter = std::min(OOB_CTR_MAX, counter + OOB_CREDIT);
+    stat_oob_used[cls]++;
+  } else {
+    counter = std::max(0, counter - 1);
+    stat_oob_unused[cls]++;
+  }
 }
 
 /***************Updating the signature*************************************/
@@ -331,11 +364,16 @@ uint16_t ipcp_cap::object_seed(uint64_t ip, uint64_t obj_line)
 }
 
 /****************Encoding the metadata***********************************/
-uint32_t ipcp_cap::encode_metadata(int stride, uint16_t type, bool oob)
+uint32_t ipcp_cap::encode_metadata(int stride, uint16_t type, bool oob, const TRIGGER& trigger)
 {
-  // stride in the low 7 bits (sign magnitude), class type in bits 8-9, out-of-object bit (C4) in bit 10
+  // stride in the low 7 bits (sign magnitude), class type in bits 8-9, out-of-object bit (C4) in bit 10,
+  // and for an out-of-object line its size class (11-12) and IP-table index (13-18), so its use or eviction can update
+  // its C4 counter
   uint32_t metadata = (stride >= 0) ? (uint32_t)stride : ((uint32_t)(-stride) | 0x40);
-  return metadata | ((uint32_t)type << 8) | ((uint32_t)oob << 10);
+  metadata |= ((uint32_t)type << 8) | ((uint32_t)oob << 10);
+  if (oob)
+    metadata |= ((uint32_t)trigger.size_class << 11) | ((uint32_t)trigger.ip_index << 13);
+  return metadata;
 }
 
 /*********************Region stream table (GS class)***********************/
@@ -410,44 +448,55 @@ void ipcp_cap::rr_insert(uint64_t cl_addr)
 }
 
 /*********************Issuing prefetches**********************************/
-bool ipcp_cap::allowed(const TRIGGER& trigger, uint64_t pf_cl_addr, uint16_t type, bool nl, bool stop_at_object_end, bool& oob)
+bool ipcp_cap::allowed(const TRIGGER& trigger, uint64_t pf_cl_addr, bool& oob, bool& to_l2)
 {
   oob = false;
+  to_l2 = false;
   // crossing the OS page needs another translation
   if ((pf_cl_addr >> (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE)) != (trigger.cl_addr >> (LOG2_PAGE_SIZE - LOG2_BLOCK_SIZE))) {
     stat_page_stopped++;
     return false;
   }
-  if (trigger.tagged && !cheri::overlaps_bounds(champsim::block_number{pf_cl_addr}, champsim::address{trigger.base}, champsim::address{trigger.top})) {
-    // C3: stop at the end of large objects. CS also stops at the end of an object its stride was learned inside, and
-    // CPLX at the end of any object, since with C2 the CSPT only holds deltas learned inside objects.
-    bool stop = trigger.large || (!nl && ((type == CS_TYPE && stop_at_object_end) || type == CPLX_TYPE));
-    if (stop) {
-      stat_cap_stopped++;
-      return false;
-    }
-    // C4: leaving a small object. Leader sets always issue and measure; the others follow the decision.
-    bool leader = (pf_cl_addr & OOB_LEADER_MASK) == 0;
-    if (oob_blocked && !leader) {
-      stat_oob_filtered++;
-      return false;
-    }
-    oob = leader;
+  if (!trigger.tagged || cheri::overlaps_bounds(champsim::block_number{pf_cl_addr}, champsim::address{trigger.base}, champsim::address{trigger.top}))
+    return true;
+
+  // C3: stop at the end of large objects
+  if (trigger.large) {
+    stat_cap_stopped++;
+    return false;
   }
-  return true;
+
+  // C4: leaving a small object. The (size class, IP) counter decides: high issues to the L1D, middle to the L2C only,
+  // low drops. Probe lines always issue to the L1D, so a key that is dropping can recover.
+  unsigned cls = trigger.size_class;
+  stat_oob_candidates[cls]++;
+  int counter = oob_ctr[cls][trigger.ip_index];
+  bool probe = (pf_cl_addr & OOB_PROBE_MASK) == 0;
+  if (counter >= OOB_L1_THRESHOLD || probe) {
+    if (counter < OOB_L1_THRESHOLD)
+      stat_oob_probes[cls]++;
+    oob = true;
+    stat_oob_to_l1[cls]++;
+    return true;
+  }
+  if (counter >= OOB_L2_THRESHOLD) {
+    to_l2 = true;
+    stat_oob_to_l2[cls]++;
+    return true;
+  }
+  stat_oob_dropped[cls]++;
+  return false;
 }
 
-void ipcp_cap::issue_prefetch(uint64_t pf_cl_addr, uint16_t type, int stride, bool nl, bool oob)
+void ipcp_cap::issue_prefetch(uint64_t pf_cl_addr, uint16_t type, int stride, bool nl, bool oob, bool to_l2, const TRIGGER& trigger)
 {
   if (rr_hit(pf_cl_addr)) {
     stat_rr_dropped++;
     return;
   }
   rr_insert(pf_cl_addr);
-  if (prefetch_line(champsim::address{pf_cl_addr << LOG2_BLOCK_SIZE}, true, encode_metadata(stride, type, oob))) {
+  if (prefetch_line(champsim::address{pf_cl_addr << LOG2_BLOCK_SIZE}, !to_l2, encode_metadata(stride, type, oob, trigger))) {
     stat_issued[nl ? NL_STAT : type]++;
-    if (oob)
-      stat_oob_issued++; // leader sets only
   }
 }
 

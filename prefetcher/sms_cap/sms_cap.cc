@@ -25,10 +25,6 @@ void sms_cap::prefetcher_initialize()
 uint32_t sms_cap::prefetcher_cache_operate(champsim::address address, champsim::address ip, uint32_t cpu, champsim::capability cap, uint8_t cache_hit,
                                            bool useful_prefetch, access_type type, uint32_t metadata_in, uint32_t metadata_hit)
 {
-  /* S4: first use of a leader-region replay */
-  if (useful_prefetch && (metadata_hit & REPLAY_MARK))
-    replay_useful++;
-
   uint64_t line = address.to<uint64_t>() >> LOG2_BLOCK_SIZE;
   uint64_t region = line >> LOG2_REGION_LINES;
   uint32_t offset = (uint32_t)(line & (REGION_LINES - 1));
@@ -87,25 +83,8 @@ uint32_t sms_cap::prefetcher_cache_fill(champsim::address addr, champsim::addres
                                         bool prefetch, champsim::address evicted_addr, champsim::capability evicted_cap, uint32_t metadata_in,
                                         uint32_t metadata_evict, uint32_t cpu_evict)
 {
-  /* S4: a leader replay fill; the line keeps its mark for the useful count */
-  bool replay = prefetch && (metadata_in & REPLAY_MARK);
-  if (replay && ++replay_fills == REPLAY_WINDOW) {
-    if ((double)replay_useful / (double)replay_fills < REPLAY_ACC_LOW)
-      replay_trust = (replay_trust > 0) ? replay_trust - 1 : 0;
-    else
-      replay_trust = (replay_trust < 3) ? replay_trust + 1 : 3;
-    replay_blocked = (replay_trust == 0);
-    stat_replay_windows++;
-    if (replay_blocked)
-      stat_replay_blocked_windows++;
-    replay_fills = 0;
-    replay_useful = 0;
-  }
-  // other bits pass through unchanged (an upper-level prefetcher's metadata returns with the fill)
-  uint32_t metadata_out = (metadata_in & ~REPLAY_MARK) | (replay ? REPLAY_MARK : 0u);
-
   if (evicted_addr == champsim::address{})
-    return metadata_out;
+    return metadata_in;
 
   /* eviction of any block of a region ends its generation */
   uint64_t region = (evicted_addr.to<uint64_t>() >> LOG2_BLOCK_SIZE) >> LOG2_REGION_LINES;
@@ -117,7 +96,7 @@ uint32_t sms_cap::prefetcher_cache_fill(champsim::address addr, champsim::addres
     end_generation(at_entry);
     stat_gen_evicted++;
   }
-  return metadata_out;
+  return metadata_in;
 }
 
 void sms_cap::prefetcher_final_stats()
@@ -137,8 +116,5 @@ void sms_cap::prefetcher_final_stats()
             << "  Path: of those falling back, paper entry hit:    " << stat_trig_fallback_hit << std::endl
             << "  Cross-region predictions (S2): " << stat_cross_region << std::endl
             << "  Anchored entries demoted (S2): " << stat_anchored_demoted << std::endl
-            << "  Dropped at object end (S3):     " << stat_cap_dropped << std::endl
-            << "  Replayed next-region lines (S4): " << stat_replay_predicted << std::endl
-            << "  Replays blocked (S4):           " << stat_replay_blocked << std::endl
-            << "  S4 windows blocked / total:     " << stat_replay_blocked_windows << " / " << stat_replay_windows << std::endl;
+            << "  Dropped at object end (S3):     " << stat_cap_dropped << std::endl;
 }

@@ -8,18 +8,19 @@
 //                          signature is reseeded from (IP, line within the object), so the
 //                          CSPT learns per-IP in-object footprints; a cross-object delta
 //                          updates the confidence of the prediction it tests but is never
-//                          installed;
+//                          installed. C2 applies to an IP only while its C4 confidence is low
+//                          (lines past its objects go unused); otherwise the paper's address
+//                          signature is kept, since cross-object deltas between packed
+//                          neighbours are the pattern;
 //                      C3  object bounds: GS/CS/CPLX/NL prefetches stop at the end of an object
-//                          of >= 2 KB; CS also stops at the end of any object whose stride was
-//                          learned inside one object, and CPLX at the end of any object (its
-//                          deltas are in-object deltas, C2). Small objects are otherwise not
-//                          clipped: GS/NL and cross-object strides keep reaching neighbours;
-//                      C4  learned bounds filter for small objects: prefetches that leave a
-//                          small object are measured in 8 leader sets of the L1D (1 bit per
-//                          leader line, next to the class bits); a 2-bit trust counter moves
-//                          down on each window whose accuracy is below the paper's low
-//                          watermark and up otherwise, and at zero they are blocked in the
-//                          other sets.
+//                          of >= 2 KB;
+//                      C4  learned out-of-object confidence for small objects: a prefetch that
+//                          leaves a small object is decided by a 4-bit counter per (object size
+//                          class, IP-table index): high issues to the L1D, middle to the L2C
+//                          only, low drops. Lines issued to the L1D carry the counter's index in
+//                          their prefetch metadata; a first demand use adds 7 and an eviction
+//                          without use subtracts 1 (break-even accuracy 1/8). Probe lines (1 in
+//                          8) always issue to the L1D, so a dropping key can recover.
 //                    Untagged accesses take the paper's path. Apart from C1-C4 the logic is
 //                    the same as ipcp_isca (test 460-6 checks this on untagged input).
 //=======================================================================================//
@@ -139,6 +140,8 @@ struct ipcp_cap : public champsim::modules::prefetcher {
     uint64_t base;
     uint64_t top;
     uint16_t large;            // object of at least LARGE_OBJECT_BYTES
+    uint16_t size_class;       // C4: size class of a small object
+    uint16_t ip_index;         // C4: IP-table index
 
     TRIGGER()
     {
@@ -147,6 +150,8 @@ struct ipcp_cap : public champsim::modules::prefetcher {
       base = 0;
       top = 0;
       large = 0;
+      size_class = 0;
+      ip_index = 0;
     };
   };
 
@@ -160,10 +165,14 @@ private:
   CLASS_THROTTLE throttle[4]; // indexed by class type; NONE_TYPE unused
 
   // C4 state
-  unsigned oob_fills = 0;
-  unsigned oob_useful = 0;
-  int oob_trust = 3; // 2-bit; blocked at 0
-  bool oob_blocked = false;
+  int oob_ctr[OOB_CLASSES][NUM_IP_TABLE_ENTRIES]; // 4-bit counters
+  uint64_t stat_oob_candidates[OOB_CLASSES] = {};
+  uint64_t stat_oob_to_l1[OOB_CLASSES] = {};
+  uint64_t stat_oob_to_l2[OOB_CLASSES] = {};
+  uint64_t stat_oob_dropped[OOB_CLASSES] = {};
+  uint64_t stat_oob_probes[OOB_CLASSES] = {};
+  uint64_t stat_oob_used[OOB_CLASSES] = {};
+  uint64_t stat_oob_unused[OOB_CLASSES] = {};
 
   uint64_t cycle = 0;
   uint64_t window_start_cycle = 0;
@@ -178,10 +187,10 @@ private:
   uint64_t stat_cs_protected = 0;
   uint64_t stat_cplx_seeded = 0;
   uint64_t stat_cplx_from_seed = 0; // CPLX prefetches issued on the access that entered an object
-  uint64_t stat_oob_issued = 0;
-  uint64_t stat_oob_filtered = 0;
-  uint64_t stat_oob_windows = 0;
-  uint64_t stat_oob_blocked_windows = 0;
+  uint64_t stat_c2_active = 0;      // object changes with C2 on / off for the IP
+  uint64_t stat_c2_inactive = 0;
+  uint64_t stat_class_fills[4] = {}; // by class type
+  uint64_t stat_class_useful[4] = {};
   uint64_t stat_tagged = 0;
   uint64_t stat_untagged = 0;
   // path breakdown of IP-table hits: see prefetcher_final_stats
@@ -199,12 +208,13 @@ private:
   bool rr_hit(uint64_t cl_addr);
   void rr_insert(uint64_t cl_addr);
   // Returns false (and counts why) when the candidate must not be issued and prefetching in this direction stops.
-  bool allowed(const TRIGGER& trigger, uint64_t pf_cl_addr, uint16_t type, bool nl, bool stop_at_object_end, bool& oob);
-  void issue_prefetch(uint64_t pf_cl_addr, uint16_t type, int stride, bool nl, bool oob);
+  bool allowed(const TRIGGER& trigger, uint64_t pf_cl_addr, bool& oob, bool& to_l2);
+  void issue_prefetch(uint64_t pf_cl_addr, uint16_t type, int stride, bool nl, bool oob, bool to_l2, const TRIGGER& trigger);
+  void oob_feedback(uint32_t metadata, bool used);
   void count_fill(uint16_t type);
   uint16_t update_sig(uint16_t old_sig, int stride);
   uint16_t object_seed(uint64_t ip, uint64_t obj_line);
-  uint32_t encode_metadata(int stride, uint16_t type, bool oob);
+  uint32_t encode_metadata(int stride, uint16_t type, bool oob, const TRIGGER& trigger);
 
 public:
   using champsim::modules::prefetcher::prefetcher;

@@ -15,15 +15,6 @@
 //                          in the window's otherwise redundant trigger bit;
 //                      S3  bounds at large objects: for triggers in an object of >= 2 KB,
 //                          predicted lines outside the object are dropped;
-//                      S4  gated next-region replay: for such a trigger, the region pattern is
-//                          also replayed into the next region when the object covers all of it
-//                          (and it is on the same physical page). Replays into leader regions
-//                          (1 in 64, so 32 L2 sets) are marked in the line's prefetch metadata;
-//                          a 2-bit trust counter moves down on each window of leader fills
-//                          whose accuracy is below 0.4 and up otherwise, and at zero replays
-//                          are issued only into leader regions. Replays are issued only with
-//                          the slots regular predictions leave, and a replay never displaces a
-//                          regular prediction register.
 //                    The AT is address-region based, as in the paper. Untagged triggers take the
 //                    paper's path (test 461-6 checks this).
 //
@@ -134,8 +125,6 @@ struct sms_cap : public champsim::modules::prefetcher {
     int64_t base_line; // physical line of pattern bit 0
     Pattern pending;
     uint64_t seq;      // allocation order
-    uint32_t metadata; // S4: the replay mark for a leader-region replay
-    bool replay;       // S4: issued only with the slots regular registers leave, and never displaces one
 
     // simulation only (prefetch statistics by object size): the trigger's capability and lines
     champsim::capability cap;
@@ -149,8 +138,6 @@ struct sms_cap : public champsim::modules::prefetcher {
       base_line = 0;
       pending.reset();
       seq = 0;
-      metadata = 0;
-      replay = false;
       cap = champsim::capability{};
       trigger_line = 0;
       cursor_line_va = 0;
@@ -175,13 +162,6 @@ private:
   constexpr static uint64_t LARGE_OBJECT_BYTES = 2048;
   constexpr static int WINDOW_BEFORE = 8; // S2: trigger-relative window [-8, +23]
   constexpr static uint32_t OBJ_LINE_BITS = 6;
-  constexpr static uint64_t REPLAY_LEADER_MASK = 0x3F; // S4: regions numbered 1 mod 64 are leaders (32 of 2048 L2 sets); odd, so with
-                                                       // 4 KB pages a leader shares its page with the region that replays into it
-  constexpr static uint32_t REPLAY_WINDOW = 64;        // S4: leader replay fills per decision
-  constexpr static double REPLAY_ACC_LOW = 0.40;       // S4: the IPCP paper's low watermark
-
-public:
-  constexpr static uint32_t REPLAY_MARK = 1u << 28; // S4: prefetch metadata bit of a leader replay (clear of IPCP's low bits)
 
 private:
   // internal data structures
@@ -192,12 +172,6 @@ private:
   PredRegister pred_regs[PRED_REGISTERS];
   uint32_t rr_next = 0;
   uint64_t reg_seq = 0;
-
-  // S4 state
-  uint32_t replay_fills = 0;
-  uint32_t replay_useful = 0;
-  int replay_trust = 3; // 2-bit; blocked at 0
-  bool replay_blocked = false;
 
   // statistics
   uint64_t stat_triggers = 0;
@@ -220,10 +194,6 @@ private:
   uint64_t stat_gen_replaced = 0;
   uint64_t stat_reg_replaced = 0;
   uint64_t stat_anchored_demoted = 0;
-  uint64_t stat_replay_predicted = 0;
-  uint64_t stat_replay_blocked = 0;
-  uint64_t stat_replay_windows = 0;
-  uint64_t stat_replay_blocked_windows = 0;
 
   // private functions
   FTEntry* search_filter_table(uint64_t region);

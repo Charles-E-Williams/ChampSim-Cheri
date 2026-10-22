@@ -41,7 +41,12 @@ ipcp_isca (ISCA'20, Fig. 5, Table I); the capability layer adds the last block.
 // Capability layer
 #define OBJ_TAG_BITS 5               // C1/C2: hash of the object base kept per IP
 #define LARGE_OBJECT_BYTES 2048      // C3: objects of at least one GS region
-#define OOB_LEADER_MASK 0x7          // C4: lines with these bits zero map to the leader sets (8 of 64)
-#define OOB_WINDOW 64                // C4: leader-set out-of-object fills per decision
+#define OOB_CLASSES 4                // C4: small-object size classes <=64 B, <=128 B, <=512 B, <2 KB
+#define OOB_CTR_MAX 15               // C4: 4-bit counters per (size class, IP-table index)
+#define OOB_CTR_INIT 8
+#define OOB_L1_THRESHOLD 8           // C4: >= issue to the L1D (and C2 off for the IP)
+#define OOB_L2_THRESHOLD 4           // C4: >= issue to the L2C only, below drop
+#define OOB_CREDIT 7                 // C4: added on a first demand use; 1 is subtracted on an eviction without use
+#define OOB_PROBE_MASK 0x7           // C4: lines with these bits zero always issue to the L1D
 
 #endif /* IPCP_CAP_VARS_H */
