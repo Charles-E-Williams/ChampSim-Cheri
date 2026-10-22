@@ -27,8 +27,8 @@ struct ip_stride_cheri : public champsim::modules::prefetcher {
     std::optional<champsim::capability> cap{};
   };
 
-  constexpr static std::size_t CAP_TABLE_SETS = 256;
-  constexpr static std::size_t CAP_TABLE_WAYS = 4;
+  constexpr static std::size_t CAP_TABLE_SETS = 24;
+  constexpr static std::size_t CAP_TABLE_WAYS = 1;
 
   constexpr static int PREFETCH_DEGREE = 3;
   
