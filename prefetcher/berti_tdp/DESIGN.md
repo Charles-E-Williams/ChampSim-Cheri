@@ -314,7 +314,51 @@ xalancbmk and hit rate drops 85.6% -> 76.6%, but prefetches barely change). At 2
 xalancbmk's small DOM nodes evict the strided objects, useful prefetches fall from 21.8K to 2.5K, and IPC drops
 0.3568 -> 0.3342 (-6.3%, all of ip_stride's gain). Keep it.
 
-## 9. Files
+## 9. Bandwidth experiments: switches and statistics
+
+TDP's extra memory traffic (e.g. +9-10% DRAM reads on omnetpp_s over 1.2B instructions, for +2-3.5% IPC) is the
+multicore concern. The switches below are read once from environment variables, so each host keeps one binary and a
+variant is just `TDP_DEMOTE=0 bin/champsim_cheri_berti_tdp ...`. Unset, every switch is the design: with none set, all
+three hosts are bit-identical to the code before the switches (every ROI counter, omnetpp 1M+3M). Every run prints
+the values in effect (`TDP CONFIG`). They apply to Berti-TDP and to the shared engine (`inc/cheri_tdp.h`: IP-stride and
+IPCP) alike.
+
+| variable | default | effect |
+|---|---|---|
+| `TDP_TH_L2` | 4 | dereferences per epoch for an L2-level delta; 8 (= TH_L1) leaves no low-confidence L2 prefetches |
+| `TDP_DEMOTE` | 1 | 0: an L1D-level prefetch is dropped when the L1D MSHR is busy (>= 70%), instead of being sent to L2 |
+| `TDP_FEEDBACK` | 0 | 1: per-key accuracy feedback gates issue (below) |
+| `TDP_BERTI_TRAIN` | 1 | Berti-TDP only. 0: TDP-prefetched lines enter Berti's shadow cache as demand lines, so hits on them do not train Berti |
+| `TDP_INTERVAL` | 0 | n > 0: a `TDP INTERVAL` line of per-interval counters every n cycles (does not change the simulation) |
+
+`TDP_TH_L2=8 TDP_DEMOTE=0` together: TDP never prefetches into L2.
+
+**Accuracy feedback** (`TDP_FEEDBACK=1`). An L1D-eviction counter cannot see L2-level prefetches, so the feedback asks
+whether each *prediction* came true: every CHT entry gets a 15-bit mask of the deltas prefetched for its sighting. A
+dereference of a prefetched target while the sighting is in the CHT clears its bit and adds 1 to the key's 4-bit
+counter (in its PDT entry). Bits still set when the entry is overwritten subtract 1 each. A key needs >= 8 to prefetch
+into L2 and >= 4 to prefetch at all; below 4 it gains 1 per epoch, so it is tried again. The counter starts at 8.
+Hardware: 128 x 15 bits + 64 x 4 bits = 272 B. Known bias: a prefetch whose target was already in L1D counts as a miss
+(the demand hits a line TDP did not bring in, which never reaches training). That costs no memory traffic, so the
+feedback is somewhat harsher than the traffic it saves would justify.
+
+**Statistics** (all hosts, final stats; simulator-only, not hardware):
+- `TDP L2_USE lowconf issued/used demoted issued/used`: TDP prefetches sent to L2, split into low-confidence deltas
+  (status 1) and L1D-level deltas demoted because the MSHR was busy, and how many a later L1D demand miss requested.
+  An upper bound on usefulness: a target counts as used if requested within the next 32768 TDP L2 prefetches, whether or
+  not it was still in L2.
+- `TDP PREDICTIONS dereferenced / not_dereferenced`: the feedback's own measure (counted with or without feedback on).
+  Also `BUSY_DROP` (with `TDP_DEMOTE=0`), `FB_SKIP all / l2` (prefetches the feedback suppressed) and, for Berti-TDP,
+  `BERTI_UNTRAINED_FILLS`.
+- `TDP INTERVAL cycle ... issued_l1 l2_lowconf l2_demoted busy_drop fills useful useless l2_used pred_hit pred_miss
+  fb_skip`: the same counters per interval, to see phases where TDP keeps prefetching without benefit.
+
+Short check (omnetpp, 1M+3M, Berti-TDP; too short to choose a variant, only to show that each switch acts): L2
+prefetches were 16,175 low-confidence and 5 demoted, ~49% used (upper bound); about 48% of predictions were
+dereferenced. `TDP_TH_L2=8` removed all L2 prefetches (IPC 0.6466 -> 0.6231). `TDP_FEEDBACK=1` cut TDP's L1D issues by
+32% and its L2 issues by 66% (IPC -> 0.6273).
+
+## 10. Files
 
 - `prefetcher/berti_tdp/berti_tdp.h`, `berti_tdp.cc`: Berti's `berti.h` / `berti.cc` with the class renamed, plus the
   TDP: its structures at the end of the class, its functions at the end of the `.cc`, and `#if TDP_ENABLE` blocks in the

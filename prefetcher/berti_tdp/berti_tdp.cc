@@ -988,6 +988,10 @@ void berti_tdp::prefetcher_cycle_operate()
 {
 #if TDP_ENABLE
   drain_sightings();
+  if (kn.interval && intern_->current_cycle() >= next_interval) {
+    if (next_interval != 0) print_interval();
+    next_interval = intern_->current_cycle() + kn.interval;
+  }
 #endif
 }
 
@@ -1016,6 +1020,7 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
   uint64_t ip_hash = this->ip_hash(ip.to<uint64_t>()) & IP_MASK;
 
 #if TDP_ENABLE
+  if (type == access_type::LOAD && !cache_hit) l2u.demand_miss(line_addr.to<uint64_t>()); // statistics only
   // Tag-directed prefetching (TDP): train on dereferences (tagged demand loads that miss, or hit a TDP-prefetched line)
   if (type == access_type::LOAD && cap.tag)
   {
@@ -1206,7 +1211,14 @@ uint32_t berti_tdp::prefetcher_cache_fill(champsim::address addr, champsim::addr
 #endif
 
   // Add to the shadow cache
+#if TDP_ENABLE
+  // TDP_BERTI_TRAIN=0: a TDP-prefetched line enters the shadow cache as a demand line, so a hit on it does not train Berti
+  const bool berti_pf = prefetch && (kn.berti_train || !(metadata_in & MD_TDP));
+  st_berti_untrained += (prefetch && !berti_pf);
+  tscache->add(set, way, line_addr.to<uint64_t>(), berti_pf, latency);
+#else
   tscache->add(set, way, line_addr.to<uint64_t>(), prefetch, latency);
+#endif
 
   if (latency != 0 && !prefetch)
   {
@@ -1238,6 +1250,7 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << std::endl;
 
 #if TDP_ENABLE
+  cheri_tdp::print_config(std::cout, th_l2);
   const char* src[NUM_SRC] = {"demand_fill", "berti_pf_fill", "load_hit"};
   std::cout << "TDP LINES_SCANNED";
   for (int i = 0; i < NUM_SRC; i++) std::cout << " " << src[i] << " " << st_lines_scanned[i];
@@ -1254,6 +1267,9 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << "TDP ISSUED L1 " << st_tdp_l1 << " L2 " << st_tdp_l2 << " PQ_FULL " << st_tdp_pq_full << " INFLIGHT_SKIP " << st_tdp_inflight
             << " OOB_SKIP " << st_tdp_oob << std::endl;
   std::cout << "TDP FILLS " << st_tdp_fills << " USEFUL " << st_tdp_useful << " USELESS " << st_tdp_useless << std::endl;
+  std::cout << "TDP PREDICTIONS dereferenced " << st_pred_hit << " not_dereferenced " << st_pred_miss << " BUSY_DROP " << st_busy_drop
+            << " FB_SKIP all " << st_fb_off << " l2 " << st_fb_l2_off << " BERTI_UNTRAINED_FILLS " << st_berti_untrained << std::endl;
+  l2u.print(std::cout);
   for (int i = 0; i < NUM_SRC; i++)
   {
     std::cout << "TDP GAP_LOG2_CYCLES " << src[i];
@@ -1317,12 +1333,14 @@ void berti_tdp::pdt_count_sighting(pdt_entry* e)
   for (auto& d : e->d) {
     if (!d.valid)
       continue;
-    d.status = (d.conf >= TDP_TH_L1) ? 2 : (d.conf >= TDP_TH_L2) ? 1 : 0;
+    d.status = (d.conf >= TDP_TH_L1) ? 2 : (d.conf >= th_l2) ? 1 : 0;
     st_status_l1 += (d.status == 2);
     st_status_l2 += (d.status == 1);
     d.conf = 0;
   }
   e->sightings = 0;
+  if (kn.feedback && e->acc < cheri_tdp::FEEDBACK_MIN_ISSUE)
+    e->acc++;
 }
 
 void berti_tdp::pdt_train(uint16_t key, int delta)
@@ -1386,7 +1404,12 @@ void berti_tdp::process_sighting(const sighting& s)
   const uint16_t key = make_key(s.ip16, c);
   cht_entry& ce = cht[cht_ptr];
   cht_ptr = (cht_ptr + 1) % TDP_CHT_SIZE;
-  ce = cht_entry{true, bh, cline, key, 0, intern_->current_cycle(), s.source};
+  if (ce.valid && ce.issued) { // prefetched deltas of the overwritten sighting that were never dereferenced
+    const int n = static_cast<int>(std::bitset<16>(ce.issued).count());
+    st_pred_miss += static_cast<uint64_t>(n);
+    feedback(ce.key, -n);
+  }
+  ce = cht_entry{true, bh, cline, key, 0, intern_->current_cycle(), s.source, 0};
 
   const bool mshr_ok = intern_->get_mshr_occupancy_ratio() * 100 < MSHR_LIMIT;
   const uint64_t own_line = s.line_va >> LOG2_BLOCK_SIZE;
@@ -1406,7 +1429,20 @@ void berti_tdp::process_sighting(const sighting& s)
       st_tdp_oob++;
       continue;
     }
-    issue_tdp(tline, d.status == 2 && mshr_ok, s.ip16, c);
+    const bool fill_l1 = d.status == 2 && mshr_ok;
+    if (d.status == 2 && !mshr_ok && !kn.demote) {
+      st_busy_drop++;
+      continue;
+    }
+    if (kn.feedback && (e->acc < cheri_tdp::FEEDBACK_MIN_ISSUE || (!fill_l1 && e->acc < cheri_tdp::FEEDBACK_MIN_L2))) {
+      (e->acc < cheri_tdp::FEEDBACK_MIN_ISSUE ? st_fb_off : st_fb_l2_off)++;
+      continue;
+    }
+    if (issue_tdp(tline, fill_l1, s.ip16, c)) {
+      ce.issued |= static_cast<uint16_t>(1u << (d.delta + TDP_MAX_LINE_DELTA));
+      if (!fill_l1)
+        l2u.issue(tline, d.status == 1 ? cheri_tdp::l2_usage::LOWCONF : cheri_tdp::l2_usage::DEMOTED);
+    }
   }
   pdt_count_sighting(e);
 }
@@ -1495,6 +1531,11 @@ void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool
       st_match_timely++;
   }
   const uint16_t bit = static_cast<uint16_t>(1u << (best_d + TDP_MAX_LINE_DELTA));
+  if (best->issued & bit) { // a prefetched target was dereferenced
+    best->issued = static_cast<uint16_t>(best->issued & ~bit);
+    st_pred_hit++;
+    feedback(best->key, +1);
+  }
   if (best->trained & bit)
     return;
   best->trained |= bit;
@@ -1511,4 +1552,30 @@ void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool
   }
 #endif
   pdt_train(best->key, best_d); // a hit on a TDP-prefetched line: the prefetch was timely
+}
+
+void berti_tdp::feedback(uint16_t key, int change)
+{
+  if (!kn.feedback)
+    return;
+  for (auto& e : pdt) // lookup without an LRU update
+    if (e.valid && e.tag == key) {
+      e.acc = static_cast<uint8_t>(std::clamp<int>(e.acc + change, 0, cheri_tdp::FEEDBACK_MAX));
+      return;
+    }
+}
+
+// TDP_INTERVAL: per-interval counters, one line
+void berti_tdp::print_interval()
+{
+  const uint64_t cur[11] = {st_tdp_l1, l2u.issued[cheri_tdp::l2_usage::LOWCONF], l2u.issued[cheri_tdp::l2_usage::DEMOTED], st_busy_drop,
+                            st_tdp_fills, st_tdp_useful, st_tdp_useless, l2u.used[cheri_tdp::l2_usage::LOWCONF] + l2u.used[cheri_tdp::l2_usage::DEMOTED],
+                            st_pred_hit, st_pred_miss, st_fb_off + st_fb_l2_off};
+  const char* name[11] = {"issued_l1", "l2_lowconf", "l2_demoted", "busy_drop", "fills", "useful", "useless", "l2_used", "pred_hit", "pred_miss", "fb_skip"};
+  std::cout << "TDP INTERVAL cycle " << intern_->current_cycle();
+  for (int i = 0; i < 11; i++) {
+    std::cout << " " << name[i] << " " << cur[i] - last_iv[i];
+    last_iv[i] = cur[i];
+  }
+  std::cout << std::endl;
 }

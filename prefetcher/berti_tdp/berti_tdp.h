@@ -48,6 +48,7 @@
  * pages={975-991},  doi={10.1109/MICRO56248.2022.00072}}
  */
 
+#include "cheri_tdp.h" // experiment switches (TDP_* environment variables), statistics; before the params, whose MSHR_LIMIT is a macro
 #include "berti_tdp_params.h"
 #include "cache.h"
 #include "capability_memory.h"
@@ -282,6 +283,7 @@ class berti_tdp : public champsim::modules::prefetcher {
         uint16_t trained = 0;     // deltas already credited for this sighting, one bit per delta
         uint64_t time = 0;        // cycle of the sighting (statistics; TDP_TIMELY)
         uint8_t  source = 0;      // statistics only
+        uint16_t issued = 0;      // deltas prefetched for this sighting and not yet dereferenced, one bit per delta
     };
     std::array<cht_entry, TDP_CHT_SIZE> cht{};
     std::size_t cht_ptr = 0;
@@ -297,6 +299,7 @@ class berti_tdp : public champsim::modules::prefetcher {
         bool     valid = false;
         uint16_t tag = 0;
         uint8_t  sightings = 0;
+        uint8_t  acc = cheri_tdp::FEEDBACK_INIT; // accuracy counter (TDP_FEEDBACK)
         uint64_t lru = 0;
         std::array<pdt_delta, TDP_PDT_DELTAS> d{};
     };
@@ -333,6 +336,16 @@ class berti_tdp : public champsim::modules::prefetcher {
     uint64_t st_timely_credit = 0, st_late_dropped = 0, st_nolat_dropped = 0, st_pending_overflow = 0;
     uint64_t st_gap[NUM_SRC][16] = {};
     uint64_t st_delta_hist[2 * TDP_MAX_LINE_DELTA + 1] = {};
+
+    // Experiment switches (inc/cheri_tdp.h) and their statistics
+    const cheri_tdp::knobs& kn = cheri_tdp::get_knobs();
+    const unsigned th_l2 = kn.threshold_l2 ? kn.threshold_l2 : TDP_TH_L2;
+    uint64_t st_busy_drop = 0, st_fb_off = 0, st_fb_l2_off = 0, st_pred_hit = 0, st_pred_miss = 0, st_berti_untrained = 0;
+    cheri_tdp::l2_usage l2u;
+    uint64_t next_interval = 0;
+    uint64_t last_iv[11] = {};
+    void feedback(uint16_t key, int change);
+    void print_interval();
 
     static uint16_t hash16(uint64_t x);
     static uint16_t make_key(uint64_t ip16, const champsim::capability& c);
