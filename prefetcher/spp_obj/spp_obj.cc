@@ -123,6 +123,8 @@ uint32_t spp_obj::prefetcher_cache_operate(champsim::address addr, champsim::add
   if (last_sig)
     PT.update_pattern(last_sig, delta);
 
+  if (keyed && curr_sig == 0) return metadata_in;
+
   // Stage 3: Start prefetching
   auto base_addr = addr;
   uint32_t lookahead_conf = 100, pf_q_head = 0, pf_q_tail = 0;
@@ -159,11 +161,11 @@ uint32_t spp_obj::prefetcher_cache_operate(champsim::address addr, champsim::add
 
         if (page_type{pf_addr} == page) { // Prefetch request is in the same physical page
           // OBJECT_KEYED: a candidate in the next object-relative region bootstraps that region's signature via the GHR
-          if constexpr (OBJECT_KEYED && GHR_ON) {
-            const int64_t pf_obj_line = obj_line + line_delta;
-            if (keyed && pf_obj_line >= 0 && (pf_obj_line >> (OBJ_LOG2_REGION - LOG2_BLOCK_SIZE)) != (obj_line >> (OBJ_LOG2_REGION - LOG2_BLOCK_SIZE)))
-              GHR.update_entry(curr_sig, confidence_q[i], spp_obj::offset_type{object_key_address(cap, pf_obj_line)}, delta_q[i], true);
-          }
+      //    if constexpr (OBJECT_KEYED && GHR_ON) {
+        //    const int64_t pf_obj_line = obj_line + line_delta;
+        //    if (keyed && pf_obj_line >= 0 && (pf_obj_line >> (OBJ_LOG2_REGION - LOG2_BLOCK_SIZE)) != (obj_line >> (OBJ_LOG2_REGION - LOG2_BLOCK_SIZE)))
+         //     GHR.update_entry(curr_sig, confidence_q[i], spp_obj::offset_type{object_key_address(cap, pf_obj_line)}, delta_q[i], true);
+        //  }
 
           auto act = cheri_policy::oob_action::ISSUE_HERE;
           if (OOB_FILTER && issue && oob_cand) {
@@ -438,7 +440,7 @@ void spp_obj::SIGNATURE_TABLE::read_and_update_sig(champsim::address addr, bool 
   }
 
   if constexpr (GHR_ON) {
-    if (ST_hit == 0 && !carried_now) {
+    if (ST_hit == 0 && !carried_now && !obj_key_in) {
       uint32_t GHR_found = _parent->GHR.check_entry(page_offset, obj_key_in);
       if (GHR_found < MAX_GHR_ENTRY) {
         ghr_boots[obj_key_in]++;
