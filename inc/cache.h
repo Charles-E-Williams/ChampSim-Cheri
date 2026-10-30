@@ -117,6 +117,7 @@ public:
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};
     pf_bounds_type pf_bounds = pf_bounds_type::IN;
+    uint32_t own_metadata = 0; // the metadata this cache put on its own request (kept as its MSHR would)
     champsim::chrono::clock::time_point time_enqueued;
 
     std::vector<uint64_t> instr_depend_on_me{};
