@@ -36,7 +36,7 @@ struct ip_stride_cheri_tdp : public champsim::modules::prefetcher {
   
   champsim::msl::lru_table<cap_entry> cap_table{CAP_TABLE_SETS, CAP_TABLE_WAYS};
   std::optional<lookahead_entry> active_lookahead;
-  cheri_tdp::engine tdp; // tag-directed prefetching (TDP) 
+  cheri_tdp::engine tdp{cheri_tdp::settings{7,false,true}}; // tag-directed prefetching (TDP) 
 
   uint64_t cap_prefetches_bounded{};
   uint64_t cap_table_hits{};
