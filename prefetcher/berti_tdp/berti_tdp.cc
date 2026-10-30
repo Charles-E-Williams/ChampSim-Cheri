@@ -930,6 +930,11 @@ void berti_tdp::prefetcher_initialize()
             << " EPOCH=" << TDP_EPOCH << " TH_L1=" << TDP_TH_L1 << " TH_L2=" << TDP_TH_L2 << " SIGHTQ=" << TDP_SIGHTQ
             << " SIGHT_PER_CYCLE=" << TDP_SIGHT_PER_CYCLE << " SIGHT_FILL=" << TDP_SIGHT_FILL << " SIGHT_LOAD_HIT=" << TDP_SIGHT_LOAD_HIT
             << " KEY_LEN=" << TDP_KEY_LEN << " BOUNDS=" << TDP_BOUNDS << " NOLEARN=" << TDP_NOLEARN << " TIMELY=" << TDP_TIMELY << std::endl;
+#if TDP_RECUR || TDP_RECUR_CTRL_NL || TDP_RECUR_CTRL_FILL_NL || TDP_CHAIN_STATS || TDP_OBSERVE_ONLY
+  std::cout << "Berti-TDP recursion: RECUR=" << TDP_RECUR << " RECUR_KEY=" << TDP_RECUR_KEY << " RECUR_DEPTH=" << TDP_RECUR_DEPTH << " RECUR_DECAY=" << TDP_RECUR_DECAY
+            << " RECUR_CHT=" << TDP_RECUR_CHT << " RECUR_CTRL_NL=" << TDP_RECUR_CTRL_NL << " RECUR_CTRL_FILL_NL=" << TDP_RECUR_CTRL_FILL_NL << " CHAIN_STATS=" << TDP_CHAIN_STATS
+            << " OBSERVE_ONLY=" << TDP_OBSERVE_ONLY << std::endl;
+#endif
   //intern_->internal_PQ.set_timeout(1500);
 
 # ifdef NO_CROSS_PAGE
@@ -989,6 +994,18 @@ void berti_tdp::prefetcher_cycle_operate()
 #if TDP_ENABLE
   drain_sightings();
 #endif
+#if TDP_RECUR || TDP_RECUR_CTRL_NL || TDP_RECUR_CTRL_FILL_NL
+  if (rc_in_warmup && !intern_->warmup) { // recursion statistics cover the region of interest only
+    rc_in_warmup = false;
+    std::fill(&st_rc_issued[0][0], &st_rc_issued[0][0] + 16, 0);
+    std::fill(std::begin(st_rc_useful), std::end(st_rc_useful), 0);
+    std::fill(std::begin(st_rc_useless), std::end(st_rc_useless), 0);
+    std::fill(std::begin(st_rc_fills), std::end(st_rc_fills), 0);
+    st_rc_scanned_fill = st_rc_scanned_hit = st_rc_depth_stop = st_rc_low_prob = st_rc_ctrl = st_rc_fallback = 0;
+    st_rc_credit_stop = st_rc_fb_up = st_rc_fb_down = 0;
+    std::fill(std::begin(st_rc_limit_epochs), std::end(st_rc_limit_epochs), 0);
+  }
+#endif
 }
 
 uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::address ip,
@@ -1015,6 +1032,10 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
 
   uint64_t ip_hash = this->ip_hash(ip.to<uint64_t>()) & IP_MASK;
 
+#if TDP_ENABLE && (TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK)
+  if (cache_hit && useful_prefetch && (metadata_hit & MD_TDP))
+    rc_line_used(metadata_hit, line_addr.to<uint64_t>());
+#endif
 #if TDP_ENABLE
   // Tag-directed prefetching (TDP): train on dereferences (tagged demand loads that miss, or hit a TDP-prefetched line)
   if (type == access_type::LOAD && cap.tag)
@@ -1022,6 +1043,31 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
     const bool tdp_hit = cache_hit && useful_prefetch && (metadata_hit & MD_TDP);
     if (!cache_hit || tdp_hit) train_deref(line_addr.to<uint64_t>(), cap, !cache_hit);
     st_tdp_useful += tdp_hit;
+#if TDP_CHAIN_STATS
+    if (!cache_hit || useful_prefetch) ch_demand(line_addr.to<uint64_t>(), cap, !cache_hit);
+#endif
+#if TDP_RECUR
+    if (tdp_hit) st_rc_useful[md_depth(metadata_hit)]++;
+#endif
+#if TDP_RECUR & 2
+    if (tdp_hit) // the first demand use of a TDP-prefetched line: scan it as its demand fill would have been
+    {
+      st_rc_scanned_hit++;
+      scan_line(line_addr.to<uint64_t>() << LOG2_BLOCK_SIZE, ip_hash, SRC_TDP_HIT, cpu);
+    }
+#endif
+#if TDP_RECUR_CTRL_NL
+    if (tdp_hit) // control: the same trigger, next lines instead of pointers
+    {
+      const bool fill_l1 = intern_->get_mshr_occupancy_ratio() * 100 < MSHR_LIMIT;
+      for (int next = 1; next <= TDP_RECUR_CTRL_NL; next++) {
+        const uint64_t next_line = line_addr.to<uint64_t>() + static_cast<uint64_t>(next);
+        if (!latencyt[me]->get(next_line)
+            && pf_line(champsim::address{next_line << LOG2_BLOCK_SIZE}, fill_l1, MD_VALID | MD_CTRL | static_cast<uint32_t>(ip_hash & MD_IP_MASK), cap))
+          st_rc_ctrl++;
+      }
+    }
+#endif
 #if TDP_SIGHT_LOAD_HIT
     if (cache_hit)
     {
@@ -1095,7 +1141,7 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
     if (i.rpl == BERTI_L1 && mshr_load >= MSHR_LIMIT) pf_to_l2_bc_mshr++; 
     if (fill_this_level) pf_to_l1++;
     else pf_to_l2++;
-    if (prefetch_line(p_addr, fill_this_level, md_out))
+    if (pf_line(p_addr, fill_this_level, md_out))
     {
       ++average_issued;
       if (first_issue)
@@ -1147,14 +1193,42 @@ uint32_t berti_tdp::prefetcher_cache_fill(champsim::address addr, champsim::addr
   // Tag-directed prefetching (TDP): the pointers in the arriving line are sightings
   st_tdp_useless += (useless && (metadata_evict & MD_TDP));
   if (prefetch && (metadata_in & MD_TDP)) st_tdp_fills++;
+#if TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK
+  if (useless && (metadata_evict & MD_TDP))
+    rc_line_unused(metadata_evict, champsim::block_number{evicted_addr}.to<uint64_t>());
+  if (TDP_RECUR_CREDIT && prefetch && (metadata_in & MD_TDP) && md_depth(metadata_in) >= 2)
+    rc_outstanding++;
+#endif
+#if TDP_RECUR
+  if (useless && (metadata_evict & MD_TDP)) st_rc_useless[md_depth(metadata_evict)]++;
+  if (prefetch && (metadata_in & MD_TDP)) st_rc_fills[md_depth(metadata_in)]++;
+#endif
+#if TDP_CHAIN_STATS
+  ch_fill(line_addr.to<uint64_t>(), prefetch ? ((metadata_in & MD_TDP) ? CH_TDP : CH_BERTI) : ((metadata_in & MD_TDP) ? CH_MERGED : CH_DEMAND), cpu);
+#endif
 #if TDP_SIGHT_FILL
   {
     const uint64_t line_va = line_addr.to<uint64_t>() << LOG2_BLOCK_SIZE;
     if (!prefetch)
     {
       if (ip.to<uint64_t>() != 0) scan_line(line_va, this->ip_hash(ip.to<uint64_t>()) & IP_MASK, SRC_DEMAND_FILL, cpu);
-    } else if ((metadata_in & MD_VALID) && !(metadata_in & MD_TDP))
+    } else if ((metadata_in & MD_VALID) && !(metadata_in & MD_TDP) && !(metadata_in & MD_CTRL))
       scan_line(line_va, metadata_in & MD_IP_MASK, SRC_PF_FILL, cpu);
+#if TDP_RECUR & 1
+    else if (metadata_in & MD_TDP)
+      scan_tdp_fill(line_va, metadata_in, cpu);
+#endif
+  }
+#endif
+#if TDP_RECUR_CTRL_FILL_NL
+  if (prefetch && (metadata_in & MD_TDP)) // control: the same trigger, next lines instead of the line's pointers
+  {
+    const bool fill_l1 = intern_->get_mshr_occupancy_ratio() * 100 < MSHR_LIMIT;
+    for (int next = 1; next <= TDP_RECUR_CTRL_FILL_NL; next++) {
+      const uint64_t next_line = line_addr.to<uint64_t>() + static_cast<uint64_t>(next);
+      if (!latencyt[me]->get(next_line) && pf_line(champsim::address{next_line << LOG2_BLOCK_SIZE}, fill_l1, MD_VALID | MD_CTRL | (metadata_in & MD_IP_MASK), cap))
+        st_rc_ctrl++;
+    }
   }
 #endif
 #endif
@@ -1238,11 +1312,11 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << std::endl;
 
 #if TDP_ENABLE
-  const char* src[NUM_SRC] = {"demand_fill", "berti_pf_fill", "load_hit"};
+  const char* src[NUM_SRC] = {"demand_fill", "berti_pf_fill", "load_hit", "tdp_fill", "tdp_hit"};
   std::cout << "TDP LINES_SCANNED";
-  for (int i = 0; i < NUM_SRC; i++) std::cout << " " << src[i] << " " << st_lines_scanned[i];
+  for (int i = 0; i < NUM_SRC_PRINT; i++) std::cout << " " << src[i] << " " << st_lines_scanned[i];
   std::cout << std::endl << "TDP SIGHTINGS";
-  for (int i = 0; i < NUM_SRC; i++) std::cout << " " << src[i] << " " << st_sight[i];
+  for (int i = 0; i < NUM_SRC_PRINT; i++) std::cout << " " << src[i] << " " << st_sight[i];
   std::cout << " DUPLICATE " << st_sight_dup << " QUEUED " << st_sq_delayed << " QUEUE_DROPPED " << st_sq_dropped << std::endl;
   std::cout << "TDP TAGGED_LOAD_MISSES " << st_tagged_load_miss << " MATCH_CHT " << st_match << " MATCH_CHT_TIMELY " << st_match_timely << std::endl;
   std::cout << "TDP TRAIN miss " << st_train_miss << " tdp_pf_hit " << st_train_tdphit << " EPOCHS " << st_epochs << " STATUS_L1 " << st_status_l1
@@ -1254,7 +1328,7 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << "TDP ISSUED L1 " << st_tdp_l1 << " L2 " << st_tdp_l2 << " PQ_FULL " << st_tdp_pq_full << " INFLIGHT_SKIP " << st_tdp_inflight
             << " OOB_SKIP " << st_tdp_oob << std::endl;
   std::cout << "TDP FILLS " << st_tdp_fills << " USEFUL " << st_tdp_useful << " USELESS " << st_tdp_useless << std::endl;
-  for (int i = 0; i < NUM_SRC; i++)
+  for (int i = 0; i < NUM_SRC_PRINT; i++)
   {
     std::cout << "TDP GAP_LOG2_CYCLES " << src[i];
     for (int b = 0; b < 16; b++) std::cout << " " << st_gap[i][b];
@@ -1263,6 +1337,43 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << "TDP DELTA_HIST";
   for (int i = 0; i < 2 * TDP_MAX_LINE_DELTA + 1; i++) std::cout << " " << (i - TDP_MAX_LINE_DELTA) << ":" << st_delta_hist[i];
   std::cout << std::endl;
+#if TDP_RECUR || TDP_RECUR_CTRL_NL
+  std::cout << "TDP RECUR scanned_fill " << st_rc_scanned_fill << " scanned_hit " << st_rc_scanned_hit << " depth_stop " << st_rc_depth_stop
+            << " low_prob_skip " << st_rc_low_prob << " ctrl_issued " << st_rc_ctrl << " fallback " << st_rc_fallback << std::endl;
+#if TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK
+  std::cout << "TDP RECUR_THROTTLE credit_stops " << st_rc_credit_stop << " outstanding_at_end " << rc_outstanding << " limit_up "
+            << st_rc_fb_up << " limit_down " << st_rc_fb_down << " limit_at_end " << rc_limit << " epochs_at_limit";
+  for (int depth = 0; depth < 8; depth++) std::cout << " " << st_rc_limit_epochs[depth];
+  std::cout << std::endl;
+#endif
+  for (int depth = 1; depth < 8; depth++)
+    if (st_rc_issued[depth][0] + st_rc_issued[depth][1] + st_rc_fills[depth] + st_rc_useful[depth] + st_rc_useless[depth])
+      std::cout << "TDP RECUR depth " << depth << " issued_l1 " << st_rc_issued[depth][1] << " issued_l2 " << st_rc_issued[depth][0]
+                << " fills " << st_rc_fills[depth] << " useful " << st_rc_useful[depth] << " useless " << st_rc_useless[depth] << std::endl;
+#endif
+#if TDP_CHAIN_STATS
+  const char* kind_name[CH_KINDS] = {"demand_fill", "merged_tdp", "berti_fill", "tdp_fill"};
+  std::cout << "CHAIN (region of interest only)" << std::endl << "CHAIN MISS_DEPTH";
+  for (int depth = 1; depth <= 8; depth++) std::cout << " " << ch_miss_depth[depth];
+  std::cout << std::endl << "CHAIN COVERED_DEPTH";
+  for (int depth = 1; depth <= 8; depth++) std::cout << " " << ch_cov_depth[depth];
+  std::cout << std::endl << "CHAIN MISS_PARENT";
+  for (int kind = 0; kind < CH_KINDS; kind++) std::cout << " " << kind_name[kind] << " " << ch_miss_parent[kind];
+  std::cout << std::endl << "CHAIN COVERED_PARENT";
+  for (int kind = 0; kind < CH_KINDS; kind++) std::cout << " " << kind_name[kind] << " " << ch_cov_parent[kind];
+  std::cout << std::endl;
+  for (int kind = 0; kind < CH_KINDS; kind++) {
+    std::cout << "CHAIN MISS_LEAD_FROM_FILL_LOG2 " << kind_name[kind];
+    for (int bucket = 0; bucket < 16; bucket++) std::cout << " " << ch_lead_fill[kind][bucket];
+    std::cout << std::endl;
+  }
+  std::cout << "CHAIN STOPPED used_parent " << ch_stop_used << " unused_parent " << ch_stop_unused << std::endl;
+  std::cout << "CHAIN STOPPED_LEAD_FROM_FILL_LOG2";
+  for (int bucket = 0; bucket < 16; bucket++) std::cout << " " << ch_stop_lead_fill[bucket];
+  std::cout << std::endl << "CHAIN STOPPED_LEAD_FROM_USE_LOG2";
+  for (int bucket = 0; bucket < 16; bucket++) std::cout << " " << ch_stop_lead_use[bucket];
+  std::cout << std::endl;
+#endif
 #endif
 }
 
@@ -1318,6 +1429,7 @@ void berti_tdp::pdt_count_sighting(pdt_entry* e)
     if (!d.valid)
       continue;
     d.status = (d.conf >= TDP_TH_L1) ? 2 : (d.conf >= TDP_TH_L2) ? 1 : 0;
+    d.last = d.conf;
     st_status_l1 += (d.status == 2);
     st_status_l2 += (d.status == 1);
     d.conf = 0;
@@ -1353,13 +1465,13 @@ void berti_tdp::pdt_train(uint16_t key, int delta)
   victim->conf = 1;
 }
 
-bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c)
+bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c, uint32_t chain_metadata)
 {
   if (latencyt[me]->get(line)) { // already in flight to L1D
     st_tdp_inflight++;
     return false;
   }
-  if (!prefetch_line(champsim::address{line << LOG2_BLOCK_SIZE}, fill_l1, md_make(ip16, true), c)) {
+  if (!pf_line(champsim::address{line << LOG2_BLOCK_SIZE}, fill_l1, chain_metadata == 0 ? md_make(ip16, true) : chain_metadata, c)) {
     st_tdp_pq_full++;
     return false;
   }
@@ -1373,42 +1485,87 @@ bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const cham
 }
 
 // CHT search (dedup) + record, PDT lookup, issue.
-void berti_tdp::process_sighting(const sighting& s)
+void berti_tdp::process_sighting(const sighting& sight)
 {
-  const auto& c = s.cap;
-  const uint64_t cline = (c.base.to<uint64_t>() + c.offset.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
-  const uint16_t bh = hash16(c.base.to<uint64_t>());
-  if (std::any_of(cht.begin(), cht.end(), [&](const cht_entry& x) { return x.valid && x.base_hash == bh && x.cursor_line == cline; })) {
+  const auto& cap = sight.cap;
+  const uint64_t cursor_line = (cap.base.to<uint64_t>() + cap.offset.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
+  const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
+  auto already_recorded = [&](const auto& table) {
+    return std::any_of(table.begin(), table.end(), [&](const cht_entry& entry) {
+      return entry.valid && entry.base_hash == base_hash && entry.cursor_line == cursor_line
+             && !(TDP_RECUR_HIT_OVERRIDE && sight.source == SRC_TDP_HIT && entry.source == SRC_TDP_FILL);
+    });
+  };
+  if (already_recorded(cht) || (TDP_RECUR_CHT > 0 && already_recorded(cht2))) {
     st_sight_dup++;
     return; // already recorded: neither a new sighting nor a new issue
   }
-  st_sight[s.source]++;
-  const uint16_t key = make_key(s.ip16, c);
-  cht_entry& ce = cht[cht_ptr];
-  cht_ptr = (cht_ptr + 1) % TDP_CHT_SIZE;
-  ce = cht_entry{true, bh, cline, key, 0, intern_->current_cycle(), s.source};
+  st_sight[sight.source]++;
+  const uint16_t key = sight.depth ? static_cast<uint16_t>(sight.ip16) : make_key(sight.ip16, cap); // a chained sighting arrives with its key
+  cht_entry* slot = &cht[cht_ptr];
+  if (TDP_RECUR_CHT > 0 && sight.chained) {
+    slot = &cht2[cht2_ptr];
+    cht2_ptr = (cht2_ptr + 1) % cht2.size();
+  } else
+    cht_ptr = (cht_ptr + 1) % TDP_CHT_SIZE;
+  *slot = cht_entry{true, base_hash, cursor_line, key, 0, intern_->current_cycle(), sight.source};
 
   const bool mshr_ok = intern_->get_mshr_occupancy_ratio() * 100 < MSHR_LIMIT;
-  const uint64_t own_line = s.line_va >> LOG2_BLOCK_SIZE;
+  const uint64_t own_line = sight.line_va >> LOG2_BLOCK_SIZE;
 #if TDP_NOLEARN
-  if (cline != own_line && cheri::overlaps_bounds(champsim::block_number{champsim::address{cline << LOG2_BLOCK_SIZE}}, c.base, cheri::capability_top(c)))
-    issue_tdp(cline, mshr_ok, s.ip16, c);
+  if (cursor_line != own_line && cheri::overlaps_bounds(champsim::block_number{champsim::address{cursor_line << LOG2_BLOCK_SIZE}}, cap.base, cheri::capability_top(cap)))
+    issue_tdp(cursor_line, mshr_ok, sight.ip16, cap, 0);
   return;
 #endif
-  pdt_entry* e = pdt_alloc(key);
-  for (auto& d : e->d) { // the levels set at the end of the previous epoch
-    if (!d.valid || d.status == 0)
+  pdt_entry* own_entry = pdt_alloc(key);
+  pdt_entry* delta_source = own_entry; // the entry whose deltas are used
+#if TDP_RECUR_KEY >= 4
+  // a field type with no confident delta yet borrows the deltas of the sighting the line came through
+  if (sight.fallback != 0 && std::none_of(own_entry->d.begin(), own_entry->d.end(), [](const pdt_delta& delta) { return delta.valid && delta.status != 0; }))
+    if (pdt_entry* parent_entry = pdt_find(sight.fallback); parent_entry != nullptr && parent_entry != own_entry) {
+      delta_source = parent_entry;
+      st_rc_fallback++;
+    }
+#endif
+  for (auto& delta : delta_source->d) { // the levels set at the end of the previous epoch
+    if (!delta.valid || delta.status == 0)
       continue;
-    const uint64_t tline = cline + static_cast<int64_t>(d.delta);
-    if (tline == own_line)
+    const uint64_t target_line = cursor_line + static_cast<int64_t>(delta.delta);
+    if (target_line == own_line)
       continue;
-    if (TDP_BOUNDS && !cheri::overlaps_bounds(champsim::block_number{champsim::address{tline << LOG2_BLOCK_SIZE}}, c.base, cheri::capability_top(c))) {
+    if (TDP_BOUNDS && !cheri::overlaps_bounds(champsim::block_number{champsim::address{target_line << LOG2_BLOCK_SIZE}}, cap.base, cheri::capability_top(cap))) {
       st_tdp_oob++;
       continue;
     }
-    issue_tdp(tline, d.status == 2 && mshr_ok, s.ip16, c);
+#if TDP_RECUR
+    // the probability that the target line is used: the chain's so far times this delta's last-epoch rate
+    // the level from this delta alone: depth 0; no decay; or (decay 2) the sighting's own key, whose rate is already
+    // conditioned on the path that led to it -- only borrowed (fallback) deltas are discounted by the path probability
+    const bool use_own_rate = (sight.depth == 0) || (TDP_RECUR_DECAY == 0) || (TDP_RECUR_DECAY == 2 && delta_source == own_entry);
+    const unsigned prob = use_own_rate ? std::min<unsigned>(delta.last, 16) : (static_cast<unsigned>(sight.prob) * delta.last) / 16;
+    const int level = use_own_rate ? delta.status : (prob >= TDP_TH_L1) ? 2 : (prob >= TDP_TH_L2) ? 1 : 0;
+    if (level == 0) {
+      st_rc_low_prob++;
+      continue;
+    }
+#if TDP_RECUR_KEY == 0 || TDP_RECUR_KEY == 4
+    // the type of the line being fetched: which line of which length of object (from the pointer's bounds); the fill
+    // completes it with the slot index into each found pointer's key
+    const uint16_t target_key = hash16((cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL) ^ ((target_line << LOG2_BLOCK_SIZE) - cap.base.to<uint64_t>()) ^ 0x5bd1e995ULL);
+#elif TDP_RECUR_KEY == 3 || TDP_RECUR_KEY == 5
+    // the line's type as for 0, and the key of the sighting it came through (type within a path)
+    const uint16_t target_key = hash16((static_cast<uint64_t>(key) << 40) ^ (cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL)
+                                       ^ ((target_line << LOG2_BLOCK_SIZE) - cap.base.to<uint64_t>()) ^ 0x5bd1e995ULL);
+#else
+    const uint16_t target_key = key; // the controls carry the parent's key
+#endif
+    if (issue_tdp(target_line, level == 2 && mshr_ok, key, cap, md_make_chain(target_key, sight.depth + 1u, prob)))
+      st_rc_issued[std::min(sight.depth + 1, 7)][level == 2 && mshr_ok]++;
+#else
+    issue_tdp(target_line, delta.status == 2 && mshr_ok, sight.ip16, cap, 0);
+#endif
   }
-  pdt_count_sighting(e);
+  pdt_count_sighting(own_entry);
 }
 
 bool berti_tdp::take_budget()
@@ -1441,42 +1598,127 @@ void berti_tdp::scan_line(uint64_t line_va, uint64_t ip16, uint8_t source, uint3
   for (unsigned slot = 0; slot < cheri::CAPS_PER_CL; slot++) {
     if (!(slot_mask & (1u << slot)))
       continue;
-    auto c = champsim::cap_mem[cpu].load_capability(champsim::address{line_va + slot * cheri::CAP_ALIGNMENT_BYTES});
-    if (!c.has_value() || !c->tag || !cheri::has_load_permissions(c->permissions) || cheri::has_execute_permissions(c->permissions))
+    auto pointer = champsim::cap_mem[cpu].load_capability(champsim::address{line_va + slot * cheri::CAP_ALIGNMENT_BYTES});
+    if (!pointer.has_value() || !pointer->tag || !cheri::has_load_permissions(pointer->permissions) || cheri::has_execute_permissions(pointer->permissions))
       continue; // not a data pointer (code pointers are never prefetched into L1D)
-    if (c->base.to<uint64_t>() + c->offset.to<uint64_t>() == 0)
+    if (pointer->base.to<uint64_t>() + pointer->offset.to<uint64_t>() == 0)
       continue;
-    if (sq.empty() && take_budget()) {
-      process_sighting(sighting{*c, ip16, line_va, source});
-      continue;
-    }
-    if (sq.size() >= TDP_SIGHTQ) {
-      sq.pop_front();
-      st_sq_dropped++;
-    }
-    sq.push_back(sighting{*c, ip16, line_va, source});
-    st_sq_delayed++;
+    sighting found{*pointer, ip16, line_va, source};
+    found.chained = (source == SRC_TDP_HIT);
+    enqueue_sighting(found);
   }
+}
+
+void berti_tdp::enqueue_sighting(const sighting& sight)
+{
+  if (sq.empty() && take_budget()) {
+    process_sighting(sight);
+    return;
+  }
+  if (sq.size() >= TDP_SIGHTQ) {
+    sq.pop_front();
+    st_sq_dropped++;
+  }
+  sq.push_back(sight);
+  st_sq_delayed++;
+}
+
+// TDP_RECUR 1/3: the pointers of a line TDP prefetched, at its fill. Depth, path probability and a 16-bit key (TDP_RECUR_KEY 0:
+// the line's type, from the bounds of the pointer it was fetched through; 1/2: the parent sighting's key) ride in the
+// prefetch's metadata.
+void berti_tdp::scan_tdp_fill(uint64_t line_va, uint32_t fill_metadata, uint32_t cpu)
+{
+  const unsigned depth = md_depth(fill_metadata);
+  if (depth == 0)
+    return;
+#if TDP_RECUR_CREDIT
+  if (rc_outstanding >= TDP_RECUR_CREDIT) { // too many fetched-ahead lines still unused: let the core catch up
+    st_rc_credit_stop++;
+    return;
+  }
+#endif
+#if TDP_RECUR_FEEDBACK
+  if (depth >= rc_limit) {
+#else
+  if (depth >= TDP_RECUR_DEPTH) {
+#endif
+    st_rc_depth_stop++;
+    return;
+  }
+  st_rc_scanned_fill++;
+  st_lines_scanned[SRC_TDP_FILL]++;
+  for (unsigned slot = 0; slot < cheri::CAPS_PER_CL; slot++) {
+    const uint64_t slot_va = line_va + slot * cheri::CAP_ALIGNMENT_BYTES;
+    auto pointer = champsim::cap_mem[cpu].load_capability(champsim::address{slot_va});
+    if (!pointer.has_value() || !pointer->tag || !cheri::has_load_permissions(pointer->permissions) || cheri::has_execute_permissions(pointer->permissions))
+      continue;
+    if (pointer->base.to<uint64_t>() + pointer->offset.to<uint64_t>() == 0)
+      continue;
+    const uint16_t line_key = static_cast<uint16_t>(fill_metadata & MD_IP_MASK);
+    uint16_t key;
+#if TDP_RECUR_KEY == 0 || (TDP_RECUR_KEY >= 3 && TDP_RECUR_KEY <= 5)
+    // the field: the line's type key (the pointed-to object's length and this line's offset in it, computed at issue from
+    // the pointer's bounds) with the slot index -- i.e. which pointer field of which kind of object this is
+    key = hash16((static_cast<uint64_t>(line_key) << 8) ^ (slot + 1) ^ 0x9E3779B97F4A7C15ULL);
+#elif TDP_RECUR_KEY == 1
+    key = line_key; // control: the parent sighting's key
+#else
+    key = hash16((static_cast<uint64_t>(line_key) << 8) ^ (slot + 1) ^ 0x2545F4914F6CDD1DULL); // control: parent key and slot
+#endif
+    sighting found{*pointer, key, line_va, SRC_TDP_FILL};
+#if TDP_RECUR_KEY >= 4
+    found.fallback = static_cast<uint16_t>(latencyt[me]->get_tag(line_va >> LOG2_BLOCK_SIZE)); // the parent's key: Berti's latency-table tag
+#endif
+    found.depth = static_cast<uint8_t>(depth);
+    found.prob = static_cast<uint8_t>(md_prob(fill_metadata));
+    found.chained = true;
+    enqueue_sighting(found);
+  }
+}
+
+bool berti_tdp::pf_line(champsim::address addr, bool fill_l1, uint32_t metadata)
+{
+#if TDP_OBSERVE_ONLY
+  (void)addr; (void)fill_l1; (void)metadata;
+  return false;
+#else
+  return prefetch_line(addr, fill_l1, metadata);
+#endif
+}
+
+bool berti_tdp::pf_line(champsim::address addr, bool fill_l1, uint32_t metadata, const champsim::capability& cap)
+{
+#if TDP_OBSERVE_ONLY
+  (void)addr; (void)fill_l1; (void)metadata; (void)cap;
+  return false;
+#else
+  return prefetch_line(addr, fill_l1, metadata, cap);
+#endif
 }
 
 // A dereference: a tagged demand load that misses L1D or hits a TDP-prefetched line. Credit the line difference to the
 // key of the sighting of the pointer it went through.
 void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool is_miss)
 {
-  const uint16_t bh = hash16(cap.base.to<uint64_t>());
+  const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
   cht_entry* best = nullptr;
   int best_d = 0;
-  for (auto& ce : cht) {
-    if (!ce.valid || ce.base_hash != bh)
-      continue;
-    const int64_t d = static_cast<int64_t>(line) - static_cast<int64_t>(ce.cursor_line);
-    if (d < -TDP_MAX_LINE_DELTA || d > TDP_MAX_LINE_DELTA)
-      continue;
-    if (best == nullptr || std::abs(d) < std::abs(best_d)) { // nearest cursor; on a tie, the oldest
-      best = &ce;
-      best_d = static_cast<int>(d);
+  auto search = [&](auto& table) {
+    for (auto& entry : table) {
+      if (!entry.valid || entry.base_hash != base_hash)
+        continue;
+      const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(entry.cursor_line);
+      if (line_delta < -TDP_MAX_LINE_DELTA || line_delta > TDP_MAX_LINE_DELTA)
+        continue;
+      if (best == nullptr || std::abs(line_delta) < std::abs(best_d)) { // nearest cursor; on a tie, the oldest
+        best = &entry;
+        best_d = static_cast<int>(line_delta);
+      }
     }
-  }
+  };
+  search(cht);
+  if (TDP_RECUR_CHT > 0)
+    search(cht2);
   if (is_miss)
     st_tagged_load_miss++;
   if (best == nullptr)
@@ -1512,3 +1754,166 @@ void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool
 #endif
   pdt_train(best->key, best_d); // a hit on a TDP-prefetched line: the prefetch was timely
 }
+
+#if TDP_CHAIN_STATS
+/******************************************************************************/
+/*        Chain measurement (TDP_CHAIN_STATS; statistics only, not hardware)   */
+/******************************************************************************/
+namespace
+{
+int log2_bucket(uint64_t cycles)
+{
+  int bucket = 0;
+  while (cycles > 1 && bucket < 15) {
+    cycles >>= 1;
+    bucket++;
+  }
+  return bucket;
+}
+constexpr uint64_t CH_WINDOW = 16384; // a parent line older than this (cycles) does not count as a link
+} // namespace
+
+// Every L1D fill: remember the data pointers it holds, by the full base of their target.
+void berti_tdp::ch_fill(uint64_t line, uint8_t kind, uint32_t cpu)
+{
+  const uint64_t now = intern_->current_cycle();
+  if (auto line_it = ch_lines.find(line); line_it != ch_lines.end())
+    line_it->second.pending = false;
+  const uint64_t line_va = line << LOG2_BLOCK_SIZE;
+  for (unsigned slot = 0; slot < cheri::CAPS_PER_CL; slot++) {
+    auto pointer = champsim::cap_mem[cpu].load_capability(champsim::address{line_va + slot * cheri::CAP_ALIGNMENT_BYTES});
+    if (!pointer.has_value() || !pointer->tag || !cheri::has_load_permissions(pointer->permissions) || cheri::has_execute_permissions(pointer->permissions))
+      continue;
+    const uint64_t cursor = pointer->base.to<uint64_t>() + pointer->offset.to<uint64_t>();
+    if (cursor == 0)
+      continue;
+    auto& recent = ch_ptrs[pointer->base.to<uint64_t>()];
+    auto* victim = &recent[0];
+    for (auto& candidate : recent)
+      if (!candidate.valid || candidate.fill_cycle < victim->fill_cycle)
+        victim = &candidate;
+    *victim = ch_ptr{cursor >> LOG2_BLOCK_SIZE, line, now, kind, true};
+  }
+  if (now >= ch_next_prune) { // drop what can no longer be a parent
+    ch_next_prune = now + (1u << 20);
+    for (auto ptr_it = ch_ptrs.begin(); ptr_it != ch_ptrs.end();) {
+      bool live = false;
+      for (auto& recorded : ptr_it->second)
+        live |= recorded.valid && recorded.fill_cycle + CH_WINDOW >= now;
+      ptr_it = live ? std::next(ptr_it) : ch_ptrs.erase(ptr_it);
+    }
+    for (auto line_it = ch_lines.begin(); line_it != ch_lines.end();)
+      line_it = (!line_it->second.pending && line_it->second.first_use + 4 * CH_WINDOW < now) ? ch_lines.erase(line_it) : std::next(line_it);
+  }
+}
+
+// A demand load that would miss without prefetching (a miss, or the first hit on a prefetched line), through `cap`.
+void berti_tdp::ch_demand(uint64_t line, const champsim::capability& cap, bool miss)
+{
+  const uint64_t now = intern_->current_cycle();
+  auto line_it = ch_lines.find(line);
+  if (miss && line_it != ch_lines.end() && line_it->second.pending)
+    return; // the same miss again (MSHR retry or a second load to the line)
+  const ch_ptr* parent = nullptr; // the most recently filled line holding a pointer to this object near this line
+  if (auto ptr_it = ch_ptrs.find(cap.base.to<uint64_t>()); ptr_it != ch_ptrs.end())
+    for (auto& recorded : ptr_it->second) {
+      if (!recorded.valid || recorded.line == line || recorded.fill_cycle > now || recorded.fill_cycle + CH_WINDOW < now)
+        continue;
+      const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(recorded.cursor_line);
+      if (line_delta < -TDP_MAX_LINE_DELTA || line_delta > TDP_MAX_LINE_DELTA)
+        continue;
+      if (parent == nullptr || recorded.fill_cycle > parent->fill_cycle)
+        parent = &recorded;
+    }
+  int depth = 1;
+  const bool in_roi = !intern_->warmup; // counters cover the region of interest only (the maps are kept through warmup)
+  if (parent != nullptr) {
+    auto parent_it = ch_lines.find(parent->line);
+    depth = std::min(8, (parent_it != ch_lines.end() ? parent_it->second.depth : 1) + 1);
+    if (in_roi)
+      (miss ? ch_miss_parent : ch_cov_parent)[parent->kind]++;
+    if (miss && in_roi) {
+      ch_lead_fill[parent->kind][log2_bucket(now - parent->fill_cycle)]++;
+      if (parent->kind == CH_TDP) { // the pointer sat in a line TDP prefetched and never scanned: the chain stopped there
+        ch_stop_lead_fill[log2_bucket(now - parent->fill_cycle)]++;
+        if (parent_it != ch_lines.end() && parent_it->second.first_use >= parent->fill_cycle) {
+          ch_stop_used++;
+          ch_stop_lead_use[log2_bucket(now - parent_it->second.first_use)]++;
+        } else
+          ch_stop_unused++;
+      }
+    }
+  }
+  if (in_roi)
+    (miss ? ch_miss_depth : ch_cov_depth)[depth]++;
+  auto& this_line = (line_it != ch_lines.end()) ? line_it->second : ch_lines[line];
+  this_line.depth = static_cast<uint8_t>(depth);
+  this_line.first_use = now;
+  this_line.pending = miss;
+}
+#endif
+
+#if TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK
+/******************************************************************************/
+/*      Recursion throttles: credit (TDP_RECUR_CREDIT), depth feedback         */
+/******************************************************************************/
+namespace
+{
+constexpr uint32_t FB_EPOCH = 256;   // sampled outcomes per decision
+constexpr unsigned FB_MIN_EVENTS = 16; // outcomes needed at the deepest level to decide
+}
+
+// A depth-tagged TDP line saw its first use: one credit back; a use at its depth for the feedback.
+void berti_tdp::rc_line_used(uint32_t line_metadata, uint64_t line)
+{
+  const unsigned depth = md_depth(line_metadata);
+  if (TDP_RECUR_CREDIT && depth >= 2 && rc_outstanding > 0)
+    rc_outstanding--;
+#if TDP_RECUR_FEEDBACK
+  if (fb_sampled(line)) {
+    if (fb_used[depth] < 255) fb_used[depth]++;
+    fb_tick();
+  }
+#else
+  (void)line;
+#endif
+}
+
+// A depth-tagged TDP line was evicted unused.
+void berti_tdp::rc_line_unused(uint32_t line_metadata, uint64_t line)
+{
+  const unsigned depth = md_depth(line_metadata);
+  if (TDP_RECUR_CREDIT && depth >= 2 && rc_outstanding > 0)
+    rc_outstanding--;
+#if TDP_RECUR_FEEDBACK
+  if (fb_sampled(line)) {
+    if (fb_unused[depth] < 255) fb_unused[depth]++;
+    fb_tick();
+  }
+#else
+  (void)line;
+#endif
+}
+
+// Every FB_EPOCH sampled outcomes, judge the deepest level fetched (the limit): mostly used -> one deeper,
+// mostly unused -> one shallower. Then age the counters.
+void berti_tdp::fb_tick()
+{
+  if (++fb_events < FB_EPOCH)
+    return;
+  st_rc_limit_epochs[rc_limit]++;
+  const unsigned used = fb_used[rc_limit], outcomes = fb_used[rc_limit] + fb_unused[rc_limit];
+  if (outcomes >= FB_MIN_EVENTS && 4 * used >= 3 * outcomes && rc_limit < TDP_RECUR_DEPTH) {
+    rc_limit++;
+    st_rc_fb_up++;
+  } else if (outcomes >= FB_MIN_EVENTS && 2 * used < outcomes && rc_limit > 2) {
+    rc_limit--;
+    st_rc_fb_down++;
+  }
+  for (int depth = 0; depth < 8; depth++) {
+    fb_used[depth] >>= 1;
+    fb_unused[depth] >>= 1;
+  }
+  fb_events = 0;
+}
+#endif

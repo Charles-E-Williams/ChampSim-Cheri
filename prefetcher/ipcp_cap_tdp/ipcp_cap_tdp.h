@@ -33,7 +33,7 @@
 
 #include "champsim.h"
 #include "cheri.h"
-#include "cheri_tdp.h"
+#include "../tdp/cheri_tdp.h"
 #include "ipcp_cap_tdp_vars.h"
 #include "modules.h"
 
@@ -175,7 +175,7 @@ private:
   uint64_t stat_oob_used[OOB_CLASSES] = {};
   uint64_t stat_oob_unused[OOB_CLASSES] = {};
 
-  // tag-directed prefetching (TDP) (inc/cheri_tdp.h)
+  // tag-directed prefetching (TDP) (prefetcher/tdp/cheri_tdp.h)
   cheri_tdp::engine tdp;
   uint32_t tdp_md = 0; // TDP key bits for the prefetches of the current access
 

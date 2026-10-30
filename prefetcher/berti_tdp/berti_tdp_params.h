@@ -134,5 +134,41 @@ namespace berti_tdp_space
   # define TDP_TIMELY                    (0)   // 1: credit a dereference miss only if its sighting was >= 1 fetch
                                               //    latency earlier (Berti's timeliness rule)
   # define TDP_PENDING                   (64)  // TDP_TIMELY: dereference misses waiting for their fill latency
+
+  // Recursion. The defaults are the proposed recursion: TDP_RECUR 1, TDP_RECUR_KEY 5, TDP_RECUR_DECAY 2,
+  // TDP_RECUR_DEPTH 7 (shared CHT). TDP_RECUR 0 gives the depth-1 design above, bit for bit.
+  // Its controls without capability information: TDP_RECUR_KEY 6 (no bounds), TDP_RECUR_CTRL_FILL_NL 1 (no pointers).
+  # define TDP_RECUR                     (1)   // which lines continue a chain: 0 none (depth 1);
+                                              //   1 TDP's own L1D fills, scanned at the fill (no IP: key from TDP_RECUR_KEY);
+                                              //   2 a TDP-prefetched line at its first demand hit, keyed by the hitting load's IP;
+                                              //   3 both
+  # define TDP_RECUR_KEY                 (5)   // key of a pointer found in a TDP fill (TDP_RECUR 1/3):
+                                              //   0 hash(length of the object the line was fetched for, the line's offset in it,
+                                              //     the slot) -- the field's identity, from the parent pointer's bounds (CHERI);
+                                              //   1 control: the parent sighting's key (no bounds);
+                                              //   2 control: hash(parent key, slot index in the line) (no bounds)
+                                              //   3 hash(0's type, the parent sighting's key) (CHERI: type within a path)
+                                              //   4 0's type key; while it has no confident delta, the parent sighting's deltas
+                                              //   5 3's key, with 4's fallback to the parent sighting's deltas
+                                              //   6 control for 5: 2's key (no bounds), with 4's fallback
+  # define TDP_RECUR_DEPTH               (7)   // TDP_RECUR 1/3: TDP fills at this depth are not scanned (depth 1 = first hop);
+                                              //   at most 7 (the metadata's depth field saturates at 7, so 8+ means no limit)
+  # define TDP_RECUR_DECAY               (2)   // TDP_RECUR 1/3: 1 a hop's level comes from the chain's probability (product of the
+                                              //   deltas' last-epoch rates); 0 each hop's own delta level, as for depth 1;
+                                              //   2 own level for the sighting's own key, product only for fallback deltas
+  # define TDP_RECUR_CREDIT              (0)   // n > 0: stop scanning TDP fills while n or more lines fetched by recursion (depth >= 2)
+                                              //   sit in L1D unused; scanning resumes as they are used or evicted
+  # define TDP_RECUR_FEEDBACK            (0)   // 1: learn the depth limit (2 .. TDP_RECUR_DEPTH, start 4) from how often the deepest
+                                              //   level's fills are used, counted in 8 of the 64 L1D sets
+  # define TDP_RECUR_HIT_OVERRIDE        (0)   // 1 (TDP_RECUR 3): a first-hit sighting is not dropped as a duplicate of a pointer
+                                              //   that only the fill-time scan has recorded
+  # define TDP_RECUR_CHT                 (0)   // 0: recursion's sightings share the CHT; n > 0: they go to their own n-entry FIFO
+  # define TDP_RECUR_CTRL_NL             (0)   // n > 0: control for TDP_RECUR 2 without pointers: at the first demand hit on a
+                                              //   TDP-prefetched line, prefetch its next n lines into L1D instead of scanning it
+  # define TDP_RECUR_CTRL_FILL_NL        (0)   // n > 0: control for TDP_RECUR 1 without pointers: at each TDP fill, prefetch the
+                                              //   filled line's next n lines (L1D if the MSHR allows) instead of scanning it
+  // Measurement only (no effect on timing)
+  # define TDP_CHAIN_STATS               (0)   // 1: dependent-miss chains, lead times and stopped chains
+  # define TDP_OBSERVE_ONLY              (0)   // 1: Berti and TDP issue nothing (a no-prefetching run with TDP's statistics)
 };
 # endif
