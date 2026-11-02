@@ -41,6 +41,7 @@
 #include "instruction.h"
 #include "modules.h"
 #include "operable.h"
+#include "deref_class.h"
 #include "register_allocator.h"
 #include "util/lru_table.h"
 #include "util/to_underlying.h"
@@ -71,6 +72,7 @@ struct LSQ_ENTRY : champsim::program_ordered<LSQ_ENTRY> {
   std::array<uint8_t, 2> asid = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
   champsim::capability auth_cap{};
   champsim::capability transferred_cap{}; 
+  champsim::deref_class deref_class{champsim::deref_class::NOT_PTR};
 
   bool fetch_issued = false;
 
@@ -114,6 +116,9 @@ public:
   bool warned_untagged_auth_store = false;
   bool warned_auth_cap_va_out_of_bounds = false;
   void set_auth_cap_cursor(champsim::capability& cap, champsim::address va);
+
+  // Classifies each load by whether its authorising capability was loaded from memory (program order)
+  champsim::deref_tracker deref_classifier{};
 
   // instruction buffer
   struct dib_shift {

@@ -186,6 +186,10 @@ bool O3_CPU::do_predict_branch(ooo_model_instr& arch_instr)
 
 bool O3_CPU::do_init_instruction(ooo_model_instr& arch_instr)
 {
+  // Reads the architectural source registers (to learn the stack's bounds), so it runs before the warmup clear
+  if (champsim::deref_stats_enabled)
+    arch_instr.deref_class = deref_classifier.observe(arch_instr);
+
   // fast warmup eliminates register dependencies between instructions branch predictor, cache contents, and prefetchers are still warmed up
   if (warmup) {
     arch_instr.source_registers.clear();
@@ -511,6 +515,7 @@ void O3_CPU::do_memory_scheduling(ooo_model_instr& instr)
     auto q_entry = std::find_if_not(std::begin(LQ), std::end(LQ), [](const auto& lq_entry) { return lq_entry.has_value(); });
     assert(q_entry != std::end(LQ));
     q_entry->emplace(smem, instr.instr_id, instr.ip, instr.asid, instr.auth_cap, instr.transferred_cap); // add it to the load queue
+    (*q_entry)->deref_class = instr.deref_class;
 
 
     // Check for forwarding
@@ -654,6 +659,7 @@ bool O3_CPU::execute_load(const LSQ_ENTRY& lq_entry)
   data_packet.instr_id = lq_entry.instr_id;
   data_packet.ip = lq_entry.ip;
   data_packet.cap = lq_entry.auth_cap;  
+  data_packet.deref_class = lq_entry.deref_class;
 
   if (!data_packet.cap.tag) {
     ++sim_stats.untagged_auth_loads;

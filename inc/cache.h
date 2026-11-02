@@ -80,6 +80,7 @@ class CACHE : public champsim::operable
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
     bool is_instr = false;
+    champsim::deref_class deref_class = champsim::deref_class::NOT_PTR;
     // Issuing capability of this cache's own prefetch (set in prefetch_line)
     cap_size_coverage_events pf_cap_class = cap_size_coverage_events::UNTAGGED;
     champsim::address pf_cap_base{};

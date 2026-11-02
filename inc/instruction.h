@@ -31,6 +31,7 @@
 #include "chrono.h"
 #include "trace_instruction.h"
 #include "cheri.h"
+#include "deref_class.h"
 
 // branch types
 enum branch_type {
@@ -112,6 +113,7 @@ struct ooo_model_instr : champsim::program_ordered<ooo_model_instr> {
   champsim::capability transferred_cap{};
   champsim::cap_op_type cap_op{champsim::cap_op_type::NONE};
   bool is_presimpoint = false;
+  champsim::deref_class deref_class{champsim::deref_class::NOT_PTR}; // how this instruction's load address was produced
 
   branch_type branch{NOT_BRANCH};
   champsim::address branch_target{};

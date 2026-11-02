@@ -19,7 +19,8 @@ uint32_t tdp::prefetcher_cache_fill(champsim::address addr, champsim::address ip
 {
   if (evicted_addr == champsim::address{} && way == intern_->NUM_WAY)
     return metadata_in; // a dropped fill (as berti_tdp treats it)
-  engine.on_fill(*this, champsim::block_number{addr}.to<uint64_t>(), ip.to<uint64_t>(), cpu, prefetch, metadata_in, useless, metadata_evict);
+  engine.on_fill(*this, champsim::block_number{addr}.to<uint64_t>(), ip.to<uint64_t>(), cpu, prefetch, metadata_in, useless, metadata_evict,
+                 champsim::block_number{evicted_addr}.to<uint64_t>());
   return metadata_in;
 }
 

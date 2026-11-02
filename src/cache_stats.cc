@@ -42,6 +42,11 @@ cache_stats operator-(cache_stats lhs, cache_stats rhs)
   result.pf_useful_late_bounds_unknown_by_cap_size = lhs.pf_useful_late_bounds_unknown_by_cap_size - rhs.pf_useful_late_bounds_unknown_by_cap_size;
   result.pf_useless_bounds_unknown_by_cap_size = lhs.pf_useless_bounds_unknown_by_cap_size - rhs.pf_useless_bounds_unknown_by_cap_size;
   
+  result.deref_access = lhs.deref_access - rhs.deref_access;
+  result.deref_miss = lhs.deref_miss - rhs.deref_miss;
+  result.deref_cov_timely = lhs.deref_cov_timely - rhs.deref_cov_timely;
+  result.deref_cov_late = lhs.deref_cov_late - rhs.deref_cov_late;
+
   result.total_miss_latency_cycles = lhs.total_miss_latency_cycles - rhs.total_miss_latency_cycles;
 
   return result;

@@ -122,7 +122,7 @@ auto CACHE::operator=(CACHE&& other) -> CACHE&
 CACHE::tag_lookup_type::tag_lookup_type(const request_type& req, bool local_pref, bool skip)
     : address(req.address), v_address(req.v_address), data(req.data), ip(req.ip), instr_id(req.instr_id), pf_metadata(req.pf_metadata), cpu(req.cpu),
       type(req.type), prefetch_from_this(local_pref), skip_fill(skip), is_translated(req.is_translated), cap(req.cap), is_instr(req.is_instr), 
-      instr_depend_on_me(req.instr_depend_on_me)
+      deref_class(req.deref_class), instr_depend_on_me(req.instr_depend_on_me)
 {
 }
 
@@ -407,8 +407,16 @@ bool CACHE::try_hit(const tag_lookup_type& handle_pkt)
   impl_update_replacement_state(handle_pkt.cpu, get_set_index(handle_pkt.address), way_idx, module_address(handle_pkt), handle_pkt.ip, {}, handle_pkt.type,
                                 hit);
 
+  const bool demand_data_load = handle_pkt.type == access_type::LOAD && !handle_pkt.is_instr;
+  const deref_key demand_key{handle_pkt.deref_class, handle_pkt.cpu};
+
   if (hit) {
     sim_stats.hits.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+    if (demand_data_load) {
+      sim_stats.deref_access.increment(demand_key);
+      if (useful_prefetch)
+        sim_stats.deref_cov_timely.increment(demand_key);
+    }
     if (handle_pkt.prefetch_from_this)
       sim_stats.pf_redundant_by_cap_size.increment(pf_cap_key{handle_pkt.pf_cap_class, handle_pkt.cpu});
 
@@ -481,6 +489,7 @@ auto CACHE::mshr_and_forward_packet(const tag_lookup_type& handle_pkt) -> std::p
   fwd_pkt.instr_id = handle_pkt.instr_id;
   fwd_pkt.ip = handle_pkt.ip;
   fwd_pkt.is_instr = handle_pkt.is_instr;
+  fwd_pkt.deref_class = handle_pkt.deref_class;
 
   fwd_pkt.instr_depend_on_me = handle_pkt.instr_depend_on_me;
   fwd_pkt.response_requested = (!handle_pkt.prefetch_from_this || !handle_pkt.skip_fill);
@@ -521,6 +530,8 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
         record_useful_prefetch(sim_stats.pf_useful_late_by_cap_size, fill_entry->pf_cap_class, fill_entry->pf_cap_base, fill_entry->cpu, handle_pkt.cap);
         count_by_bounds(fill_entry->pf_bounds, sim_stats.pf_useful_late_oob_by_cap_size, sim_stats.pf_useful_late_bounds_unknown_by_cap_size,
                         pf_cap_key{fill_entry->pf_cap_class, fill_entry->cpu});
+        if (handle_pkt.type == access_type::LOAD && !handle_pkt.is_instr)
+          sim_stats.deref_cov_late.increment(deref_key{handle_pkt.deref_class, handle_pkt.cpu});
       }
     }
 
@@ -547,6 +558,10 @@ bool CACHE::handle_miss(const tag_lookup_type& handle_pkt)
   }
 
   sim_stats.misses.increment(std::pair{handle_pkt.type, handle_pkt.cpu});
+  if (handle_pkt.type == access_type::LOAD && !handle_pkt.is_instr) {
+    sim_stats.deref_access.increment(deref_key{handle_pkt.deref_class, handle_pkt.cpu});
+    sim_stats.deref_miss.increment(deref_key{handle_pkt.deref_class, handle_pkt.cpu});
+  }
   
   // CHERI CACHE STATS
   if (handle_pkt.cap.tag)
@@ -1164,6 +1179,10 @@ void CACHE::end_phase(unsigned finished_cpu)
   roi_stats.pf_useful_timely_demand_bounds_unknown_by_cap_size = sim_stats.pf_useful_timely_demand_bounds_unknown_by_cap_size;
   roi_stats.pf_useful_late_bounds_unknown_by_cap_size = sim_stats.pf_useful_late_bounds_unknown_by_cap_size;
   roi_stats.pf_useless_bounds_unknown_by_cap_size = sim_stats.pf_useless_bounds_unknown_by_cap_size;
+  roi_stats.deref_access = sim_stats.deref_access;
+  roi_stats.deref_miss = sim_stats.deref_miss;
+  roi_stats.deref_cov_timely = sim_stats.deref_cov_timely;
+  roi_stats.deref_cov_late = sim_stats.deref_cov_late;
 
 
   for (auto* ul : upper_levels) {

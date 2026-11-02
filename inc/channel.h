@@ -28,6 +28,7 @@
 #include "address.h"
 #include "champsim.h"
 #include "cheri.h"
+#include "deref_class.h"
 
 namespace champsim
 {
@@ -53,6 +54,7 @@ class channel
     uint8_t asid[2] = {std::numeric_limits<uint8_t>::max(), std::numeric_limits<uint8_t>::max()};
     champsim::capability cap{};
     bool is_instr = false;
+    champsim::deref_class deref_class{champsim::deref_class::NOT_PTR}; // demand loads: how the address was produced
     access_type type{access_type::LOAD};
 
     uint32_t pf_metadata = 0;

@@ -441,6 +441,30 @@ std::vector<std::string> champsim::plain_printer::format(CACHE::stats_type stats
                   {"OOB Used", "Late"}, {"OOB Evicted", "Unused"}, {"OOB % Of", "Fills"}, {"OOB", "Accuracy"},
                   {"In-Bounds", "Accuracy"}, {"Unknown", "Accuracy"}},
                  bounds_rows);
+
+      // Demand data loads by how their address was produced (deref_class.h). Misses include demands merged into an
+      // in-flight fill, so late-covered loads are misses too. Without this cache's prefetcher they would all have missed:
+      // Covered = (On Time + Late) / (Misses + On Time).
+      long deref_miss_total = 0;
+      for (auto load_class : champsim::deref_class_all)
+        deref_miss_total += stats.deref_miss.value_or(deref_key{load_class, cpu}, 0L);
+      if (champsim::deref_stats_enabled && (deref_miss_total > 0 || stats.deref_access.value_or(deref_key{champsim::deref_class::NOT_PTR, cpu}, 0L) > 0)) {
+        lines.push_back(fmt::format("cpu{}->{} Demand Loads by Dereference Class (ROI)", cpu, stats.name));
+        lines.push_back(fmt::format("  {:<9s} {:>12s} {:>12s} {:>12s} {:>12s} {:>12s} {:>12s}", "Class", "Accesses", "Misses", "% Of Misses",
+                                    "Cov On Time", "Cov Late", "Covered"));
+        for (auto load_class : champsim::deref_class_all) {
+          const deref_key key{load_class, cpu};
+          const long accesses = stats.deref_access.value_or(key, 0L);
+          const long misses = stats.deref_miss.value_or(key, 0L);
+          const long covered_timely = stats.deref_cov_timely.value_or(key, 0L);
+          const long covered_late = stats.deref_cov_late.value_or(key, 0L);
+          lines.push_back(fmt::format("  {:<9s} {:>12d} {:>12d} {:>12s} {:>12d} {:>12d} {:>12s}",
+                                      champsim::deref_class_names.at(static_cast<std::size_t>(load_class)), accesses, misses,
+                                      pct(misses, deref_miss_total), covered_timely, covered_late,
+                                      pct(covered_timely + covered_late, misses + covered_timely)));
+        }
+        lines.emplace_back("");
+      }
     }
 
     uint64_t total_downstream_demands = total_fill - stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});

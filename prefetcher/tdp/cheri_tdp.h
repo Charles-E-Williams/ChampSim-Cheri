@@ -17,6 +17,8 @@
 //   max_depth      1 = no recursion; up to 7 (the depth field's maximum)
 //   berti_ip_key   depth-0 key: false = 11-bit hash of the IP; true = Berti's 16-bit IP hash
 //   recent_filter  true = skip targets among the last 32 issued; false = leave duplicates to the cache's tag and MSHR check
+//   page_stats     statistics only: same-virtual-page counts of TDP targets (tdp_page_stats.h); the host must pass the
+//                  evicted line to on_fill
 //
 // Host prefetcher (at a virtual_prefetch L1D):
 //   cache_operate: engine.on_operate(...) for every access, and OR engine.tag_prefetch(ip) into the metadata of the
@@ -42,6 +44,7 @@
 #include "capability_memory.h"
 #include "cheri_prefetch_utils.h"
 #include "modules.h"
+#include "tdp_page_stats.h"
 
 namespace cheri_tdp
 {
@@ -74,6 +77,7 @@ struct settings {
   unsigned max_depth = 1;    // 1 = no recursion
   bool berti_ip_key = false; // depth-0 key: false = 11-bit IP hash, true = Berti's 16-bit IP hash
   bool recent_filter = true; // skip targets among the last RECENT_TARGETS issued
+  bool page_stats = false;   // statistics only: same-page counts of TDP targets
 };
 
 inline uint16_t hash16(uint64_t value)
@@ -145,6 +149,7 @@ class engine
   } st;
   bool in_warmup = true;
   std::unordered_map<uint64_t, uint16_t> parent_tag_at_issue; // statistics only: parent slot's tag when each line was prefetched
+  tdp_page_stats::recorder page_stats;                         // statistics only (settings.page_stats)
 
   bool recursive() const { return config.max_depth > 1; }
   static unsigned md_depth(uint32_t metadata) { return (metadata >> MD_DEPTH_SHIFT) & 0x7; }
@@ -223,8 +228,9 @@ class engine
     victim->conf = 1;
   }
 
-  // Issue one TDP prefetch. Returns whether it went out.
-  bool issue(const champsim::modules::prefetcher& host, uint64_t target_line, bool fill_l1d, uint32_t metadata, const champsim::capability& cap)
+  // Issue one TDP prefetch. Returns whether it went out. pointer_line, depth: statistics only (page_stats).
+  bool issue(const champsim::modules::prefetcher& host, uint64_t target_line, bool fill_l1d, uint32_t metadata, const champsim::capability& cap,
+             uint64_t pointer_line, unsigned depth)
   {
     if (config.recent_filter && std::find(recent_targets.begin(), recent_targets.end(), target_line) != recent_targets.end()) {
       st.recent_skip++;
@@ -239,6 +245,8 @@ class engine
       recent_next = (recent_next + 1) % RECENT_TARGETS;
     }
     (fill_l1d ? st.issued_l1d : st.issued_l2)++;
+    if (config.page_stats)
+      page_stats.on_issue(target_line, pointer_line, depth, fill_l1d);
     return true;
   }
 
@@ -279,7 +287,8 @@ class engine
       if (target_line == sight.own_line)
         continue;
       if (!recursive()) {
-        issue(host, target_line, delta.status == 2 && mshr_ok, MD_TDP | MD_VALID | (static_cast<uint32_t>(sight.key & KEY_MASK) << MD_KEY_SHIFT), cap);
+        issue(host, target_line, delta.status == 2 && mshr_ok, MD_TDP | MD_VALID | (static_cast<uint32_t>(sight.key & KEY_MASK) << MD_KEY_SHIFT), cap,
+              sight.own_line, sight.depth + 1u);
         continue;
       }
       // the probability that the target line is used: this key's own rate (depth 0, or a trained field key, whose rate
@@ -296,7 +305,7 @@ class engine
       const uint16_t target_key = hash16((static_cast<uint64_t>(sight.key) << 40) ^ (cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL)
                                          ^ ((target_line << LOG2_BLOCK_SIZE) - cap.base.to<uint64_t>()) ^ 0x5bd1e995ULL);
       const bool fill_l1d = (level == 2) && mshr_ok;
-      if (!issue(host, target_line, fill_l1d, md_make_chain(target_key, sight.depth + 1u, prob, own_slot), cap))
+      if (!issue(host, target_line, fill_l1d, md_make_chain(target_key, sight.depth + 1u, prob, own_slot), cap, sight.own_line, sight.depth + 1u))
         continue;
       st.by_depth_issued[std::min<unsigned>(sight.depth + 1u, DEPTH_FIELD_MAX)][fill_l1d]++;
       if (fill_l1d)
@@ -432,19 +441,23 @@ public:
       st.useful++;
       if (recursive())
         st.by_depth_useful[md_depth(metadata_hit)]++;
+      if (config.page_stats)
+        page_stats.on_used(line);
     }
     if (!cache_hit || tdp_hit)
       train(line, cap, !cache_hit);
   }
 
-  // Every fill. Scans the line's capability slots: what its tags and data carry.
+  // Every fill. Scans the line's capability slots: what its tags and data carry. evicted_line: statistics only (page_stats).
   void on_fill(const champsim::modules::prefetcher& host, uint64_t line, uint64_t ip, uint32_t cpu, bool prefetch, uint32_t metadata_in, bool useless,
-               uint32_t metadata_evict)
+               uint32_t metadata_evict, uint64_t evicted_line = 0)
   {
     if (useless && (metadata_evict & MD_TDP)) {
       st.useless++;
       if (recursive())
         st.by_depth_useless[md_depth(metadata_evict)]++;
+      if (config.page_stats)
+        page_stats.on_unused_eviction(evicted_line);
     }
     if (!prefetch) {
       if (ip != 0)
@@ -453,6 +466,8 @@ public:
     }
     if (metadata_in & MD_TDP) {
       st.fills++;
+      if (config.page_stats)
+        page_stats.on_tdp_fill(line);
       if (recursive()) {
         st.by_depth_fills[md_depth(metadata_in)]++;
         scan_tdp_fill(host, line, metadata_in, cpu);
@@ -472,6 +487,7 @@ public:
     if (in_warmup && !host.intern_->warmup) { // statistics cover the region of interest only
       in_warmup = false;
       st = stats{};
+      page_stats.reset_counts();
     }
   }
 
@@ -489,6 +505,8 @@ public:
     out << "TDP TRAIN " << st.train << " TAGGED_LOAD_MISSES " << st.tagged_load_miss << std::endl;
     out << "TDP ISSUED L1 " << st.issued_l1d << " L2 " << st.issued_l2 << " PQ_FULL " << st.pq_full << " RECENT_SKIP " << st.recent_skip << std::endl;
     out << "TDP FILLS " << st.fills << " USEFUL " << st.useful << " USELESS " << st.useless << std::endl;
+    if (config.page_stats)
+      page_stats.print(out, "tdp_engine");
     if (!recursive())
       return;
     out << "TDP RECUR depth_stop " << st.depth_stop << " low_prob_skip " << st.low_prob << " fallback " << st.fallback << " fallback_reused_slot "

@@ -18,7 +18,7 @@
 
 class tdp : public champsim::modules::prefetcher
 {
-  cheri_tdp::engine engine{cheri_tdp::settings{7, true, false}}; // max_depth, berti_ip_key, recent_filter
+  cheri_tdp::engine engine{cheri_tdp::settings{4, true, false, true}}; // max_depth, berti_ip_key, recent_filter, page_stats
 
 public:
   using prefetcher::prefetcher;

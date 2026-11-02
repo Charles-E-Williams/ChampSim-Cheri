@@ -9,6 +9,7 @@
 
 #include "channel.h"
 #include "event_counter.h"
+#include "deref_class.h"
 
 enum class cap_size_coverage_events : uint8_t {
   B_0_128B = 0, // 0–128B
@@ -71,6 +72,7 @@ inline cap_size_coverage_events classify_capability(const champsim::capability& 
 using cap_dist_key = std::tuple<cap_size_coverage_events, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
 using cl_cap_key = std::tuple<unsigned, access_type, std::remove_cv_t<decltype(NUM_CPUS)>>;
 using pf_cap_key = std::pair<cap_size_coverage_events, std::remove_cv_t<decltype(NUM_CPUS)>>; // (issuing capability's size class, cpu of the prefetch)
+using deref_key = std::pair<champsim::deref_class, std::remove_cv_t<decltype(NUM_CPUS)>>;
 
 // Where a prefetched line lies relative to the object of the capability on its packet, decided at issue
 enum class pf_bounds_type : uint8_t { IN, OOB, UNKNOWN };
@@ -124,6 +126,13 @@ struct cache_stats {
   champsim::stats::event_counter<pf_cap_key> pf_useful_timely_demand_bounds_unknown_by_cap_size = {};
   champsim::stats::event_counter<pf_cap_key> pf_useful_late_bounds_unknown_by_cap_size = {};
   champsim::stats::event_counter<pf_cap_key> pf_useless_bounds_unknown_by_cap_size = {};
+
+  // Demand data loads (LOAD, not instruction fetch) by how their address was produced (deref_class.h).
+  // access = hits + misses; covered = hit a block this cache prefetched (timely) or merged into its in-flight prefetch (late).
+  champsim::stats::event_counter<deref_key> deref_access = {};
+  champsim::stats::event_counter<deref_key> deref_miss = {};
+  champsim::stats::event_counter<deref_key> deref_cov_timely = {};
+  champsim::stats::event_counter<deref_key> deref_cov_late = {};
 };
 
 cache_stats operator-(cache_stats lhs, cache_stats rhs);

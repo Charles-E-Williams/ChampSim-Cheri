@@ -95,6 +95,28 @@ void to_json(nlohmann::json& j, const CACHE::stats_type& stats)
     statsmap.emplace("prefetch by capability size", by_size_json);
   }
 
+  // Demand data loads by dereference class: {counter: {class: [per-cpu raw counts]}}
+  if (champsim::deref_stats_enabled) {
+    const std::array<std::pair<const char*, const champsim::stats::event_counter<deref_key>*>, 4> by_deref{{
+        {"access", &stats.deref_access},
+        {"miss", &stats.deref_miss},
+        {"covered timely", &stats.deref_cov_timely},
+        {"covered late", &stats.deref_cov_late},
+    }};
+    std::map<std::string, nlohmann::json> by_deref_json;
+    for (const auto& [counter_name, counter] : by_deref) {
+      std::map<std::string, std::vector<long>> per_class;
+      for (auto load_class : champsim::deref_class_all) {
+        std::vector<long> per_cpu;
+        for (std::size_t cpu = 0; cpu < NUM_CPUS; ++cpu)
+          per_cpu.push_back(counter->value_or(deref_key{load_class, cpu}, 0L));
+        per_class.emplace(champsim::deref_class_names.at(static_cast<std::size_t>(load_class)), per_cpu);
+      }
+      by_deref_json.emplace(counter_name, per_class);
+    }
+    statsmap.emplace("demand loads by dereference class", by_deref_json);
+  }
+
   uint64_t total_downstream_demands = stats.fill.total();
   for (std::size_t cpu = 0; cpu < NUM_CPUS; ++cpu)
     total_downstream_demands -= stats.fill.value_or(std::pair{access_type::PREFETCH, cpu}, fill_value_type{});
