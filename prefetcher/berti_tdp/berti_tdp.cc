@@ -926,13 +926,13 @@ void berti_tdp::prefetcher_initialize()
   others++;
 
   std::cout << "Berti Prefetcher" << std::endl;
-  std::cout << "Berti-TDP: ENABLE=" << TDP_ENABLE << " CHT=" << TDP_CHT_SIZE << " PDT=" << TDP_PDT_SIZE << "x" << TDP_PDT_DELTAS
+  std::cout << "Berti-TDP: ENABLE=" << TDP_ENABLE << " CHT=" << TDP_CHT_SETS << "x" << TDP_CHT_WAYS << " PDT=" << TDP_PDT_SETS << "x" << TDP_PDT_WAYS << "x" << TDP_PDT_DELTAS
             << " EPOCH=" << TDP_EPOCH << " TH_L1=" << TDP_TH_L1 << " TH_L2=" << TDP_TH_L2 << " SIGHTQ=" << TDP_SIGHTQ
             << " SIGHT_PER_CYCLE=" << TDP_SIGHT_PER_CYCLE << " SIGHT_FILL=" << TDP_SIGHT_FILL << " SIGHT_LOAD_HIT=" << TDP_SIGHT_LOAD_HIT
             << " KEY_LEN=" << TDP_KEY_LEN << " BOUNDS=" << TDP_BOUNDS << " NOLEARN=" << TDP_NOLEARN << " TIMELY=" << TDP_TIMELY << std::endl;
 #if TDP_RECUR || TDP_RECUR_CTRL_NL || TDP_RECUR_CTRL_FILL_NL || TDP_CHAIN_STATS || TDP_OBSERVE_ONLY
   std::cout << "Berti-TDP recursion: RECUR=" << TDP_RECUR << " RECUR_KEY=" << TDP_RECUR_KEY << " RECUR_DEPTH=" << TDP_RECUR_DEPTH << " RECUR_DECAY=" << TDP_RECUR_DECAY
-            << " RECUR_CHT=" << TDP_RECUR_CHT << " RECUR_CTRL_NL=" << TDP_RECUR_CTRL_NL << " RECUR_CTRL_FILL_NL=" << TDP_RECUR_CTRL_FILL_NL << " CHAIN_STATS=" << TDP_CHAIN_STATS
+            << " RECUR_CHT=" << TDP_RECUR_CHT_SETS << "x" << TDP_RECUR_CHT_WAYS << " RECUR_CTRL_NL=" << TDP_RECUR_CTRL_NL << " RECUR_CTRL_FILL_NL=" << TDP_RECUR_CTRL_FILL_NL << " CHAIN_STATS=" << TDP_CHAIN_STATS
             << " OBSERVE_ONLY=" << TDP_OBSERVE_ONLY << std::endl;
 #endif
   //intern_->internal_PQ.set_timeout(1500);
@@ -994,6 +994,12 @@ void berti_tdp::prefetcher_cycle_operate()
 #if TDP_ENABLE
   drain_sightings();
 #endif
+#if TDP_PAGE_STATS
+  if (page_stats_in_warmup && !intern_->warmup) { // region of interest only
+    page_stats_in_warmup = false;
+    page_stats.reset_counts();
+  }
+#endif
 #if TDP_RECUR || TDP_RECUR_CTRL_NL || TDP_RECUR_CTRL_FILL_NL
   if (rc_in_warmup && !intern_->warmup) { // recursion statistics cover the region of interest only
     rc_in_warmup = false;
@@ -1004,6 +1010,17 @@ void berti_tdp::prefetcher_cycle_operate()
     st_rc_scanned_fill = st_rc_scanned_hit = st_rc_depth_stop = st_rc_low_prob = st_rc_ctrl = st_rc_fallback = 0;
     st_rc_credit_stop = st_rc_fb_up = st_rc_fb_down = 0;
     std::fill(std::begin(st_rc_limit_epochs), std::end(st_rc_limit_epochs), 0);
+#if TDP_PDT_STATS
+    std::fill(&st_pdt_lookup[0][0], &st_pdt_lookup[0][0] + 6, 0);
+    std::fill(&st_pdt_evict[0][0][0], &st_pdt_evict[0][0][0] + 8, 0);
+    std::fill(std::begin(st_pdt_epochs), std::end(st_pdt_epochs), 0);
+    std::fill(std::begin(st_pdt_epochs_level), std::end(st_pdt_epochs_level), 0);
+#endif
+#if TDP_QUEUE_STATS
+    std::fill(&st_q_issued[0][0], &st_q_issued[0][0] + 6, 0);
+    std::fill(&st_q_full[0][0], &st_q_full[0][0] + 6, 0);
+    std::fill(&st_q_resident[0][0], &st_q_resident[0][0] + 6, 0);
+#endif
   }
 #endif
 }
@@ -1043,6 +1060,9 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
     const bool tdp_hit = cache_hit && useful_prefetch && (metadata_hit & MD_TDP);
     if (!cache_hit || tdp_hit) train_deref(line_addr.to<uint64_t>(), cap, !cache_hit);
     st_tdp_useful += tdp_hit;
+#if TDP_PAGE_STATS
+    if (tdp_hit) page_stats.on_used(line_addr.to<uint64_t>());
+#endif
 #if TDP_CHAIN_STATS
     if (!cache_hit || useful_prefetch) ch_demand(line_addr.to<uint64_t>(), cap, !cache_hit);
 #endif
@@ -1141,7 +1161,11 @@ uint32_t berti_tdp::prefetcher_cache_operate(champsim::address addr, champsim::a
     if (i.rpl == BERTI_L1 && mshr_load >= MSHR_LIMIT) pf_to_l2_bc_mshr++; 
     if (fill_this_level) pf_to_l1++;
     else pf_to_l2++;
-    if (pf_line(p_addr, fill_this_level, md_out))
+    const bool berti_accepted = pf_line(p_addr, fill_this_level, md_out);
+#if TDP_QUEUE_STATS
+    q_count(0, p_b_addr.to<uint64_t>(), fill_this_level, berti_accepted);
+#endif
+    if (berti_accepted)
     {
       ++average_issued;
       if (first_issue)
@@ -1193,6 +1217,10 @@ uint32_t berti_tdp::prefetcher_cache_fill(champsim::address addr, champsim::addr
   // Tag-directed prefetching (TDP): the pointers in the arriving line are sightings
   st_tdp_useless += (useless && (metadata_evict & MD_TDP));
   if (prefetch && (metadata_in & MD_TDP)) st_tdp_fills++;
+#if TDP_PAGE_STATS
+  if (useless && (metadata_evict & MD_TDP)) page_stats.on_unused_eviction(champsim::block_number{evicted_addr}.to<uint64_t>());
+  if (prefetch && (metadata_in & MD_TDP)) page_stats.on_tdp_fill(line_addr.to<uint64_t>());
+#endif
 #if TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK
   if (useless && (metadata_evict & MD_TDP))
     rc_line_unused(metadata_evict, champsim::block_number{evicted_addr}.to<uint64_t>());
@@ -1328,6 +1356,9 @@ void berti_tdp::prefetcher_final_stats()
   std::cout << "TDP ISSUED L1 " << st_tdp_l1 << " L2 " << st_tdp_l2 << " PQ_FULL " << st_tdp_pq_full << " INFLIGHT_SKIP " << st_tdp_inflight
             << " OOB_SKIP " << st_tdp_oob << std::endl;
   std::cout << "TDP FILLS " << st_tdp_fills << " USEFUL " << st_tdp_useful << " USELESS " << st_tdp_useless << std::endl;
+#if TDP_PAGE_STATS
+  page_stats.print(std::cout, "berti_tdp");
+#endif
   for (int i = 0; i < NUM_SRC_PRINT; i++)
   {
     std::cout << "TDP GAP_LOG2_CYCLES " << src[i];
@@ -1340,6 +1371,33 @@ void berti_tdp::prefetcher_final_stats()
 #if TDP_RECUR || TDP_RECUR_CTRL_NL
   std::cout << "TDP RECUR scanned_fill " << st_rc_scanned_fill << " scanned_hit " << st_rc_scanned_hit << " depth_stop " << st_rc_depth_stop
             << " low_prob_skip " << st_rc_low_prob << " ctrl_issued " << st_rc_ctrl << " fallback " << st_rc_fallback << std::endl;
+#if TDP_LEN_STATS
+  for (unsigned d = 0; d < 2; d++) {
+    std::cout << "TDP LEN " << (d ? "chained" : "first_hop") << " <=64B " << st_len[d][0] << " <=256B " << st_len[d][1] << " <=512B " << st_len[d][2]
+              << " <=1KB " << st_len[d][3] << " <=4KB " << st_len[d][4] << " <=64KB " << st_len[d][5] << " <=1MB " << st_len[d][6] << " >1MB "
+              << st_len[d][7] << " line_beyond_4KB " << st_len_far[d] << std::endl;
+  }
+#endif
+#if TDP_QUEUE_STATS
+  {
+    const char* who_name[3] = {"berti", "tdp_first_hop", "tdp_chained"};
+    for (unsigned w = 0; w < 3; w++)
+      std::cout << "TDP QUEUE " << who_name[w] << " to_l1 accepted " << st_q_issued[w][1] << " full " << st_q_full[w][1] << " to_l2 accepted "
+                << st_q_issued[w][0] << " full " << st_q_full[w][0] << " in_l1d_at_issue demand_or_used " << st_q_resident[w][0]
+                << " prefetched_unused " << st_q_resident[w][1] << std::endl;
+  }
+#endif
+#if TDP_PDT_STATS
+  for (unsigned k = 0; k < 2; k++) {
+    std::cout << "TDP PDT " << (k ? "chained" : "first_hop") << " lookup absent " << st_pdt_lookup[k][0] << " no_level " << st_pdt_lookup[k][1]
+              << " level " << st_pdt_lookup[k][2] << " epochs " << st_pdt_epochs[k] << " epochs_with_level " << st_pdt_epochs_level[k];
+    for (unsigned v = 0; v < 2; v++)
+      std::cout << " evicts_" << (v ? "chained" : "first_hop") << " never_epoch " << st_pdt_evict[k][v][0] << " had_epoch " << st_pdt_evict[k][v][1];
+    std::cout << std::endl;
+  }
+#endif
+  std::cout << "TDP CHT sets " << TDP_CHT_SETS << " ways " << TDP_CHT_WAYS << " cursor_bits " << TDP_CHT_CURSOR_BITS << " false_match "
+            << st_cht_false_match << " false_dup " << st_cht_false_dup << std::endl;
 #if TDP_RECUR_CREDIT || TDP_RECUR_FEEDBACK
   std::cout << "TDP RECUR_THROTTLE credit_stops " << st_rc_credit_stop << " outstanding_at_end " << rc_outstanding << " limit_up "
             << st_rc_fb_up << " limit_down " << st_rc_fb_down << " limit_at_end " << rc_limit << " epochs_at_limit";
@@ -1399,20 +1457,29 @@ uint16_t berti_tdp::make_key(uint64_t ip16, [[maybe_unused]] const champsim::cap
 
 berti_tdp::pdt_entry* berti_tdp::pdt_find(uint16_t tag)
 {
-  for (auto& e : pdt)
-    if (e.valid && e.tag == tag) {
+  const auto first = pdt.begin() + static_cast<std::ptrdiff_t>(pdt_set(tag) * PDT_WAYS);
+  for (auto it = first; it != first + PDT_WAYS; ++it)
+    if (auto& e = *it; e.valid && e.tag == tag) {
       e.lru = ++pdt_clock;
       return &e;
     }
   return nullptr;
 }
 
-berti_tdp::pdt_entry* berti_tdp::pdt_alloc(uint16_t tag)
+berti_tdp::pdt_entry* berti_tdp::pdt_alloc(uint16_t tag, [[maybe_unused]] bool chained)
 {
   if (auto* e = pdt_find(tag))
     return e;
-  auto victim = std::min_element(pdt.begin(), pdt.end(), [](const auto& a, const auto& b) { return a.valid != b.valid ? !a.valid : a.lru < b.lru; });
+  const auto first = pdt.begin() + static_cast<std::ptrdiff_t>(pdt_set(tag) * PDT_WAYS);
+  auto victim = std::min_element(first, first + PDT_WAYS, [](const auto& a, const auto& b) { return a.valid != b.valid ? !a.valid : a.lru < b.lru; });
+#if TDP_PDT_STATS
+  if (victim->valid)
+    st_pdt_evict[chained][victim->st_chained][victim->epochs > 0]++;
+#endif
   *victim = pdt_entry{};
+#if TDP_PDT_STATS
+  victim->st_chained = chained;
+#endif
   victim->valid = true;
   victim->tag = tag;
   victim->lru = ++pdt_clock;
@@ -1425,6 +1492,12 @@ void berti_tdp::pdt_count_sighting(pdt_entry* e)
   if (++e->sightings < TDP_EPOCH)
     return;
   st_epochs++;
+#if TDP_PDT_STATS
+  st_pdt_epochs[e->st_chained]++;
+  st_pdt_epochs_level[e->st_chained] += std::any_of(e->d.begin(), e->d.end(), [](const pdt_delta& d) { return d.valid && d.conf >= TDP_TH_L2; });
+#endif
+  if (e->epochs < 255)
+    e->epochs++;
   for (auto& d : e->d) {
     if (!d.valid)
       continue;
@@ -1465,13 +1538,29 @@ void berti_tdp::pdt_train(uint16_t key, int delta)
   victim->conf = 1;
 }
 
-bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c, uint32_t chain_metadata)
+void berti_tdp::q_count(unsigned who, uint64_t line, bool fill_l1, bool accepted)
+{
+  if (!accepted) {
+    st_q_full[who][fill_l1]++;
+    return;
+  }
+  st_q_issued[who][fill_l1]++;
+  if (scache[me]->get(line)) // statistics only: the line is in L1D at issue
+    st_q_resident[who][scache[me]->is_pf(line)]++;
+}
+
+bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c, uint32_t chain_metadata,
+                          [[maybe_unused]] uint64_t pointer_line, [[maybe_unused]] unsigned depth)
 {
   if (latencyt[me]->get(line)) { // already in flight to L1D
     st_tdp_inflight++;
     return false;
   }
-  if (!pf_line(champsim::address{line << LOG2_BLOCK_SIZE}, fill_l1, chain_metadata == 0 ? md_make(ip16, true) : chain_metadata, c)) {
+  const bool accepted = pf_line(champsim::address{line << LOG2_BLOCK_SIZE}, fill_l1, chain_metadata == 0 ? md_make(ip16, true) : chain_metadata, c);
+#if TDP_QUEUE_STATS
+  q_count((chain_metadata != 0 && md_depth(chain_metadata) >= 2) ? 2 : 1, line, fill_l1, accepted);
+#endif
+  if (!accepted) {
     st_tdp_pq_full++;
     return false;
   }
@@ -1481,6 +1570,9 @@ bool berti_tdp::issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const cham
       latencyt[me]->add(line, ip16 ? ip16 : 1, true, intern_->current_cycle());
   } else
     st_tdp_l2++;
+#if TDP_PAGE_STATS
+  page_stats.on_issue(line, pointer_line, depth, fill_l1);
+#endif
   return true;
 }
 
@@ -1490,36 +1582,57 @@ void berti_tdp::process_sighting(const sighting& sight)
   const auto& cap = sight.cap;
   const uint64_t cursor_line = (cap.base.to<uint64_t>() + cap.offset.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
   const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
-  auto already_recorded = [&](const auto& table) {
-    return std::any_of(table.begin(), table.end(), [&](const cht_entry& entry) {
-      return entry.valid && entry.base_hash == base_hash && entry.cursor_line == cursor_line
-             && !(TDP_RECUR_HIT_OVERRIDE && sight.source == SRC_TDP_HIT && entry.source == SRC_TDP_FILL);
-    });
+  const uint64_t stored_cursor = cht_cursor(cursor_line); // TDP_CHT_CURSOR_BITS: what the CHT keeps of it
+  auto recorded = [&](const cht_entry& entry) {
+    return entry.valid && entry.base_hash == base_hash && entry.cursor_line == stored_cursor
+           && !(TDP_RECUR_HIT_OVERRIDE && sight.source == SRC_TDP_HIT && entry.source == SRC_TDP_FILL);
   };
-  if (already_recorded(cht) || (TDP_RECUR_CHT > 0 && already_recorded(cht2))) {
+  // only the set of the pointer's object and cursor region is searched
+  const std::size_t set = cht_set(base_hash, cursor_line);
+  const bool in_cht = std::any_of(cht.begin() + set * CHT_WAYS, cht.begin() + (set + 1) * CHT_WAYS, recorded);
+  const std::size_t set2 = cht_set(base_hash, cursor_line, CHT2_SETS); // the chained CHT's set
+  auto in_cht2 = [&] { return std::any_of(cht2.begin() + set2 * CHT2_WAYS, cht2.begin() + (set2 + 1) * CHT2_WAYS, recorded); };
+  if (in_cht || (TDP_RECUR_CHT_WAYS > 0 && in_cht2())) {
+    if (TDP_CHT_CURSOR_BITS > 0 && std::none_of(cht.begin(), cht.end(), [&](const cht_entry& e) { return recorded(e) && e.full_cursor == cursor_line; })
+        && !(TDP_RECUR_CHT_WAYS > 0 && in_cht2()))
+      st_cht_false_dup++; // only the partial cursor matched
     st_sight_dup++;
     return; // already recorded: neither a new sighting nor a new issue
   }
   st_sight[sight.source]++;
   const uint16_t key = sight.depth ? static_cast<uint16_t>(sight.ip16) : make_key(sight.ip16, cap); // a chained sighting arrives with its key
-  cht_entry* slot = &cht[cht_ptr];
-  if (TDP_RECUR_CHT > 0 && sight.chained) {
-    slot = &cht2[cht2_ptr];
-    cht2_ptr = (cht2_ptr + 1) % cht2.size();
-  } else
-    cht_ptr = (cht_ptr + 1) % TDP_CHT_SIZE;
-  *slot = cht_entry{true, base_hash, cursor_line, key, 0, intern_->current_cycle(), sight.source};
+  {
+    cht_entry* slot;
+    if (TDP_RECUR_CHT_WAYS > 0 && sight.chained) {
+      slot = &cht2[set2 * CHT2_WAYS + cht2_set_ptr[set2]];
+      cht2_set_ptr[set2] = static_cast<uint16_t>((cht2_set_ptr[set2] + 1) % CHT2_WAYS);
+    } else { // FIFO within the set
+      slot = &cht[set * CHT_WAYS + cht_set_ptr[set]];
+      cht_set_ptr[set] = static_cast<uint16_t>((cht_set_ptr[set] + 1) % CHT_WAYS);
+    }
+    *slot = cht_entry{true, base_hash, stored_cursor, key, 0, intern_->current_cycle(), sight.source};
+    slot->full_cursor = cursor_line;
+  }
 
   const bool mshr_ok = intern_->get_mshr_occupancy_ratio() * 100 < MSHR_LIMIT;
   const uint64_t own_line = sight.line_va >> LOG2_BLOCK_SIZE;
 #if TDP_NOLEARN
   if (cursor_line != own_line && cheri::overlaps_bounds(champsim::block_number{champsim::address{cursor_line << LOG2_BLOCK_SIZE}}, cap.base, cheri::capability_top(cap)))
-    issue_tdp(cursor_line, mshr_ok, sight.ip16, cap, 0);
+    issue_tdp(cursor_line, mshr_ok, sight.ip16, cap, 0, own_line, sight.depth + 1u);
   return;
 #endif
-  pdt_entry* own_entry = pdt_alloc(key);
+#if TDP_PDT_STATS
+  {
+    const auto first = pdt.begin() + static_cast<std::ptrdiff_t>(pdt_set(key) * PDT_WAYS);
+    const auto it = std::find_if(first, first + PDT_WAYS, [&](const pdt_entry& e) { return e.valid && e.tag == key; });
+    const int outcome = (it == first + PDT_WAYS) ? 0
+                        : std::any_of(it->d.begin(), it->d.end(), [](const pdt_delta& d) { return d.valid && d.status != 0; }) ? 2 : 1;
+    st_pdt_lookup[sight.depth >= 1][outcome]++;
+  }
+#endif
+  pdt_entry* own_entry = pdt_alloc(key, sight.depth >= 1);
   pdt_entry* delta_source = own_entry; // the entry whose deltas are used
-#if TDP_RECUR_KEY >= 4
+#if TDP_RECUR_KEY >= 4 && TDP_RECUR_KEY <= 6
   // a field type with no confident delta yet borrows the deltas of the sighting the line came through
   if (sight.fallback != 0 && std::none_of(own_entry->d.begin(), own_entry->d.end(), [](const pdt_delta& delta) { return delta.valid && delta.status != 0; }))
     if (pdt_entry* parent_entry = pdt_find(sight.fallback); parent_entry != nullptr && parent_entry != own_entry) {
@@ -1548,10 +1661,30 @@ void berti_tdp::process_sighting(const sighting& sight)
       st_rc_low_prob++;
       continue;
     }
+#if TDP_LEN_STATS
+    {
+      // buckets: <=64 B, <=256 B, <=512 B, <=1 KB, <=4 KB, <=64 KB, <=1 MB, larger
+      const uint64_t len = cap.length.to<uint64_t>();
+      const unsigned b = len <= 64 ? 0 : len <= 256 ? 1 : len <= 512 ? 2 : len <= 1024 ? 3 : len <= 4096 ? 4 : len <= 65536 ? 5 : len <= (1u << 20) ? 6 : 7;
+      const unsigned d = sight.depth >= 1 ? 1 : 0;
+      st_len[d][b]++;
+      st_len_far[d] += (static_cast<int64_t>(target_line << LOG2_BLOCK_SIZE) - static_cast<int64_t>(cap.base.to<uint64_t>())) >= 4096;
+    }
+#endif
 #if TDP_RECUR_KEY == 0 || TDP_RECUR_KEY == 4
     // the type of the line being fetched: which line of which length of object (from the pointer's bounds); the fill
     // completes it with the slot index into each found pointer's key
     const uint16_t target_key = hash16((cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL) ^ ((target_line << LOG2_BLOCK_SIZE) - cap.base.to<uint64_t>()) ^ 0x5bd1e995ULL);
+#elif TDP_RECUR_KEY == 7 || TDP_RECUR_KEY == 8
+    // the object's length (8-bit hash, [15:8]; KEY 8: with this sighting's key, so the chain's path) and the line's offset from the pointer's cursor in 16-byte units, biased
+    // by 128 ([7:0]; the target is within TDP_MAX_LINE_DELTA lines of the cursor's line, so about +-32 units). The fill
+    // adds the pointer's position in the line: the field's offset from where the parent pointer points (for a pointer to
+    // an element of a large array, the element's start), whatever the bounds or alignment
+    const int64_t cursor_addr = static_cast<int64_t>(cap.base.to<uint64_t>() + cap.offset.to<uint64_t>());
+    const int64_t line_off16 = (static_cast<int64_t>(target_line << LOG2_BLOCK_SIZE) - cursor_addr) >> 4;
+    const uint64_t context = (TDP_RECUR_KEY == 8) ? (static_cast<uint64_t>(key) << 48) : 0;
+    const uint16_t target_key = static_cast<uint16_t>((hash16((cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL) ^ context) & 0xFF00)
+                                                      | static_cast<uint16_t>((line_off16 + 128) & 0xFF));
 #elif TDP_RECUR_KEY == 3 || TDP_RECUR_KEY == 5
     // the line's type as for 0, and the key of the sighting it came through (type within a path)
     const uint16_t target_key = hash16((static_cast<uint64_t>(key) << 40) ^ (cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL)
@@ -1559,10 +1692,10 @@ void berti_tdp::process_sighting(const sighting& sight)
 #else
     const uint16_t target_key = key; // the controls carry the parent's key
 #endif
-    if (issue_tdp(target_line, level == 2 && mshr_ok, key, cap, md_make_chain(target_key, sight.depth + 1u, prob)))
+    if (issue_tdp(target_line, level == 2 && mshr_ok, key, cap, md_make_chain(target_key, sight.depth + 1u, prob), own_line, sight.depth + 1u))
       st_rc_issued[std::min(sight.depth + 1, 7)][level == 2 && mshr_ok]++;
 #else
-    issue_tdp(target_line, delta.status == 2 && mshr_ok, sight.ip16, cap, 0);
+    issue_tdp(target_line, delta.status == 2 && mshr_ok, sight.ip16, cap, 0, own_line, sight.depth + 1u);
 #endif
   }
   pdt_count_sighting(own_entry);
@@ -1660,13 +1793,16 @@ void berti_tdp::scan_tdp_fill(uint64_t line_va, uint32_t fill_metadata, uint32_t
     // the field: the line's type key (the pointed-to object's length and this line's offset in it, computed at issue from
     // the pointer's bounds) with the slot index -- i.e. which pointer field of which kind of object this is
     key = hash16((static_cast<uint64_t>(line_key) << 8) ^ (slot + 1) ^ 0x9E3779B97F4A7C15ULL);
+#elif TDP_RECUR_KEY == 7 || TDP_RECUR_KEY == 8
+    // the field: the object's length (KEY 8: and the path) and the pointer's offset from where the parent pointer points (16-byte units)
+    key = hash16((static_cast<uint64_t>(line_key >> 8) << 16) ^ static_cast<uint64_t>((line_key & 0xFF) + slot) ^ 0x9E3779B97F4A7C15ULL);
 #elif TDP_RECUR_KEY == 1
     key = line_key; // control: the parent sighting's key
 #else
     key = hash16((static_cast<uint64_t>(line_key) << 8) ^ (slot + 1) ^ 0x2545F4914F6CDD1DULL); // control: parent key and slot
 #endif
     sighting found{*pointer, key, line_va, SRC_TDP_FILL};
-#if TDP_RECUR_KEY >= 4
+#if TDP_RECUR_KEY >= 4 && TDP_RECUR_KEY <= 6
     found.fallback = static_cast<uint16_t>(latencyt[me]->get_tag(line_va >> LOG2_BLOCK_SIZE)); // the parent's key: Berti's latency-table tag
 #endif
     found.depth = static_cast<uint8_t>(depth);
@@ -1703,11 +1839,12 @@ void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool
   const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
   cht_entry* best = nullptr;
   int best_d = 0;
-  auto search = [&](auto& table) {
-    for (auto& entry : table) {
+  auto search = [&](auto begin, auto end) {
+    for (auto it = begin; it != end; ++it) {
+      auto& entry = *it;
       if (!entry.valid || entry.base_hash != base_hash)
         continue;
-      const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(entry.cursor_line);
+      const int64_t line_delta = cht_delta(line, entry.cursor_line);
       if (line_delta < -TDP_MAX_LINE_DELTA || line_delta > TDP_MAX_LINE_DELTA)
         continue;
       if (best == nullptr || std::abs(line_delta) < std::abs(best_d)) { // nearest cursor; on a tie, the oldest
@@ -1716,13 +1853,27 @@ void berti_tdp::train_deref(uint64_t line, const champsim::capability& cap, bool
       }
     }
   };
-  search(cht);
-  if (TDP_RECUR_CHT > 0)
-    search(cht2);
+  {
+    // the cursors within TDP_MAX_LINE_DELTA lines of this line lie in at most two regions: search both sets
+    const uint64_t lo = line - TDP_MAX_LINE_DELTA, hi = line + TDP_MAX_LINE_DELTA;
+    const std::size_t set_lo = cht_set(base_hash, lo), set_hi = cht_set(base_hash, hi);
+    search(cht.begin() + set_lo * CHT_WAYS, cht.begin() + (set_lo + 1) * CHT_WAYS);
+    if (set_hi != set_lo)
+      search(cht.begin() + set_hi * CHT_WAYS, cht.begin() + (set_hi + 1) * CHT_WAYS);
+  }
+  if (TDP_RECUR_CHT_WAYS > 0) { // the chained CHT, the same two regions
+    const uint64_t lo = line - TDP_MAX_LINE_DELTA, hi = line + TDP_MAX_LINE_DELTA;
+    const std::size_t set_lo = cht_set(base_hash, lo, CHT2_SETS), set_hi = cht_set(base_hash, hi, CHT2_SETS);
+    search(cht2.begin() + set_lo * CHT2_WAYS, cht2.begin() + (set_lo + 1) * CHT2_WAYS);
+    if (set_hi != set_lo)
+      search(cht2.begin() + set_hi * CHT2_WAYS, cht2.begin() + (set_hi + 1) * CHT2_WAYS);
+  }
   if (is_miss)
     st_tagged_load_miss++;
   if (best == nullptr)
     return;
+  if (TDP_CHT_CURSOR_BITS > 0 && std::abs(static_cast<int64_t>(line) - static_cast<int64_t>(best->full_cursor)) > TDP_MAX_LINE_DELTA)
+    st_cht_false_match++; // only the partial cursor is within range
   if (is_miss) { // statistics: cycles from sighting to dereference miss
     const uint64_t now = intern_->current_cycle();
     uint64_t g = now - best->time;

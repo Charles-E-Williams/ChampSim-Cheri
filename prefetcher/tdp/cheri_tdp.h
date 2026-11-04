@@ -9,9 +9,10 @@
 // recorded pointer trains its delta.
 //
 // Recursion (max_depth > 1): the pointers in a line TDP prefetched are scanned when it fills, keyed by the field they
-// sit in and the path that led there (a hash of the parent's key, the pointed-to object's length and the line's
-// offset in it, and the slot). Until that key has a confident delta, the parent's deltas stand in for it, discounted
-// by the path probability; a trained key uses its own rate. Chains stop when confidence runs out, or at max_depth.
+// sit in: the size-offset key, a hash of the parent object's length and the field's offset from where the parent
+// pointer points (16-byte units). A chained key prefetches only with its own confident deltas (no borrowing from the
+// parent). Recursion's sightings are recorded in their own chained CHT, so they never evict first-hop history. Chains
+// stop when no confident delta remains, or at max_depth.
 //
 // Per-host settings (the defaults are the depth-1 engine that ip_stride_cheri_tdp and ipcp_cap_tdp were built with):
 //   max_depth      1 = no recursion; up to 7 (the depth field's maximum)
@@ -27,9 +28,8 @@
 //   cycle_operate: engine.on_cycle(*this).
 // Metadata of TDP's own prefetches:
 //   max_depth 1:   [19] TDP prefetch, [20] key valid, [31:21] key. The host must leave bits 19-31 free.
-//   max_depth > 1: [15:0] line key, [18:16] depth, [19] TDP prefetch, [24:20] probability that the line is used
-//                  (1/16, 0-16), [30:25] parent's PDT slot, [31] parent slot valid. The host must leave TDP's
-//                  prefetches' metadata alone (all 32 bits).
+//   max_depth > 1: [15:0] line key, [18:16] depth, [19] TDP prefetch. The host must leave bits 0-19 of TDP's
+//                  prefetches' metadata alone.
 
 #include <algorithm>
 #include <array>
@@ -38,7 +38,6 @@
 #include <deque>
 #include <iostream>
 #include <optional>
-#include <unordered_map>
 
 #include "cache.h"
 #include "capability_memory.h"
@@ -48,8 +47,13 @@
 
 namespace cheri_tdp
 {
-constexpr std::size_t CHT_SIZE = 128;          // Capability History Table entries (FIFO)
-constexpr std::size_t PDT_SIZE = 64;           // Pointer Delta Table entries (fully associative, LRU)
+constexpr std::size_t CHT_SETS = 8;           // Capability History Table sets, indexed by hash(base hash, cursor line >> CHT_REGION)
+constexpr std::size_t CHT_WAYS = 16;          // CHT ways (FIFO within a set)
+constexpr unsigned CHT_REGION = 4;            // log2 of the lines per cursor region (> log2(MAX_LINE_DELTA))
+constexpr std::size_t CHAINED_CHT_SETS = 8;   // chained CHT (recursion's sightings, max_depth > 1) sets, indexed as the CHT
+constexpr std::size_t CHAINED_CHT_WAYS = 8;   // chained CHT ways (FIFO within a set)
+constexpr std::size_t PDT_SETS = 16;          // Pointer Delta Table sets (indexed by a hash of the key)
+constexpr std::size_t PDT_WAYS = 4;           // PDT ways (LRU within a set)
 constexpr std::size_t PDT_DELTAS = 4;          // deltas per PDT entry
 constexpr std::size_t SIGHTING_QUEUE = 8;      // sighting queue entries (oldest dropped when full)
 constexpr unsigned SIGHTINGS_PER_CYCLE = 2;    // sightings processed per cycle
@@ -69,9 +73,8 @@ constexpr uint32_t KEY_MASK = 0x7FF;
 constexpr uint32_t MD_MASK = MD_TDP | MD_VALID | (KEY_MASK << MD_KEY_SHIFT);
 // Recursion layout of TDP's own prefetches (max_depth > 1)
 constexpr uint32_t MD_LINE_KEY_MASK = 0xFFFF;
-constexpr unsigned MD_DEPTH_SHIFT = 16, MD_PROB_SHIFT = 20, MD_PARENT_SHIFT = 25;
-constexpr uint32_t MD_PARENT_VALID = 1u << 31;
-static_assert(PDT_SIZE <= 64, "the parent's PDT slot has 6 metadata bits");
+constexpr unsigned MD_DEPTH_SHIFT = 16;
+static_assert(MAX_LINE_DELTA < (1 << CHT_REGION), "a dereference's cursors must lie in at most two CHT regions");
 
 struct settings {
   unsigned max_depth = 1;    // 1 = no recursion
@@ -106,7 +109,6 @@ class engine
     int8_t delta = 0;
     uint8_t conf = 0;      // dereferences this epoch
     uint8_t status = 0;    // 0 none, 1 prefetch to L2, 2 prefetch to L1D (set at the end of the previous epoch)
-    uint8_t last_conf = 0; // dereferences in the previous epoch (recursion: the delta's rate)
   };
   struct pdt_entry {
     bool valid = false;
@@ -121,15 +123,14 @@ class engine
     uint64_t own_line;            // the line the pointer was read from
     uint8_t source;
     uint8_t depth = 0;            // 0 = in a demand or host-prefetch fill; d >= 1 = in a TDP fill of depth d
-    uint8_t prob = 16;            // probability (1/16) that the line holding it is used
-    int parent_slot = -1;         // depth >= 1: the PDT slot of the sighting the line was fetched for (fallback deltas)
-    int parent_tag_at_issue = -1; // statistics only: that slot's tag when the line was prefetched
   };
 
   settings config;
-  std::array<cht_entry, CHT_SIZE> cht{};
-  std::size_t cht_next = 0;
-  std::array<pdt_entry, PDT_SIZE> pdt{};
+  std::array<cht_entry, CHT_SETS * CHT_WAYS> cht{};
+  std::array<uint16_t, CHT_SETS> cht_next{};
+  std::array<cht_entry, CHAINED_CHT_SETS * CHAINED_CHT_WAYS> chained_cht{};
+  std::array<uint16_t, CHAINED_CHT_SETS> chained_cht_next{};
+  std::array<pdt_entry, PDT_SETS * PDT_WAYS> pdt{};
   uint64_t pdt_clock = 0;
   std::deque<sighting> sighting_queue;
   uint64_t budget_cycle = ~uint64_t{0};
@@ -144,31 +145,36 @@ class engine
     uint64_t train = 0, tagged_load_miss = 0;
     uint64_t issued_l1d = 0, issued_l2 = 0, pq_full = 0, recent_skip = 0;
     uint64_t fills = 0, useful = 0, useless = 0;
-    uint64_t depth_stop = 0, low_prob = 0, fallback = 0, fallback_reused_slot = 0;
+    uint64_t depth_stop = 0;
     uint64_t by_depth_issued[8][2] = {}, by_depth_fills[8] = {}, by_depth_useful[8] = {}, by_depth_useless[8] = {}; // [.][0] L2, [.][1] L1D
   } st;
   bool in_warmup = true;
-  std::unordered_map<uint64_t, uint16_t> parent_tag_at_issue; // statistics only: parent slot's tag when each line was prefetched
   tdp_page_stats::recorder page_stats;                         // statistics only (settings.page_stats)
 
   bool recursive() const { return config.max_depth > 1; }
   static unsigned md_depth(uint32_t metadata) { return (metadata >> MD_DEPTH_SHIFT) & 0x7; }
-  static unsigned md_prob(uint32_t metadata) { return (metadata >> MD_PROB_SHIFT) & 0x1F; }
-  static int md_parent_slot(uint32_t metadata) { return (metadata & MD_PARENT_VALID) ? static_cast<int>((metadata >> MD_PARENT_SHIFT) & 0x3F) : -1; }
-  static uint32_t md_make_chain(uint16_t line_key, unsigned depth, unsigned prob, int parent_slot)
+  static uint32_t md_make_chain(uint16_t line_key, unsigned depth) { return line_key | MD_TDP | (std::min(depth, DEPTH_FIELD_MAX) << MD_DEPTH_SHIFT); }
+
+  // CHT and chained CHT: the set of a pointer's object (base hash) and the CHT_REGION-line region of its cursor
+  static std::size_t cht_set(uint16_t base_hash, uint64_t line, std::size_t sets)
   {
-    uint32_t metadata = line_key | MD_TDP | (std::min(depth, DEPTH_FIELD_MAX) << MD_DEPTH_SHIFT) | (std::min(prob, 16u) << MD_PROB_SHIFT);
-    if (parent_slot >= 0)
-      metadata |= MD_PARENT_VALID | (static_cast<uint32_t>(parent_slot) << MD_PARENT_SHIFT);
-    return metadata;
+    const uint64_t h = (static_cast<uint64_t>(base_hash) ^ ((line >> CHT_REGION) * 0x9E3779B97F4A7C15ULL)) * 0xff51afd7ed558ccdULL;
+    return static_cast<std::size_t>(h >> 40) % sets;
+  }
+  // PDT: the ways of a key's set
+  auto pdt_ways(uint16_t tag)
+  {
+    const auto first = pdt.begin() + static_cast<std::ptrdiff_t>(((tag * 0x9E3779B1u) >> 16) % PDT_SETS * PDT_WAYS);
+    return std::pair{first, first + PDT_WAYS};
   }
 
   pdt_entry* pdt_find(uint16_t tag)
   {
-    for (auto& entry : pdt)
-      if (entry.valid && entry.tag == tag) {
-        entry.lru = ++pdt_clock;
-        return &entry;
+    auto [first, last] = pdt_ways(tag);
+    for (auto it = first; it != last; ++it)
+      if (it->valid && it->tag == tag) {
+        it->lru = ++pdt_clock;
+        return &*it;
       }
     return nullptr;
   }
@@ -177,7 +183,8 @@ class engine
   {
     if (auto* entry = pdt_find(tag))
       return entry;
-    auto victim = std::min_element(pdt.begin(), pdt.end(), [](const auto& lhs, const auto& rhs) { return lhs.valid != rhs.valid ? !lhs.valid : lhs.lru < rhs.lru; });
+    auto [first, last] = pdt_ways(tag);
+    auto victim = std::min_element(first, last, [](const auto& lhs, const auto& rhs) { return lhs.valid != rhs.valid ? !lhs.valid : lhs.lru < rhs.lru; });
     *victim = pdt_entry{};
     victim->valid = true;
     victim->tag = tag;
@@ -194,7 +201,6 @@ class engine
       if (!delta.valid)
         continue;
       delta.status = (delta.conf >= THRESHOLD_L1D) ? 2 : (delta.conf >= THRESHOLD_L2) ? 1 : 0;
-      delta.last_conf = delta.conf;
       delta.conf = 0;
     }
     entry.sightings = 0;
@@ -254,33 +260,30 @@ class engine
   void process(const champsim::modules::prefetcher& host, const sighting& sight)
   {
     const auto& cap = sight.cap;
-    const uint64_t cursor_line = (cap.base.to<uint64_t>() + cap.offset.to<uint64_t>()) >> LOG2_BLOCK_SIZE;
+    const uint64_t cursor_addr = cap.base.to<uint64_t>() + cap.offset.to<uint64_t>();
+    const uint64_t cursor_line = cursor_addr >> LOG2_BLOCK_SIZE;
     const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
-    if (std::any_of(cht.begin(), cht.end(),
-                    [&](const cht_entry& entry) { return entry.valid && entry.base_hash == base_hash && entry.cursor_line == cursor_line; })) {
+    const std::size_t set = cht_set(base_hash, cursor_line, CHT_SETS);
+    const std::size_t chained_set = cht_set(base_hash, cursor_line, CHAINED_CHT_SETS);
+    auto recorded = [&](const cht_entry& entry) { return entry.valid && entry.base_hash == base_hash && entry.cursor_line == cursor_line; };
+    if (std::any_of(cht.begin() + set * CHT_WAYS, cht.begin() + (set + 1) * CHT_WAYS, recorded)
+        || (recursive()
+            && std::any_of(chained_cht.begin() + chained_set * CHAINED_CHT_WAYS, chained_cht.begin() + (chained_set + 1) * CHAINED_CHT_WAYS, recorded))) {
       st.duplicate++;
       return; // already recorded: neither a new sighting nor a new issue
     }
     st.sightings[sight.source]++;
-    cht[cht_next] = cht_entry{true, base_hash, cursor_line, sight.key, 0};
-    cht_next = (cht_next + 1) % CHT_SIZE;
+    if (sight.source == SRC_TDP_FILL) { // recursion's sightings: the chained CHT (FIFO within the set)
+      chained_cht[chained_set * CHAINED_CHT_WAYS + chained_cht_next[chained_set]] = cht_entry{true, base_hash, cursor_line, sight.key, 0};
+      chained_cht_next[chained_set] = static_cast<uint16_t>((chained_cht_next[chained_set] + 1) % CHAINED_CHT_WAYS);
+    } else { // FIFO within the set
+      cht[set * CHT_WAYS + cht_next[set]] = cht_entry{true, base_hash, cursor_line, sight.key, 0};
+      cht_next[set] = static_cast<uint16_t>((cht_next[set] + 1) % CHT_WAYS);
+    }
 
     const bool mshr_ok = host.intern_->get_mshr_occupancy_ratio() < MSHR_LIMIT;
     pdt_entry* own_entry = pdt_alloc(sight.key);
-    const int own_slot = static_cast<int>(own_entry - pdt.data());
-    pdt_entry* delta_source = own_entry; // the entry whose deltas are used
-    // a field with no confident delta yet borrows the deltas of the sighting its line was fetched for
-    if (sight.parent_slot >= 0
-        && std::none_of(own_entry->deltas.begin(), own_entry->deltas.end(), [](const pdt_delta& delta) { return delta.valid && delta.status != 0; })) {
-      pdt_entry& parent_entry = pdt[static_cast<std::size_t>(sight.parent_slot)];
-      if (parent_entry.valid && &parent_entry != own_entry) {
-        parent_entry.lru = ++pdt_clock;
-        delta_source = &parent_entry;
-        st.fallback++;
-        st.fallback_reused_slot += (parent_entry.tag != sight.parent_tag_at_issue);
-      }
-    }
-    for (const auto& delta : delta_source->deltas) { // the levels set at the end of the previous epoch
+    for (const auto& delta : own_entry->deltas) { // the levels set at the end of the previous epoch
       if (!delta.valid || delta.status == 0)
         continue;
       const uint64_t target_line = cursor_line + static_cast<int64_t>(delta.delta);
@@ -291,25 +294,16 @@ class engine
               sight.own_line, sight.depth + 1u);
         continue;
       }
-      // the probability that the target line is used: this key's own rate (depth 0, or a trained field key, whose rate
-      // is already conditioned on the path that led to it); borrowed deltas are discounted by the path probability
-      const bool use_own_rate = (sight.depth == 0) || (delta_source == own_entry);
-      const unsigned prob = use_own_rate ? std::min<unsigned>(delta.last_conf, 16) : (static_cast<unsigned>(sight.prob) * delta.last_conf) / 16;
-      const int level = use_own_rate ? delta.status : (prob >= THRESHOLD_L1D) ? 2 : (prob >= THRESHOLD_L2) ? 1 : 0;
-      if (level == 0) {
-        st.low_prob++;
-        continue;
-      }
-      // the type of the line being fetched (which line of which length of object, from the pointer's bounds) within
-      // its path (the key of the sighting it is fetched for)
-      const uint16_t target_key = hash16((static_cast<uint64_t>(sight.key) << 40) ^ (cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL)
-                                         ^ ((target_line << LOG2_BLOCK_SIZE) - cap.base.to<uint64_t>()) ^ 0x5bd1e995ULL);
-      const bool fill_l1d = (level == 2) && mshr_ok;
-      if (!issue(host, target_line, fill_l1d, md_make_chain(target_key, sight.depth + 1u, prob, own_slot), cap, sight.own_line, sight.depth + 1u))
-        continue;
-      st.by_depth_issued[std::min<unsigned>(sight.depth + 1u, DEPTH_FIELD_MAX)][fill_l1d]++;
-      if (fill_l1d)
-        parent_tag_at_issue[target_line] = own_entry->tag;
+      // the line's part of the size-offset key: the object's length (8-bit hash, [15:8]) and the line's offset from
+      // the pointer's cursor in 16-byte units, biased by 128 ([7:0]; the target is within MAX_LINE_DELTA lines of the
+      // cursor's line). The fill adds each found pointer's position in the line, giving the field's offset from where
+      // this pointer points, whatever the object's bounds or alignment
+      const int64_t line_off16 = (static_cast<int64_t>(target_line << LOG2_BLOCK_SIZE) - static_cast<int64_t>(cursor_addr)) >> 4;
+      const uint16_t target_key = static_cast<uint16_t>((hash16(cap.length.to<uint64_t>() * 0x9E3779B97F4A7C15ULL) & 0xFF00)
+                                                        | static_cast<uint16_t>((line_off16 + 128) & 0xFF));
+      const bool fill_l1d = (delta.status == 2) && mshr_ok;
+      if (issue(host, target_line, fill_l1d, md_make_chain(target_key, sight.depth + 1u), cap, sight.own_line, sight.depth + 1u))
+        st.by_depth_issued[std::min<unsigned>(sight.depth + 1u, DEPTH_FIELD_MAX)][fill_l1d]++;
     }
     pdt_count_sighting(*own_entry);
   }
@@ -362,18 +356,13 @@ class engine
         enqueue(host, sighting{*pointer, key, line, source});
   }
 
-  // A TDP fill (recursion): its pointers, keyed by field (the line's key with the slot index), with the depth, path
-  // probability and parent's PDT slot the prefetch carried.
+  // A TDP fill (recursion): its pointers, keyed by field (the line's part of the size-offset key with the slot index),
+  // with the depth the prefetch carried.
   void scan_tdp_fill(const champsim::modules::prefetcher& host, uint64_t line, uint32_t fill_metadata, uint32_t cpu)
   {
     const unsigned depth = md_depth(fill_metadata);
     if (depth == 0)
       return;
-    int issue_tag = -1; // statistics only
-    if (auto issued = parent_tag_at_issue.find(line); issued != parent_tag_at_issue.end()) {
-      issue_tag = issued->second;
-      parent_tag_at_issue.erase(issued);
-    }
     if (depth >= config.max_depth) {
       st.depth_stop++;
       return;
@@ -385,14 +374,10 @@ class engine
       auto pointer = data_pointer_at(line_va + slot * cheri::CAP_ALIGNMENT_BYTES, cpu);
       if (!pointer)
         continue;
-      // the field: the line's type key (the pointed-to object's length and this line's offset in it, from the pointer
-      // it was fetched through, and that pointer's key) with the slot index
-      const uint16_t field_key = hash16((static_cast<uint64_t>(line_key) << 8) ^ (slot + 1) ^ 0x9E3779B97F4A7C15ULL);
+      // the field: the object's length and the pointer's offset from where the parent pointer points (16-byte units)
+      const uint16_t field_key = hash16((static_cast<uint64_t>(line_key >> 8) << 16) ^ static_cast<uint64_t>((line_key & 0xFF) + slot) ^ 0x9E3779B97F4A7C15ULL);
       sighting found{*pointer, field_key, line, SRC_TDP_FILL};
       found.depth = static_cast<uint8_t>(depth);
-      found.prob = static_cast<uint8_t>(md_prob(fill_metadata));
-      found.parent_slot = md_parent_slot(fill_metadata);
-      found.parent_tag_at_issue = issue_tag;
       enqueue(host, found);
     }
   }
@@ -403,17 +388,30 @@ class engine
     const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
     cht_entry* best = nullptr;
     int best_delta = 0;
-    for (auto& entry : cht) {
-      if (!entry.valid || entry.base_hash != base_hash)
-        continue;
-      const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(entry.cursor_line);
-      if (line_delta < -MAX_LINE_DELTA || line_delta > MAX_LINE_DELTA)
-        continue;
-      if (best == nullptr || std::abs(line_delta) < std::abs(best_delta)) { // nearest cursor; on a tie, the oldest
-        best = &entry;
-        best_delta = static_cast<int>(line_delta);
+    auto search = [&](auto first, auto last) {
+      for (auto it = first; it != last; ++it) {
+        auto& entry = *it;
+        if (!entry.valid || entry.base_hash != base_hash)
+          continue;
+        const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(entry.cursor_line);
+        if (line_delta < -MAX_LINE_DELTA || line_delta > MAX_LINE_DELTA)
+          continue;
+        if (best == nullptr || std::abs(line_delta) < std::abs(best_delta)) { // nearest cursor; on a tie, the oldest
+          best = &entry;
+          best_delta = static_cast<int>(line_delta);
+        }
       }
-    }
+    };
+    // the cursors within MAX_LINE_DELTA lines of this line lie in at most two regions: search both sets of each table
+    auto search_table = [&](auto& table, std::size_t sets, std::size_t ways) {
+      const std::size_t set_lo = cht_set(base_hash, line - MAX_LINE_DELTA, sets), set_hi = cht_set(base_hash, line + MAX_LINE_DELTA, sets);
+      search(table.begin() + set_lo * ways, table.begin() + (set_lo + 1) * ways);
+      if (set_hi != set_lo)
+        search(table.begin() + set_hi * ways, table.begin() + (set_hi + 1) * ways);
+    };
+    search_table(cht, CHT_SETS, CHT_WAYS);
+    if (recursive())
+      search_table(chained_cht, CHAINED_CHT_SETS, CHAINED_CHT_WAYS);
     st.tagged_load_miss += is_miss;
     if (best == nullptr)
       return;
@@ -494,7 +492,8 @@ public:
   void print_stats(std::ostream& out) const
   {
     const char* source_name[NUM_SRC] = {"demand_fill", "host_prefetch_fill", "tdp_fill"};
-    out << "TDP SETTINGS max_depth " << config.max_depth << " berti_ip_key " << config.berti_ip_key << " recent_filter " << config.recent_filter << std::endl;
+    out << "TDP SETTINGS max_depth " << config.max_depth << " berti_ip_key " << config.berti_ip_key << " recent_filter " << config.recent_filter << " CHT "
+        << CHT_SETS << "x" << CHT_WAYS << " chained_CHT " << CHAINED_CHT_SETS << "x" << CHAINED_CHT_WAYS << " PDT " << PDT_SETS << "x" << PDT_WAYS << std::endl;
     out << "TDP LINES_SCANNED";
     for (int source = 0; source < NUM_SRC; source++)
       out << " " << source_name[source] << " " << st.lines_scanned[source];
@@ -509,8 +508,7 @@ public:
       page_stats.print(out, "tdp_engine");
     if (!recursive())
       return;
-    out << "TDP RECUR depth_stop " << st.depth_stop << " low_prob_skip " << st.low_prob << " fallback " << st.fallback << " fallback_reused_slot "
-        << st.fallback_reused_slot << std::endl;
+    out << "TDP RECUR depth_stop " << st.depth_stop << std::endl;
     for (unsigned depth = 1; depth <= DEPTH_FIELD_MAX; depth++)
       if (st.by_depth_issued[depth][0] + st.by_depth_issued[depth][1] + st.by_depth_fills[depth] + st.by_depth_useful[depth] + st.by_depth_useless[depth])
         out << "TDP RECUR depth " << depth << " issued_l1 " << st.by_depth_issued[depth][1] << " issued_l2 " << st.by_depth_issued[depth][0] << " fills "

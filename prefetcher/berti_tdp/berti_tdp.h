@@ -52,6 +52,9 @@
 #include "cache.h"
 #include "capability_memory.h"
 #include "cheri_prefetch_utils.h"
+#if TDP_PAGE_STATS
+#include "../tdp/tdp_page_stats.h"
+#endif
 
 #include <algorithm>
 #include <array>
@@ -292,11 +295,32 @@ class berti_tdp : public champsim::modules::prefetcher {
         uint16_t trained = 0;     // deltas already credited for this sighting, one bit per delta
         uint64_t time = 0;        // cycle of the sighting (statistics; TDP_TIMELY)
         uint8_t  source = 0;      // statistics only
+        uint64_t full_cursor = 0; // statistics only (TDP_CHT_CURSOR_BITS: to count false matches)
     };
     std::array<cht_entry, TDP_CHT_SIZE> cht{};
-    std::size_t cht_ptr = 0;
-    std::array<cht_entry, (TDP_RECUR_CHT > 0) ? TDP_RECUR_CHT : 1> cht2{}; // TDP_RECUR_CHT: recursion's own sightings
-    std::size_t cht2_ptr = 0;
+    // sets indexed by the pointer's object (base hash) and the 2^TDP_CHT_REGION-line region of its cursor
+    static constexpr std::size_t CHT_WAYS = TDP_CHT_WAYS;
+    static constexpr std::size_t CHT_SETS = TDP_CHT_SETS;
+    std::array<uint16_t, CHT_SETS> cht_set_ptr{};
+ // FIFO position in each set
+    static std::size_t cht_set(uint16_t base_hash, uint64_t line, std::size_t sets = CHT_SETS)
+    {
+      const uint64_t h = (static_cast<uint64_t>(base_hash) ^ ((line >> TDP_CHT_REGION) * 0x9E3779B97F4A7C15ULL)) * 0xff51afd7ed558ccdULL;
+      return static_cast<std::size_t>(h >> 40) % sets;
+    }
+    // TDP_CHT_CURSOR_BITS: the CHT keeps only the low bits of the cursor line; a delta is their difference, sign-extended
+    static uint64_t cht_cursor(uint64_t line) { return TDP_CHT_CURSOR_BITS > 0 ? (line & ((uint64_t{1} << TDP_CHT_CURSOR_BITS) - 1)) : line; }
+    static int64_t cht_delta(uint64_t line, uint64_t stored)
+    {
+      if (TDP_CHT_CURSOR_BITS == 0)
+        return static_cast<int64_t>(line) - static_cast<int64_t>(stored);
+      const uint64_t mask = (uint64_t{1} << TDP_CHT_CURSOR_BITS) - 1, d = (line - stored) & mask;
+      return (d & (uint64_t{1} << (TDP_CHT_CURSOR_BITS - 1))) ? static_cast<int64_t>(d) - static_cast<int64_t>(mask + 1) : static_cast<int64_t>(d);
+    }
+    // Chained CHT (TDP_RECUR_CHT_WAYS > 0): recursion's own sightings, indexed as the CHT, FIFO within a set
+    static constexpr std::size_t CHT2_SETS = TDP_RECUR_CHT_SETS, CHT2_WAYS = (TDP_RECUR_CHT_WAYS > 0) ? TDP_RECUR_CHT_WAYS : 1;
+    std::array<cht_entry, CHT2_SETS * CHT2_WAYS> cht2{};
+    std::array<uint16_t, CHT2_SETS> cht2_set_ptr{};
 
     // Pointer Delta Table: per key, epoch confidence of (dereferenced line - cursor line)
     struct pdt_delta {
@@ -310,10 +334,14 @@ class berti_tdp : public champsim::modules::prefetcher {
         bool     valid = false;
         uint16_t tag = 0;
         uint8_t  sightings = 0;
+        uint8_t  epochs = 0;      // TDP_PDT_STATS (statistics, not hardware): completed epochs (saturating)
         uint64_t lru = 0;
         std::array<pdt_delta, TDP_PDT_DELTAS> d{};
+        bool     st_chained = false; // TDP_PDT_STATS (statistics, not hardware): allocated by a chained sighting
     };
     std::array<pdt_entry, TDP_PDT_SIZE> pdt{};
+    static constexpr std::size_t PDT_WAYS = TDP_PDT_WAYS;
+    static std::size_t pdt_set(uint16_t tag) { return static_cast<std::size_t>((tag * 0x9E3779B1u) >> 16) % TDP_PDT_SETS; }
     uint64_t pdt_clock = 0;
 
     // Sighting queue: pointers waiting for their CHT search and PDT lookup
@@ -324,7 +352,7 @@ class berti_tdp : public champsim::modules::prefetcher {
         uint8_t  source;
         uint8_t  depth = 0;  // TDP_RECUR: 0 = an IP-keyed sighting; d >= 1 = found in a TDP fill of depth d (ip16 holds its key)
         uint8_t  prob = 16;  // TDP_RECUR: probability (1/16) that the line holding it is used
-        bool     chained = false; // TDP_RECUR: produced by recursion (TDP_RECUR_CHT places it)
+        bool     chained = false; // TDP_RECUR: produced by recursion (TDP_RECUR_CHT_WAYS places it)
         uint16_t fallback = 0;   // TDP_RECUR_KEY 4: the parent sighting's key, used while this sighting's key is untrained
     };
     std::deque<sighting> sq;
@@ -354,6 +382,19 @@ class berti_tdp : public champsim::modules::prefetcher {
     // Recursion statistics (TDP_RECUR)
     uint64_t st_rc_issued[8][2] = {}, st_rc_useful[8] = {}, st_rc_useless[8] = {}, st_rc_fills[8] = {}; // by depth; [.][0] L2, [.][1] L1D
     uint64_t st_rc_scanned_fill = 0, st_rc_scanned_hit = 0, st_rc_depth_stop = 0, st_rc_low_prob = 0, st_rc_ctrl = 0, st_rc_fallback = 0;
+    uint64_t st_cht_false_match = 0, st_cht_false_dup = 0; // TDP_CHT_CURSOR_BITS (statistics)
+    // TDP_LEN_STATS: [depth 1 / depth >= 2][bounds length bucket]; [..][line beyond 4 KB of the object's base]
+    uint64_t st_len[2][8] = {}, st_len_far[2] = {};
+    // TDP_PDT_STATS, [0] first hop / [1] chained:
+    //   lookups: [kind][0 key absent, 1 present but no delta with a level, 2 present with a level]
+    //   evictions: [allocating kind][victim kind][0 victim never completed an epoch, 1 it had]
+    //   epochs completed, and epochs that ended with at least one delta given a level
+    // TDP_QUEUE_STATS, [0] Berti / [1] TDP first hop / [2] TDP chained; [.][0] to L2 / [.][1] to L1D:
+    //   accepted by the L1D prefetch queue, dropped (queue full); and of the accepted, the line was already in L1D:
+    //   [.][0] a line no prefetch brought or one already used, [.][1] a prefetched line not yet used
+    uint64_t st_q_issued[3][2] = {}, st_q_full[3][2] = {}, st_q_resident[3][2] = {};
+    void q_count(unsigned who, uint64_t line, bool fill_l1, bool accepted);
+    uint64_t st_pdt_lookup[2][3] = {}, st_pdt_evict[2][2][2] = {}, st_pdt_epochs[2] = {}, st_pdt_epochs_level[2] = {};
     bool rc_in_warmup = true;
     // TDP_RECUR_CREDIT / TDP_RECUR_FEEDBACK (hardware state)
     uint32_t rc_outstanding = 0;             // lines fetched by recursion, in L1D, not yet used
@@ -365,6 +406,10 @@ class berti_tdp : public champsim::modules::prefetcher {
     void rc_line_used(uint32_t line_metadata, uint64_t line);
     void rc_line_unused(uint32_t line_metadata, uint64_t line);
     void fb_tick();
+#if TDP_PAGE_STATS
+    tdp_page_stats::recorder page_stats; // statistics only (not hardware)
+    bool page_stats_in_warmup = true;
+#endif
 
 #if TDP_CHAIN_STATS
     // Chain measurement (not hardware): the pointers in every L1D fill, by the full base of their target.
@@ -386,10 +431,11 @@ class berti_tdp : public champsim::modules::prefetcher {
     static uint16_t hash16(uint64_t x);
     static uint16_t make_key(uint64_t ip16, const champsim::capability& c);
     pdt_entry* pdt_find(uint16_t tag);
-    pdt_entry* pdt_alloc(uint16_t tag);
+    pdt_entry* pdt_alloc(uint16_t tag, bool chained = false);
     void pdt_count_sighting(pdt_entry* e);
     void pdt_train(uint16_t key, int delta);
-    bool issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c, uint32_t chain_metadata);
+    bool issue_tdp(uint64_t line, bool fill_l1, uint64_t ip16, const champsim::capability& c, uint32_t chain_metadata, uint64_t pointer_line,
+                   unsigned depth);
     void process_sighting(const sighting& sight);
     bool take_budget();
     void drain_sightings();

@@ -112,8 +112,16 @@ namespace berti_tdp_space
    *                 BERTI-TDP: TAG-DIRECTED PREFETCHING (DESIGN.md)               *
    *****************************************************************************/
   // Sizes
-  # define TDP_CHT_SIZE                  (128) // Capability History Table entries (FIFO)
-  # define TDP_PDT_SIZE                  (64)  // Pointer Delta Table entries (fully associative, LRU)
+  # define TDP_CHT_SETS                  (8)   // Capability History Table sets, indexed by hash(base hash, cursor line >> TDP_CHT_REGION);
+                                              //   a dereference searches the (at most two) sets whose regions hold cursors within
+                                              //   TDP_MAX_LINE_DELTA lines
+  # define TDP_CHT_WAYS                  (16)  // Capability History Table ways (FIFO within a set)
+  # define TDP_CHT_SIZE                  (TDP_CHT_SETS * TDP_CHT_WAYS)
+  # define TDP_CHT_REGION                (4)   // TDP_CHT_WAYS: log2 of the lines per cursor region (> log2(TDP_MAX_LINE_DELTA))
+  # define TDP_CHT_CURSOR_BITS           (0)   // 0: the full cursor line; n > 0: only its low n bits (n >= 5)
+  # define TDP_PDT_SETS                  (16)  // Pointer Delta Table sets (indexed by a hash of the key)
+  # define TDP_PDT_WAYS                  (4)   // Pointer Delta Table ways (LRU within a set)
+  # define TDP_PDT_SIZE                  (TDP_PDT_SETS * TDP_PDT_WAYS)
   # define TDP_PDT_DELTAS                (4)   // deltas per PDT entry
   # define TDP_SIGHTQ                    (8)   // sighting queue entries (oldest dropped when full)
   # define TDP_SIGHT_PER_CYCLE           (2)   // sightings processed per cycle; 0 = unlimited
@@ -142,7 +150,7 @@ namespace berti_tdp_space
                                               //   1 TDP's own L1D fills, scanned at the fill (no IP: key from TDP_RECUR_KEY);
                                               //   2 a TDP-prefetched line at its first demand hit, keyed by the hitting load's IP;
                                               //   3 both
-  # define TDP_RECUR_KEY                 (5)   // key of a pointer found in a TDP fill (TDP_RECUR 1/3):
+  # define TDP_RECUR_KEY                 (7)   // key of a pointer found in a TDP fill (TDP_RECUR 1/3):
                                               //   0 hash(length of the object the line was fetched for, the line's offset in it,
                                               //     the slot) -- the field's identity, from the parent pointer's bounds (CHERI);
                                               //   1 control: the parent sighting's key (no bounds);
@@ -151,7 +159,12 @@ namespace berti_tdp_space
                                               //   4 0's type key; while it has no confident delta, the parent sighting's deltas
                                               //   5 3's key, with 4's fallback to the parent sighting's deltas
                                               //   6 control for 5: 2's key (no bounds), with 4's fallback
-  # define TDP_RECUR_DEPTH               (7)   // TDP_RECUR 1/3: TDP fills at this depth are not scanned (depth 1 = first hop);
+                                              //   7 hash(object length, the pointer's offset from where the parent pointer
+                                              //     points) -- the field, independent of alignment and of array bounds;
+                                              //     no fallback
+                                              //   8 7's key with this sighting's key hashed into [15:8] (the path: the
+                                              //     first hop's IP key, then each field followed); no fallback
+  # define TDP_RECUR_DEPTH               (4)   // TDP_RECUR 1/3: TDP fills at this depth are not scanned (depth 1 = first hop);
                                               //   at most 7 (the metadata's depth field saturates at 7, so 8+ means no limit)
   # define TDP_RECUR_DECAY               (2)   // TDP_RECUR 1/3: 1 a hop's level comes from the chain's probability (product of the
                                               //   deltas' last-epoch rates); 0 each hop's own delta level, as for depth 1;
@@ -162,13 +175,21 @@ namespace berti_tdp_space
                                               //   level's fills are used, counted in 8 of the 64 L1D sets
   # define TDP_RECUR_HIT_OVERRIDE        (0)   // 1 (TDP_RECUR 3): a first-hit sighting is not dropped as a duplicate of a pointer
                                               //   that only the fill-time scan has recorded
-  # define TDP_RECUR_CHT                 (0)   // 0: recursion's sightings share the CHT; n > 0: they go to their own n-entry FIFO
+  # define TDP_RECUR_CHT_SETS            (8)   // chained CHT sets (indexed as the CHT)
+  # define TDP_RECUR_CHT_WAYS            (8)   // chained CHT ways (FIFO within a set); 0: recursion's sightings share the CHT
   # define TDP_RECUR_CTRL_NL             (0)   // n > 0: control for TDP_RECUR 2 without pointers: at the first demand hit on a
                                               //   TDP-prefetched line, prefetch its next n lines into L1D instead of scanning it
   # define TDP_RECUR_CTRL_FILL_NL        (0)   // n > 0: control for TDP_RECUR 1 without pointers: at each TDP fill, prefetch the
                                               //   filled line's next n lines (L1D if the MSHR allows) instead of scanning it
   // Measurement only (no effect on timing)
   # define TDP_CHAIN_STATS               (0)   // 1: dependent-miss chains, lead times and stopped chains
+  # define TDP_LEN_STATS                 (0)   // 1: bounds length of the pointers TDP follows, and how far into the object the
+                                              //   fetched line is (statistics only)
+  # define TDP_QUEUE_STATS               (0)   // 1: L1D prefetch queue drops and prefetches to lines already in L1D, for Berti
+                                              //   and for TDP by depth (first hop / chained) and level (statistics only)
+  # define TDP_PDT_STATS                 (0)   // 1: PDT evictions and lookup outcomes, by key kind (first hop / chained)
   # define TDP_OBSERVE_ONLY              (0)   // 1: Berti and TDP issue nothing (a no-prefetching run with TDP's statistics)
+  # define TDP_PAGE_STATS                (0)   // 1: is each TDP target on the virtual page (4 KB, 2 MB) of the line holding its
+                                              //    pointer? At issue (by depth and level) and at outcome (used / evicted unused)
 };
 # endif
