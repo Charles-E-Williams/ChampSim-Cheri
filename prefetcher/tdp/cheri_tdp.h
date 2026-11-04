@@ -50,6 +50,7 @@ namespace cheri_tdp
 constexpr std::size_t CHT_SETS = 8;           // Capability History Table sets, indexed by hash(base hash, cursor line >> CHT_REGION)
 constexpr std::size_t CHT_WAYS = 16;          // CHT ways (FIFO within a set)
 constexpr unsigned CHT_REGION = 4;            // log2 of the lines per cursor region (> log2(MAX_LINE_DELTA))
+constexpr unsigned CHT_CURSOR_BITS = 20;      // the CHTs keep only the cursor line's low bits (>= 5)
 constexpr std::size_t CHAINED_CHT_SETS = 8;   // chained CHT (recursion's sightings, max_depth > 1) sets, indexed as the CHT
 constexpr std::size_t CHAINED_CHT_WAYS = 8;   // chained CHT ways (FIFO within a set)
 constexpr std::size_t PDT_SETS = 16;          // Pointer Delta Table sets (indexed by a hash of the key)
@@ -100,7 +101,7 @@ class engine
   struct cht_entry {
     bool valid = false;
     uint16_t base_hash = 0;   // hash of the pointer's base: names the pointed-to object
-    uint64_t cursor_line = 0; // the pointer's cursor line
+    uint64_t cursor_line = 0; // the pointer's cursor line (low CHT_CURSOR_BITS bits)
     uint16_t key = 0;         // PDT key
     uint16_t trained = 0;     // deltas already credited for this sighting, one bit per delta
   };
@@ -160,6 +161,13 @@ class engine
   {
     const uint64_t h = (static_cast<uint64_t>(base_hash) ^ ((line >> CHT_REGION) * 0x9E3779B97F4A7C15ULL)) * 0xff51afd7ed558ccdULL;
     return static_cast<std::size_t>(h >> 40) % sets;
+  }
+  // The CHTs' partial cursor, and a line's distance from one (sign-extended from CHT_CURSOR_BITS)
+  static uint64_t cht_cursor(uint64_t line) { return line & ((uint64_t{1} << CHT_CURSOR_BITS) - 1); }
+  static int64_t cht_delta(uint64_t line, uint64_t stored)
+  {
+    const uint64_t mask = (uint64_t{1} << CHT_CURSOR_BITS) - 1, d = (line - stored) & mask;
+    return (d >> (CHT_CURSOR_BITS - 1)) ? static_cast<int64_t>(d) - static_cast<int64_t>(mask + 1) : static_cast<int64_t>(d);
   }
   // PDT: the ways of a key's set
   auto pdt_ways(uint16_t tag)
@@ -265,7 +273,8 @@ class engine
     const uint16_t base_hash = hash16(cap.base.to<uint64_t>());
     const std::size_t set = cht_set(base_hash, cursor_line, CHT_SETS);
     const std::size_t chained_set = cht_set(base_hash, cursor_line, CHAINED_CHT_SETS);
-    auto recorded = [&](const cht_entry& entry) { return entry.valid && entry.base_hash == base_hash && entry.cursor_line == cursor_line; };
+    const uint64_t stored_cursor = cht_cursor(cursor_line);
+    auto recorded = [&](const cht_entry& entry) { return entry.valid && entry.base_hash == base_hash && entry.cursor_line == stored_cursor; };
     if (std::any_of(cht.begin() + set * CHT_WAYS, cht.begin() + (set + 1) * CHT_WAYS, recorded)
         || (recursive()
             && std::any_of(chained_cht.begin() + chained_set * CHAINED_CHT_WAYS, chained_cht.begin() + (chained_set + 1) * CHAINED_CHT_WAYS, recorded))) {
@@ -274,10 +283,10 @@ class engine
     }
     st.sightings[sight.source]++;
     if (sight.source == SRC_TDP_FILL) { // recursion's sightings: the chained CHT (FIFO within the set)
-      chained_cht[chained_set * CHAINED_CHT_WAYS + chained_cht_next[chained_set]] = cht_entry{true, base_hash, cursor_line, sight.key, 0};
+      chained_cht[chained_set * CHAINED_CHT_WAYS + chained_cht_next[chained_set]] = cht_entry{true, base_hash, stored_cursor, sight.key, 0};
       chained_cht_next[chained_set] = static_cast<uint16_t>((chained_cht_next[chained_set] + 1) % CHAINED_CHT_WAYS);
     } else { // FIFO within the set
-      cht[set * CHT_WAYS + cht_next[set]] = cht_entry{true, base_hash, cursor_line, sight.key, 0};
+      cht[set * CHT_WAYS + cht_next[set]] = cht_entry{true, base_hash, stored_cursor, sight.key, 0};
       cht_next[set] = static_cast<uint16_t>((cht_next[set] + 1) % CHT_WAYS);
     }
 
@@ -393,7 +402,7 @@ class engine
         auto& entry = *it;
         if (!entry.valid || entry.base_hash != base_hash)
           continue;
-        const int64_t line_delta = static_cast<int64_t>(line) - static_cast<int64_t>(entry.cursor_line);
+        const int64_t line_delta = cht_delta(line, entry.cursor_line);
         if (line_delta < -MAX_LINE_DELTA || line_delta > MAX_LINE_DELTA)
           continue;
         if (best == nullptr || std::abs(line_delta) < std::abs(best_delta)) { // nearest cursor; on a tie, the oldest

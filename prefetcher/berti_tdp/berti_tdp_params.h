@@ -118,7 +118,7 @@ namespace berti_tdp_space
   # define TDP_CHT_WAYS                  (16)  // Capability History Table ways (FIFO within a set)
   # define TDP_CHT_SIZE                  (TDP_CHT_SETS * TDP_CHT_WAYS)
   # define TDP_CHT_REGION                (4)   // TDP_CHT_WAYS: log2 of the lines per cursor region (> log2(TDP_MAX_LINE_DELTA))
-  # define TDP_CHT_CURSOR_BITS           (0)   // 0: the full cursor line; n > 0: only its low n bits (n >= 5)
+  # define TDP_CHT_CURSOR_BITS           (20)   // 0: the full cursor line; n > 0: only its low n bits (n >= 5)
   # define TDP_PDT_SETS                  (16)  // Pointer Delta Table sets (indexed by a hash of the key)
   # define TDP_PDT_WAYS                  (4)   // Pointer Delta Table ways (LRU within a set)
   # define TDP_PDT_SIZE                  (TDP_PDT_SETS * TDP_PDT_WAYS)
